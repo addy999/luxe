@@ -94,7 +94,28 @@ const _STRETCH_KEEP_ASPECT_CENTERED: int = 5
 var _dragging: bool = false
 
 
+# Local dev/testing convenience: DtBackend::compute_dt_dirs() (dt_backend.cpp)
+# looks for DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR as real process environment
+# variables via getenv() -- Godot has no dotenv support, so a stray .env file
+# in this directory does nothing. Rather than requiring every dev to launch
+# the Godot editor from a terminal with those exported, set them here from the
+# res://-relative project settings (project.godot [dt_backend] section) before
+# init() runs. If the vars are already present in the real environment (e.g.
+# someone did launch from a terminal with an explicit override), leave them
+# alone -- an explicit external override should win over this project default.
+func _configure_dt_backend_env() -> void:
+	if OS.has_environment("DT_BACKEND_DATADIR") and OS.has_environment("DT_BACKEND_MODULEDIR"):
+		return
+	var datadir: String = ProjectSettings.get_setting(
+		"dt_backend/datadir", "res://../../source/build/share/darktable")
+	var moduledir: String = ProjectSettings.get_setting(
+		"dt_backend/moduledir", "res://../../source/build/lib/darktable")
+	OS.set_environment("DT_BACKEND_DATADIR", ProjectSettings.globalize_path(datadir))
+	OS.set_environment("DT_BACKEND_MODULEDIR", ProjectSettings.globalize_path(moduledir))
+
+
 func _ready() -> void:
+	_configure_dt_backend_env()
 	backend = DtBackend.new()
 	var ok: bool = backend.init()
 	if not ok:
