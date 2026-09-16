@@ -1,0 +1,202 @@
+#!/usr/bin/env python
+"""
+SConstruct for the dt_backend GDExtension.
+
+This links a small C++ shim (src/dt_backend.cpp) against:
+  1. godot-cpp (vendored as a git submodule at ./godot-cpp, pinned to the
+     4.5 branch -- the closest available branch to the installed Godot
+     4.6.beta3 editor; see godot-poc/build-darktable.md for details).
+  2. darktable's `lib_darktable` shared library (built separately from
+     ../../source via build.sh/CMake) plus its GTK3 dependency.
+
+Usage (on Apple Silicon, arch=arm64 is required -- see note below):
+    cd godot-poc/extension
+    scons arch=arm64                                    # debug build, default dt paths
+    scons arch=arm64 target=template_release            # release build
+    scons arch=arm64 dt_build_dir=/path/to/source/build dt_src_dir=/path/to/source/src
+
+Note on arch=arm64: godot-cpp's SConstruct defaults macOS builds to
+arch=universal (arm64 + x86_64 fat binary). darktable's own build.sh/CMake
+on this machine only produces arm64 objects (Homebrew on Apple Silicon is
+arm64-only), so linking dt_backend against libdarktable.dylib in a
+"universal" GDExtension build fails at link time with "found architecture
+'arm64', required architecture 'x86_64'" for every darktable object file.
+Passing arch=arm64 makes godot-cpp itself build arm64-only too, matching
+darktable. If darktable is ever built as a universal/x86_64 binary on some
+other machine, this default can be revisited.
+
+Command-line variables (all optional, see defaults below):
+    dt_src_dir    -- darktable's C source include dir (has common/, develop/,
+                      imageio/, iop/, etc. as subdirectories). Needed so
+                      dt_backend.cpp can `#include "common/darktable.h"` etc.
+    dt_build_dir  -- darktable's CMake build directory. This is where
+                      CMake drops generated headers (config.h, version_gen.h,
+                      preferences_gen.h, ...) as well as the built
+                      lib_darktable shared library itself. darktable's
+                      build.sh defaults this to `<source>/build`
+                      (see source/build.sh: BUILD_DIR_DEFAULT="$DT_SRC_DIR/build").
+    dt_lib_name   -- name of the darktable core shared library target to
+                      link against. Confirmed via
+                      `grep -n add_library source/src/CMakeLists.txt`:
+                      `add_library(lib_darktable SHARED ...)` -- so the
+                      link name is "darktable" (CMake strips the "lib"
+                      prefix for -l flags: -ldarktable -> libdarktable.dylib).
+                      NOTE: darktable has not been built on this machine yet
+                      (source/build/ does not exist as of writing), so this
+                      path/name is a best-effort default based on reading
+                      the CMakeLists -- verify once the build completes.
+
+If dt_build_dir does not exist yet (darktable hasn't been built), the
+include/link flags below are still added, but linking will fail until the
+directory and library exist. That's expected during early scaffolding.
+"""
+
+import os
+
+env = SConscript("godot-cpp/SConstruct")
+
+# --- darktable integration: configurable paths -----------------------------
+extension_dir = Dir(".").srcnode().abspath
+
+default_dt_src_dir = os.path.normpath(
+    os.path.join(extension_dir, "..", "..", "source", "src")
+)
+default_dt_build_dir = os.path.normpath(
+    os.path.join(extension_dir, "..", "..", "source", "build")
+)
+
+vars = Variables()
+vars.Add(
+    PathVariable(
+        "dt_src_dir",
+        "Path to darktable's src/ directory (headers for common/, develop/, imageio/, iop/, ...)",
+        default_dt_src_dir,
+        PathVariable.PathAccept,
+    )
+)
+vars.Add(
+    PathVariable(
+        "dt_build_dir",
+        "Path to darktable's CMake build directory (generated headers + built lib_darktable)",
+        default_dt_build_dir,
+        PathVariable.PathAccept,
+    )
+)
+vars.Add(
+    "dt_lib_name",
+    "Name of the darktable shared library to link against (without lib prefix / extension)",
+    "darktable",
+)
+vars.Update(env)
+Help(vars.GenerateHelpText(env))
+
+dt_src_dir = env["dt_src_dir"]
+dt_build_dir = env["dt_build_dir"]
+dt_lib_name = env["dt_lib_name"]
+
+if not os.path.isdir(dt_build_dir):
+    print(
+        "*** dt_backend: warning: dt_build_dir '%s' does not exist yet. "
+        "Build darktable first (see ../build-darktable.md) or pass "
+        "dt_build_dir=<path> on the scons command line. Continuing to "
+        "configure the build; linking will fail until the lib exists."
+        % dt_build_dir
+    )
+
+# darktable headers: the plain src/ tree, plus wherever CMake places
+# generated headers inside the build dir (commonly <build_dir>/src, but
+# some generated headers land directly in <build_dir> depending on
+# CMAKE_BINARY_DIR conventions -- add both to be safe).
+env.Append(
+    CPPPATH=[
+        dt_src_dir,
+        dt_build_dir,
+        os.path.join(dt_build_dir, "src"),
+    ]
+)
+
+# Link against the darktable core shared lib. It may live directly in
+# dt_build_dir or under dt_build_dir/src/ depending on CMake layout --
+# add both as library search paths.
+env.Append(
+    LIBPATH=[
+        dt_build_dir,
+        os.path.join(dt_build_dir, "src"),
+        os.path.join(dt_build_dir, "bin"),  # build.sh puts libdarktable.dylib in <build>/bin
+    ]
+)
+env.Append(LIBS=[dt_lib_name])
+
+# darktable normally locates its data/module dirs relative to its own
+# executable's path (via the vendored `whereami` submodule). That breaks
+# when darktable is loaded as a shared library inside a *different*
+# executable (Godot.app) -- it ends up looking for
+# Godot.app/Contents/Resources/share/darktable, which doesn't exist. dt_init()
+# accepts explicit `--datadir`/`--moduledir` argv overrides
+# (source/src/common/darktable.c:1132-1140), so bake this build's actual
+# paths in as compile definitions for dt_backend.cpp to pass through.
+env.Append(
+    CPPDEFINES=[
+        ("DT_DATADIR_PATH", '\\"%s\\"' % os.path.abspath(os.path.join(dt_build_dir, "share", "darktable"))),
+        ("DT_MODULEDIR_PATH", '\\"%s\\"' % os.path.abspath(os.path.join(dt_build_dir, "lib", "darktable"))),
+    ]
+)
+
+# libdarktable.dylib's own install name is a bare "@rpath/libdarktable.dylib"
+# (CMake's default on macOS), so the loader needs an explicit rpath to find
+# it at runtime -- otherwise dlopen()ing dt_backend from Godot fails with
+# "Library not loaded: @rpath/libdarktable.dylib" even though it links fine.
+if env["platform"] == "macos":
+    env.Append(LINKFLAGS=["-Wl,-rpath," + os.path.join(dt_build_dir, "bin")])
+
+# darktable.h transitively pulls in dozens of third-party headers (GTK3,
+# glib, librsvg, json-glib, exiv2, lensfun, OpenCV, OpenEXR, ...). Rather
+# than hand-maintain that list, dt_link_flags.json is generated once from
+# this machine's actual CMake build (see build-darktable.md: "regenerating
+# dt_link_flags.json") by dumping compile_commands.json's include paths for
+# common/darktable.c and build.ninja's LINK_LIBRARIES for libdarktable.dylib.
+flags_path = os.path.join(extension_dir, "dt_link_flags.json")
+if os.path.isfile(flags_path):
+    import json
+
+    with open(flags_path) as f:
+        dt_flags = json.load(f)
+    env.Append(CPPPATH=dt_flags.get("includes", []))
+    env.Append(LINKFLAGS=dt_flags.get("link_flags", []))
+    env.Append(LINKFLAGS=dt_flags.get("link_libs", []))
+    # Preprocessor defines matter for more than "does it compile": darktable
+    # headers (imageop.h in particular) put optional struct fields behind
+    # #ifdef HAVE_OPENCL / USE_LUA / etc. Omitting a define that darktable's
+    # own build sets shifts every subsequent struct field's offset, so e.g.
+    # dt_iop_module_t.params_size silently reads garbage instead of failing
+    # to compile. These must match darktable's own CMake build exactly.
+    env.Append(CPPDEFINES=dt_flags.get("defines", []))
+else:
+    print(
+        "*** dt_backend: warning: %s not found -- falling back to bare "
+        "pkg-config gtk+-3.0 flags, which is NOT enough to satisfy "
+        "darktable.h's transitive includes (librsvg, json-glib, exiv2, "
+        "lensfun, etc). See build-darktable.md to regenerate it." % flags_path
+    )
+    env.ParseConfig("pkg-config gtk+-3.0 --cflags --libs")
+
+# --- sources -----------------------------------------------------------
+sources = Glob("src/*.cpp")
+
+# Output the built library straight into the Godot project's bin/ dir.
+target_dir = "../project/bin/"
+
+if env["platform"] == "macos":
+    library = env.SharedLibrary(
+        target_dir + "libdt_backend.{}.{}.framework/libdt_backend.{}.{}".format(
+            env["platform"], env["target"], env["platform"], env["target"]
+        ),
+        source=sources,
+    )
+else:
+    library = env.SharedLibrary(
+        target_dir + "libdt_backend{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
+        source=sources,
+    )
+
+Default(library)

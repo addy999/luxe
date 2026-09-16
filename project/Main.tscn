@@ -1,0 +1,112 @@
+[gd_scene format=3 uid="uid://c0y7bxvj6dj5x"]
+
+[ext_resource type="Script" uid="uid://b02co8417l8ik" path="res://Main.gd" id="1_main"]
+
+[node name="Main" type="Control" unique_id=75755699]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+script = ExtResource("1_main")
+
+[node name="VBox" type="VBoxContainer" parent="." unique_id=179876780]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="TextureRect" type="TextureRect" parent="VBox" unique_id=733361970]
+custom_minimum_size = Vector2(1024, 640)
+layout_mode = 2
+size_flags_vertical = 3
+clip_contents = true
+expand_mode = 1
+stretch_mode = 3
+
+[node name="Controls" type="VBoxContainer" parent="VBox" unique_id=1827344658]
+layout_mode = 2
+size_flags_vertical = 0
+
+[node name="OpenRow" type="HBoxContainer" parent="VBox/Controls" unique_id=1768382206]
+layout_mode = 2
+
+[node name="OpenButton" type="Button" parent="VBox/Controls/OpenRow" unique_id=492497316]
+layout_mode = 2
+text = "Open Image..."
+
+[node name="ExportButton" type="Button" parent="VBox/Controls/OpenRow" unique_id=166048902]
+layout_mode = 2
+disabled = true
+text = "Export..."
+
+[node name="StatusLabel" type="Label" parent="VBox/Controls/OpenRow" unique_id=1928114059]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Ready"
+
+[node name="ExposureRow" type="HBoxContainer" parent="VBox/Controls" unique_id=1207356324]
+layout_mode = 2
+
+[node name="ExposureLabel" type="Label" parent="VBox/Controls/ExposureRow" unique_id=794923459]
+layout_mode = 2
+text = "Exposure (EV):"
+
+[node name="ExposureSlider" type="HSlider" parent="VBox/Controls/ExposureRow" unique_id=573950927]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = -3.0
+max_value = 3.0
+step = 0.05
+
+[node name="ExposureValueLabel" type="Label" parent="VBox/Controls/ExposureRow" unique_id=705570802]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+text = "0.00"
+
+[node name="ZoomLabel" type="Label" parent="VBox/Controls/ExposureRow"]
+layout_mode = 2
+text = "Zoom:"
+
+[node name="ZoomOptionButton" type="OptionButton" parent="VBox/Controls/ExposureRow"]
+layout_mode = 2
+
+[node name="ResolutionLabel" type="Label" parent="VBox/Controls"]
+layout_mode = 2
+text = "No image loaded"
+
+[node name="ResizeDebounceTimer" type="Timer" parent="."]
+one_shot = true
+wait_time = 0.15
+
+[node name="FileDialog" type="FileDialog" parent="." unique_id=1459555973]
+oversampling_override = 1.0
+title = "Open a File"
+initial_position = 1
+size = Vector2i(800, 600)
+ok_button_text = "Open"
+file_mode = 0
+access = 2
+filters = PackedStringArray("*.jpg,*.jpeg,*.png,*.cr2,*.nef,*.arw,*.dng ; Image Files")
+use_native_dialog = true
+
+[node name="ExportDialog" type="FileDialog" parent="." unique_id=485205728]
+title = "Export Image"
+initial_position = 1
+size = Vector2i(800, 600)
+ok_button_text = "Export"
+access = 2
+filters = PackedStringArray("*.jpg,*.jpeg ; JPEG", "*.png ; PNG", "*.tif,*.tiff ; TIFF")
+use_native_dialog = true
+
+[connection signal="pressed" from="VBox/Controls/OpenRow/OpenButton" to="." method="_on_open_button_pressed"]
+[connection signal="pressed" from="VBox/Controls/OpenRow/ExportButton" to="." method="_on_export_button_pressed"]
+[connection signal="value_changed" from="VBox/Controls/ExposureRow/ExposureSlider" to="." method="_on_exposure_slider_value_changed"]
+[connection signal="item_selected" from="VBox/Controls/ExposureRow/ZoomOptionButton" to="." method="_on_zoom_option_button_item_selected"]
+[connection signal="file_selected" from="FileDialog" to="." method="_on_file_dialog_file_selected"]
+[connection signal="file_selected" from="ExportDialog" to="." method="_on_export_dialog_file_selected"]
