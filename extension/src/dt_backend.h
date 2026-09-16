@@ -13,6 +13,8 @@
  */
 #pragma once
 
+#include <string>
+
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/string.hpp>
@@ -93,6 +95,16 @@ private:
   // Called by both process_fit() and render_view() so there is exactly one
   // place that calls dt_dev_pixelpipe_get_dimensions().
   bool refresh_native_dimensions();
+
+  // Computes darktable's --datadir/--moduledir at runtime instead of relying
+  // on compile-time-baked absolute paths (see PORTABILITY_PLAN.md section 3).
+  // Tries, in order: (1) DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR env vars,
+  // (2) a location relative to Godot's own running executable (exported .app
+  // bundle layout), (3) a location relative to this extension's own shared
+  // library file on disk (via dladdr()), trying both a dev-loop-ish relative
+  // offset and a bundle-relative offset. Returns false (and prints an error)
+  // if no candidate resolves to a real, existing darktable datadir.
+  static bool compute_dt_dirs(std::string &datadir, std::string &moduledir);
 
 protected:
   static void _bind_methods();

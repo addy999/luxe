@@ -4,6 +4,7 @@
  */
 #include "dt_backend.h"
 
+#include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
@@ -12,8 +13,11 @@ extern "C" {
 }
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <cmath>
+
+#include <dlfcn.h>
 
 using namespace godot;
 
@@ -29,6 +33,134 @@ void DtBackend::_bind_methods() {
   ClassDB::bind_method(D_METHOD("get_native_width"), &DtBackend::get_native_width);
   ClassDB::bind_method(D_METHOD("get_native_height"), &DtBackend::get_native_height);
   ClassDB::bind_method(D_METHOD("cleanup"), &DtBackend::cleanup);
+}
+
+namespace {
+
+// Anchor function whose address lives inside libdt_backend's own image, used
+// solely as a dladdr() target below (dladdr needs *some* address that
+// resolves back to this .dylib/.framework; a plain free function is simpler
+// than trying to dladdr a non-static member function pointer).
+void dt_backend_dladdr_anchor() {}
+
+// True if `path` exists on disk. Uses glib's g_file_test() to stay
+// consistent with the rest of this file's glib usage (g_build_filename(),
+// g_mkdir_with_parents(), etc. below).
+bool path_exists(const std::string &path) {
+  return g_file_test(path.c_str(), G_FILE_TEST_EXISTS) == TRUE;
+}
+
+// A candidate resource_dir is only accepted if it actually contains a real
+// darktable datadir -- darktable.png ships in every darktable datadir install
+// (source/data/darktable.png -> installed as share/darktable/darktable.png),
+// so its presence is a cheap, reliable sentinel that we've found the right
+// directory rather than just an empty/nonexistent path.
+bool datadir_looks_valid(const std::string &datadir) {
+  gchar *sentinel = g_build_filename(datadir.c_str(), "darktable.png", NULL);
+  const bool ok = path_exists(sentinel);
+  g_free(sentinel);
+  return ok;
+}
+
+} // namespace
+
+// Computes --datadir/--moduledir at runtime (see PORTABILITY_PLAN.md section
+// 3.5 for the full rationale). Tried in order, cheapest/most-dev-friendly
+// first:
+//
+//   1. DT_BACKEND_DATADIR / DT_BACKEND_MODULEDIR env vars, if BOTH are set.
+//      Pure dev convenience -- lets the inner dev loop point at
+//      source/build/share|lib/darktable without any bundle/dladdr logic.
+//   2. Bundle-relative via Godot's own running executable path
+//      (OS::get_executable_path()). Matches the exported .app layout from
+//      PORTABILITY_PLAN.md section 3.3:
+//        MyApp.app/Contents/MacOS/MyApp                (executable_path)
+//        MyApp.app/Contents/Resources/darktable/share/darktable
+//        MyApp.app/Contents/Resources/darktable/lib/darktable
+//      Only accepted if darktable.png actually exists under the computed
+//      datadir -- during in-editor dev runs, get_executable_path() returns
+//      the *Godot editor's* binary path, which has no Resources/darktable
+//      next to it, so this candidate correctly falls through.
+//   3. dladdr() on this extension's own loaded image (works regardless of
+//      host process -- editor or exported app). Two sub-candidates are
+//      tried, both relative to the directory containing
+//      libdt_backend.*.framework/libdt_backend.*:
+//        a. <dir>/../../Resources/darktable/{share,lib}/darktable, i.e. the
+//           same Contents/Resources/darktable layout as step 2, reached from
+//           Contents/Frameworks/libdt_backend.*.framework/libdt_backend.*
+//           instead of Contents/MacOS/MyApp. Useful once Phase 2 places the
+//           framework under Contents/Frameworks/.
+//   4. If nothing resolves, print an error and fail init() outright rather
+//      than silently handing dt_init() a bogus/nonexistent path.
+bool DtBackend::compute_dt_dirs(std::string &datadir, std::string &moduledir) {
+  // --- 1. env var override (dev convenience) --------------------------
+  const char *env_datadir = std::getenv("DT_BACKEND_DATADIR");
+  const char *env_moduledir = std::getenv("DT_BACKEND_MODULEDIR");
+  if(env_datadir && env_moduledir && env_datadir[0] != '\0' && env_moduledir[0] != '\0') {
+    datadir = env_datadir;
+    moduledir = env_moduledir;
+    UtilityFunctions::print("DtBackend::compute_dt_dirs: using DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR override");
+    return true;
+  }
+
+  // --- 2. bundle-relative via Godot's own executable path -------------
+  {
+    const godot::String exe_path = godot::OS::get_singleton()->get_executable_path();
+    // .../MyApp.app/Contents/MacOS/MyApp -> get_base_dir() -> .../MacOS
+    // -> get_base_dir() again -> .../Contents
+    const godot::String contents_dir = exe_path.get_base_dir().get_base_dir();
+    const std::string resource_dir = std::string(contents_dir.utf8().get_data()) + "/Resources/darktable";
+    const std::string candidate_datadir = resource_dir + "/share/darktable";
+    const std::string candidate_moduledir = resource_dir + "/lib/darktable";
+    if(datadir_looks_valid(candidate_datadir)) {
+      datadir = candidate_datadir;
+      moduledir = candidate_moduledir;
+      UtilityFunctions::print("DtBackend::compute_dt_dirs: using bundle-relative dirs from Godot executable path");
+      return true;
+    }
+  }
+
+  // --- 3. dladdr() on this extension's own loaded image ----------------
+  {
+    Dl_info info;
+    if(dladdr(reinterpret_cast<void *>(&dt_backend_dladdr_anchor), &info) != 0 && info.dli_fname) {
+      // info.dli_fname e.g.:
+      //   .../Contents/Frameworks/libdt_backend.*.framework/libdt_backend.*
+      gchar *lib_dir = g_path_get_dirname(info.dli_fname);       // .../Frameworks/libdt_backend.*.framework
+      gchar *frameworks_dir = g_path_get_dirname(lib_dir);       // .../Frameworks
+      gchar *contents_dir = g_path_get_dirname(frameworks_dir);  // .../Contents
+
+      gchar *resource_dir = g_build_filename(contents_dir, "Resources", "darktable", NULL);
+      gchar *candidate_datadir = g_build_filename(resource_dir, "share", "darktable", NULL);
+      gchar *candidate_moduledir = g_build_filename(resource_dir, "lib", "darktable", NULL);
+
+      const bool ok = datadir_looks_valid(candidate_datadir);
+      if(ok) {
+        datadir = candidate_datadir;
+        moduledir = candidate_moduledir;
+      }
+
+      g_free(lib_dir);
+      g_free(frameworks_dir);
+      g_free(contents_dir);
+      g_free(resource_dir);
+      g_free(candidate_datadir);
+      g_free(candidate_moduledir);
+
+      if(ok) {
+        UtilityFunctions::print("DtBackend::compute_dt_dirs: using bundle-relative dirs from extension's own dladdr() path");
+        return true;
+      }
+    }
+  }
+
+  // --- 4. nothing resolved ----------------------------------------------
+  UtilityFunctions::printerr(
+      "DtBackend::compute_dt_dirs: could not locate darktable's datadir/moduledir. "
+      "Set DT_BACKEND_DATADIR and DT_BACKEND_MODULEDIR env vars (e.g. to "
+      "source/build/share/darktable and source/build/lib/darktable) for local dev, "
+      "or run from an exported .app bundle with Contents/Resources/darktable/{share,lib}/darktable populated.");
+  return false;
 }
 
 DtBackend::DtBackend() {
@@ -55,9 +187,13 @@ bool DtBackend::init() {
   // --datadir/--moduledir are required here: darktable normally resolves
   // these relative to its own executable's path, but here it's loaded as a
   // shared library inside Godot.app, so that auto-detection resolves to
-  // nonsense paths under Godot.app itself. DT_DATADIR_PATH/DT_MODULEDIR_PATH
-  // are baked in by SConstruct from the actual darktable build used to link
-  // this extension (see SConstruct's CPPDEFINES comment).
+  // nonsense paths under Godot.app itself. These used to be compile-time
+  // constants baked in by SConstruct (DT_DATADIR_PATH/DT_MODULEDIR_PATH),
+  // which hardcoded this dev machine's absolute paths into the compiled
+  // binary and broke as soon as the binary moved -- see
+  // PORTABILITY_PLAN.md section 3. They are now computed at runtime by
+  // compute_dt_dirs() (env var override -> bundle-relative via Godot's
+  // executable path -> dladdr()-relative fallback -> hard failure).
   //
   // --configdir/--cachedir are required for the same underlying reason as
   // --library :memory: above: darktable's config dir holds a SQLite lock
@@ -76,22 +212,34 @@ bool DtBackend::init() {
   g_mkdir_with_parents(configdir, 0700);
   g_mkdir_with_parents(cachedir, 0700);
 
+  std::string datadir_str;
+  std::string moduledir_str;
+  if(!compute_dt_dirs(datadir_str, moduledir_str)) {
+    g_free(configdir);
+    g_free(cachedir);
+    return false;
+  }
+  // dt_init() needs mutable char* argv entries; the gchar* pointers from
+  // g_build_filename() are already exactly that, so build datadir/moduledir
+  // the same way (consistent with configdir/cachedir just above) rather than
+  // hand-rolling std::vector<char> buffers.
+  gchar *datadir = g_strdup(datadir_str.c_str());
+  gchar *moduledir = g_strdup(moduledir_str.c_str());
+
   char arg0[] = "dt_backend";
   char arg1[] = "--library";
   char arg2[] = ":memory:";
   char arg3[] = "--conf";
   char arg4[] = "write_sidecar_files=never";
   char arg5[] = "--datadir";
-  char arg6[] = DT_DATADIR_PATH;
   char arg7[] = "--moduledir";
-  char arg8[] = DT_MODULEDIR_PATH;
   char arg9[] = "--configdir";
   char arg11[] = "--cachedir";
   // argv entries are char*, not const char*, so the gchar* pointers from
-  // g_build_filename() plug in directly -- but they MUST stay alive until
-  // after dt_init() returns (freed below), since dt_init() reads argv
-  // synchronously during this call.
-  char *argv[] = { arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8,
+  // g_build_filename()/g_strdup() plug in directly -- but they MUST stay
+  // alive until after dt_init() returns (freed below), since dt_init() reads
+  // argv synchronously during this call.
+  char *argv[] = { arg0, arg1, arg2, arg3, arg4, arg5, datadir, arg7, moduledir,
                     arg9, configdir, arg11, cachedir, nullptr };
   int argc = 13;
 
@@ -100,6 +248,8 @@ bool DtBackend::init() {
   const int rc = dt_init(argc, argv, FALSE, TRUE, NULL);
   g_free(configdir);
   g_free(cachedir);
+  g_free(datadir);
+  g_free(moduledir);
   // DARKTABLE_API_NOTES.md section A: both darktable-cli and darktable-mcp
   // treat a *non-zero* return from dt_init() as fatal init failure, so 0
   // means success here.

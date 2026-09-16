@@ -5,7 +5,7 @@ SConstruct for the dt_backend GDExtension.
 This links a small C++ shim (src/dt_backend.cpp) against:
   1. godot-cpp (vendored as a git submodule at ./godot-cpp, pinned to the
      4.5 branch -- the closest available branch to the installed Godot
-     4.6.beta3 editor; see godot-poc/build-darktable.md for details).
+     4.6.beta3 editor; see ../../docs/build-darktable.md for details).
   2. darktable's `lib_darktable` shared library (built separately from
      ../../source via build.sh/CMake) plus its GTK3 dependency.
 
@@ -97,7 +97,7 @@ dt_lib_name = env["dt_lib_name"]
 if not os.path.isdir(dt_build_dir):
     print(
         "*** dt_backend: warning: dt_build_dir '%s' does not exist yet. "
-        "Build darktable first (see ../build-darktable.md) or pass "
+        "Build darktable first (see ../../docs/build-darktable.md) or pass "
         "dt_build_dir=<path> on the scons command line. Continuing to "
         "configure the build; linking will fail until the lib exists."
         % dt_build_dir
@@ -133,26 +133,32 @@ env.Append(LIBS=[dt_lib_name])
 # executable (Godot.app) -- it ends up looking for
 # Godot.app/Contents/Resources/share/darktable, which doesn't exist. dt_init()
 # accepts explicit `--datadir`/`--moduledir` argv overrides
-# (source/src/common/darktable.c:1132-1140), so bake this build's actual
-# paths in as compile definitions for dt_backend.cpp to pass through.
-env.Append(
-    CPPDEFINES=[
-        ("DT_DATADIR_PATH", '\\"%s\\"' % os.path.abspath(os.path.join(dt_build_dir, "share", "darktable"))),
-        ("DT_MODULEDIR_PATH", '\\"%s\\"' % os.path.abspath(os.path.join(dt_build_dir, "lib", "darktable"))),
-    ]
-)
+# (source/src/common/darktable.c:1132-1140). Rather than baking this build
+# machine's absolute paths in as compile definitions (which broke portability
+# -- see PORTABILITY_PLAN.md section 3), dt_backend.cpp now computes these at
+# runtime instead (env var override / bundle-relative / dladdr-relative
+# fallback chain), so no CPPDEFINES are needed here at all.
 
 # libdarktable.dylib's own install name is a bare "@rpath/libdarktable.dylib"
 # (CMake's default on macOS), so the loader needs an explicit rpath to find
 # it at runtime -- otherwise dlopen()ing dt_backend from Godot fails with
 # "Library not loaded: @rpath/libdarktable.dylib" even though it links fine.
 if env["platform"] == "macos":
+    # Dev-loop rpath: lets the extension run directly from godot-poc/project/bin
+    # against source/build/bin (this exact build machine's absolute path)
+    # without a full export, unchanged from before portability work started.
     env.Append(LINKFLAGS=["-Wl,-rpath," + os.path.join(dt_build_dir, "bin")])
+    # Bundle rpath: lets the *same* binary also find libdarktable.dylib once
+    # Phase 2's dependency-bundling step copies it next to libdt_backend
+    # inside an exported .app's Contents/Frameworks/. dyld tries each
+    # LC_RPATH in order and uses the first one that resolves, so both rpaths
+    # can coexist without a dual-build -- see PORTABILITY_PLAN.md section 3.4.
+    env.Append(LINKFLAGS=["-Wl,-rpath,@loader_path"])
 
 # darktable.h transitively pulls in dozens of third-party headers (GTK3,
 # glib, librsvg, json-glib, exiv2, lensfun, OpenCV, OpenEXR, ...). Rather
 # than hand-maintain that list, dt_link_flags.json is generated once from
-# this machine's actual CMake build (see build-darktable.md: "regenerating
+# this machine's actual CMake build (see ../../docs/build-darktable.md: "regenerating
 # dt_link_flags.json") by dumping compile_commands.json's include paths for
 # common/darktable.c and build.ninja's LINK_LIBRARIES for libdarktable.dylib.
 flags_path = os.path.join(extension_dir, "dt_link_flags.json")
@@ -176,7 +182,7 @@ else:
         "*** dt_backend: warning: %s not found -- falling back to bare "
         "pkg-config gtk+-3.0 flags, which is NOT enough to satisfy "
         "darktable.h's transitive includes (librsvg, json-glib, exiv2, "
-        "lensfun, etc). See build-darktable.md to regenerate it." % flags_path
+        "lensfun, etc). See ../../docs/build-darktable.md to regenerate it." % flags_path
     )
     env.ParseConfig("pkg-config gtk+-3.0 --cflags --libs")
 
