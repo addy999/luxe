@@ -31,10 +31,8 @@ void DtBackend::_bind_methods() {
   ClassDB::bind_method(D_METHOD("set_saturation", "value"), &DtBackend::set_saturation);
   ClassDB::bind_method(D_METHOD("set_vibrance", "value"), &DtBackend::set_vibrance);
   ClassDB::bind_method(D_METHOD("set_tonecurve", "points"), &DtBackend::set_tonecurve);
-  ClassDB::bind_method(D_METHOD("set_white_balance_red", "value"), &DtBackend::set_white_balance_red);
-  ClassDB::bind_method(D_METHOD("set_white_balance_blue", "value"), &DtBackend::set_white_balance_blue);
-  ClassDB::bind_method(D_METHOD("get_white_balance_red"), &DtBackend::get_white_balance_red);
-  ClassDB::bind_method(D_METHOD("get_white_balance_blue"), &DtBackend::get_white_balance_blue);
+  ClassDB::bind_method(D_METHOD("set_white_balance_temperature", "kelvin"), &DtBackend::set_white_balance_temperature);
+  ClassDB::bind_method(D_METHOD("get_white_balance_temperature"), &DtBackend::get_white_balance_temperature);
   ClassDB::bind_method(D_METHOD("process_fit", "max_width", "max_height"), &DtBackend::process_fit);
   ClassDB::bind_method(D_METHOD("render_view", "viewport_w", "viewport_h", "scale", "center_x", "center_y"), &DtBackend::render_view);
   ClassDB::bind_method(D_METHOD("export_image", "path"), &DtBackend::export_image);
@@ -410,8 +408,8 @@ bool DtBackend::load_image(String path) {
   shadhi_module = nullptr;
   velvia_module = nullptr;
   vibrance_module = nullptr;
-  temperature_module = nullptr;
   tonecurve_module = nullptr;
+  channelmixer_rgb_module = nullptr;
   native_width = 0;
   native_height = 0;
   return true;
@@ -636,99 +634,64 @@ void DtBackend::set_tonecurve(PackedVector2Array points) {
   dt_dev_add_history_item_ext(&dev, tonecurve_module, TRUE, TRUE);
 }
 
-// Section F, same pattern as set_exposure(): locate the temperature ("white
-// balance") module once, clamp to `red`'s $MIN/$MAX (0.0..8.0), write only
-// that field, enable, record a headless history item. See the
-// dt_iop_temperature_params_t comment in dt_backend.h: unlike other modules,
-// this one's meaningful "default" is per-image (as-shot WB), read back via
-// get_white_balance_red()/_blue() rather than a fixed constant.
-void DtBackend::set_white_balance_red(float value) {
+// White balance via channelmixerrgb's chromatic adaptation. See the NOTE on
+// white balance above dt_iop_channelmixer_rgb_params_t in dt_backend.h for
+// why this targets channelmixerrgb ("color calibration") instead of
+// temperature. Locates the module once (op name "channelmixerrgb"), clamps
+// to TEMP_MIN/TEMP_MAX, sets illuminant = DT_ILLUMINANT_D (daylight) and
+// adaptation = DT_ADAPTATION_CAT16 so `temperature` alone drives the CAT
+// (commit_params() derives x/y from illuminant+temperature for
+// DT_ILLUMINANT_D; see channelmixerrgb.c:3092-3098), enables the module, and
+// records a headless history item -- same pattern as every other setter
+// here. Does NOT touch `temperature` (source/src/iop/temperature.c); that
+// module is left exactly as darktable itself initialized it.
+void DtBackend::set_white_balance_temperature(float kelvin) {
   if(!image_loaded) {
-    UtilityFunctions::printerr("DtBackend::set_white_balance_red: no image loaded");
+    UtilityFunctions::printerr("DtBackend::set_white_balance_temperature: no image loaded");
     return;
   }
 
-  if(value < 0.0f) value = 0.0f;
-  if(value > 8.0f) value = 8.0f;
+  if(kelvin < DT_BACKEND_CHANNELMIXERRGB_TEMP_MIN) kelvin = DT_BACKEND_CHANNELMIXERRGB_TEMP_MIN;
+  if(kelvin > DT_BACKEND_CHANNELMIXERRGB_TEMP_MAX) kelvin = DT_BACKEND_CHANNELMIXERRGB_TEMP_MAX;
 
-  if(!temperature_module) {
-    temperature_module = dt_iop_get_module_from_list(dev.iop, "temperature");
-    if(!temperature_module) {
-      UtilityFunctions::printerr("DtBackend::set_white_balance_red: could not find \"temperature\" module in dev.iop");
+  if(!channelmixer_rgb_module) {
+    channelmixer_rgb_module = dt_iop_get_module_from_list(dev.iop, "channelmixerrgb");
+    if(!channelmixer_rgb_module) {
+      UtilityFunctions::printerr("DtBackend::set_white_balance_temperature: could not find \"channelmixerrgb\" module in dev.iop");
       return;
     }
   }
 
-  dt_iop_temperature_params_t *p = (dt_iop_temperature_params_t *)temperature_module->params;
-  p->red = value;
-  temperature_module->enabled = TRUE;
+  dt_iop_channelmixer_rgb_params_t *p = (dt_iop_channelmixer_rgb_params_t *)channelmixer_rgb_module->params;
+  p->illuminant = DT_BACKEND_ILLUMINANT_D;
+  p->adaptation = DT_BACKEND_ADAPTATION_CAT16;
+  p->temperature = kelvin;
+  channelmixer_rgb_module->enabled = TRUE;
 
-  dt_dev_add_history_item_ext(&dev, temperature_module, TRUE, TRUE);
+  dt_dev_add_history_item_ext(&dev, channelmixer_rgb_module, TRUE, TRUE);
 }
 
-void DtBackend::set_white_balance_blue(float value) {
+// Read-only: returns channelmixerrgb's current `temperature` without
+// touching enabled/history, so the UI can seed its White Balance slider from
+// the real per-image as-shot default (see set_white_balance_temperature()
+// comment above, and the reload_defaults() note in dt_backend.h). Returns
+// 0.0f if no image is loaded or the module can't be found.
+float DtBackend::get_white_balance_temperature() {
   if(!image_loaded) {
-    UtilityFunctions::printerr("DtBackend::set_white_balance_blue: no image loaded");
-    return;
-  }
-
-  if(value < 0.0f) value = 0.0f;
-  if(value > 8.0f) value = 8.0f;
-
-  if(!temperature_module) {
-    temperature_module = dt_iop_get_module_from_list(dev.iop, "temperature");
-    if(!temperature_module) {
-      UtilityFunctions::printerr("DtBackend::set_white_balance_blue: could not find \"temperature\" module in dev.iop");
-      return;
-    }
-  }
-
-  dt_iop_temperature_params_t *p = (dt_iop_temperature_params_t *)temperature_module->params;
-  p->blue = value;
-  temperature_module->enabled = TRUE;
-
-  dt_dev_add_history_item_ext(&dev, temperature_module, TRUE, TRUE);
-}
-
-// Read-only: returns the temperature module's current red/blue coefficients
-// without touching enabled/history, so the UI can seed its White Balance
-// sliders from the real per-image as-shot default (see set_white_balance_red()
-// comment above). Returns 0.0f if no image is loaded or the module can't be
-// found.
-float DtBackend::get_white_balance_red() {
-  if(!image_loaded) {
-    UtilityFunctions::printerr("DtBackend::get_white_balance_red: no image loaded");
+    UtilityFunctions::printerr("DtBackend::get_white_balance_temperature: no image loaded");
     return 0.0f;
   }
 
-  if(!temperature_module) {
-    temperature_module = dt_iop_get_module_from_list(dev.iop, "temperature");
-    if(!temperature_module) {
-      UtilityFunctions::printerr("DtBackend::get_white_balance_red: could not find \"temperature\" module in dev.iop");
+  if(!channelmixer_rgb_module) {
+    channelmixer_rgb_module = dt_iop_get_module_from_list(dev.iop, "channelmixerrgb");
+    if(!channelmixer_rgb_module) {
+      UtilityFunctions::printerr("DtBackend::get_white_balance_temperature: could not find \"channelmixerrgb\" module in dev.iop");
       return 0.0f;
     }
   }
 
-  dt_iop_temperature_params_t *p = (dt_iop_temperature_params_t *)temperature_module->params;
-  return p->red;
-}
-
-float DtBackend::get_white_balance_blue() {
-  if(!image_loaded) {
-    UtilityFunctions::printerr("DtBackend::get_white_balance_blue: no image loaded");
-    return 0.0f;
-  }
-
-  if(!temperature_module) {
-    temperature_module = dt_iop_get_module_from_list(dev.iop, "temperature");
-    if(!temperature_module) {
-      UtilityFunctions::printerr("DtBackend::get_white_balance_blue: could not find \"temperature\" module in dev.iop");
-      return 0.0f;
-    }
-  }
-
-  dt_iop_temperature_params_t *p = (dt_iop_temperature_params_t *)temperature_module->params;
-  return p->blue;
+  dt_iop_channelmixer_rgb_params_t *p = (dt_iop_channelmixer_rgb_params_t *)channelmixer_rgb_module->params;
+  return p->temperature;
 }
 
 // Shared re-sync + native-dimension refresh, used by both process_fit() and
@@ -1035,8 +998,8 @@ void DtBackend::cleanup() {
     shadhi_module = nullptr;
     velvia_module = nullptr;
     vibrance_module = nullptr;
-    temperature_module = nullptr;
     tonecurve_module = nullptr;
+    channelmixer_rgb_module = nullptr;
     }
 
   if(initialized) {
@@ -1069,8 +1032,8 @@ void DtBackend::unload_image() {
   shadhi_module = nullptr;
   velvia_module = nullptr;
   vibrance_module = nullptr;
-  temperature_module = nullptr;
   tonecurve_module = nullptr;
+  channelmixer_rgb_module = nullptr;
 
   processed_width = 0;
   processed_height = 0;

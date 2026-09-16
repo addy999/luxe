@@ -88,57 +88,27 @@ var _params: Dictionary = {
 	# _on_tone_curve_changed() below. This default (identity, 2 nodes) matches
 	# tonecurve.c's own init() default.
 	"tonecurve": PackedVector2Array([Vector2(0.0, 0.0), Vector2(1.0, 1.0)]),
-	# wb_red/wb_blue are DERIVED, not directly slider-owned -- see
-	# _wb_kelvin_to_red_blue() below. They're computed from the single White
-	# Balance (K) slider plus this image's as-shot baseline
-	# (_wb_baseline_red/_wb_baseline_blue), then land here for
-	# _apply_params_to_backend() to push, same as every other param. These 1.0
-	# placeholders only matter before any image is loaded.
-	"wb_red": 1.0,
-	"wb_blue": 1.0,
+	# wb_temperature drives channelmixerrgb's chromatic adaptation directly in
+	# Kelvin -- see the White Balance (K) slider comment below. This 6500.0
+	# placeholder only matters before any image is loaded; on load it's
+	# replaced by the image's real as-shot temperature (see _on_image_loaded()).
+	"wb_temperature": 6500.0,
 }
 
 # --- White Balance (K) slider mapping -----------------------------------------
-# The temperature module's real params are red/blue multipliers, not a single
-# Kelvin value -- and converting an absolute Kelvin to camera-correct
-# multipliers needs darktable's per-camera color matrix + spectral tables
-# (source/src/iop/temperature.c's _temp2mul()/_prepare_matrices()), which are
-# private to that module and only populated via its (GUI-only) gui_init(), not
-# available headlessly here. So this is an intentional simplification, not a
-# colorimetric CCT conversion: a single slider, labeled in Kelvin for a
-# familiar "cool <-> warm" feel, linearly biases this image's as-shot
-# red/blue baseline (_wb_baseline_red/_wb_baseline_blue, read once via
-# backend.get_white_balance_red()/_blue() at load time). At
-# _WB_REFERENCE_KELVIN the slider reproduces the as-shot baseline exactly
-# (bias 0); moving it up/down ramps red up/blue down (warmer) or red down/blue
-# up (cooler), matching the Lightroom/ACR convention where a HIGHER Kelvin
-# value looks warmer/more orange and a LOWER value looks cooler/more blue.
+# White balance is implemented via channelmixerrgb ("color calibration")'s
+# chromatic adaptation, not the temperature module -- see the NOTE on white
+# balance above dt_iop_channelmixer_rgb_params_t in dt_backend.h for the full
+# rationale (this app's default darktable workflow is scene-referred/sigmoid,
+# where temperature is pinned neutral and channelmixerrgb owns the real
+# camera-to-D65 correction). Unlike the old temperature-based approach, this
+# is a REAL colorimetric CCT: the slider value is fed straight to
+# channelmixerrgb's `temperature` field (illuminant pinned to DT_ILLUMINANT_D,
+# daylight), and darktable's own illuminant_to_xy() derives the correct
+# chromatic-adaptation matrix from it. No linear bias hack needed.
 const _WB_MIN_KELVIN: float = 2000.0
 const _WB_MAX_KELVIN: float = 12000.0
 const _WB_REFERENCE_KELVIN: float = 6500.0
-# At the slider's extremes, red/blue are biased by up to +/-50% of the as-shot
-# baseline -- enough to be clearly visible without being able to push the
-# clamped backend values ([0, 8], see dt_backend.cpp set_white_balance_red/
-# _blue) to a degenerate extreme.
-const _WB_MAX_BIAS: float = 0.5
-
-var _wb_baseline_red: float = 1.0
-var _wb_baseline_blue: float = 1.0
-
-
-# Maps the White Balance (K) slider to (red, blue) multipliers -- see the
-# comment block above. `kelvin` is clamped to the slider's own range, so the
-# two branches below can't divide by a zero-width half-range.
-func _wb_kelvin_to_red_blue(kelvin: float) -> Vector2:
-	var k: float = clampf(kelvin, _WB_MIN_KELVIN, _WB_MAX_KELVIN)
-	var t: float
-	if k >= _WB_REFERENCE_KELVIN:
-		t = (k - _WB_REFERENCE_KELVIN) / (_WB_MAX_KELVIN - _WB_REFERENCE_KELVIN)
-	else:
-		t = (k - _WB_REFERENCE_KELVIN) / (_WB_REFERENCE_KELVIN - _WB_MIN_KELVIN)
-	var red: float = _wb_baseline_red * (1.0 + t * _WB_MAX_BIAS)
-	var blue: float = _wb_baseline_blue * (1.0 - t * _WB_MAX_BIAS)
-	return Vector2(red, blue)
 
 var _processing: bool = false
 # A render request that arrived while a render was already in flight. We store no
@@ -395,18 +365,15 @@ func _on_file_dialog_file_selected(path: String) -> void:
 	_params["vibrance"] = 25.0
 	tone_curve_editor.reset_to_default()
 	# White balance has no fixed default -- read this image's real as-shot
-	# red/blue coefficients back from the backend (already sitting in the
-	# temperature module's params right after load_image()) as the baseline
-	# _wb_kelvin_to_red_blue() biases from, rather than resetting to a
-	# hardcoded constant. See dt_backend.h's dt_iop_temperature_params_t
-	# comment and the White Balance (K) slider mapping comment above _params.
-	_wb_baseline_red = backend.get_white_balance_red()
-	_wb_baseline_blue = backend.get_white_balance_blue()
-	white_balance_slider.value = _WB_REFERENCE_KELVIN
-	white_balance_value_label.text = "%dK" % roundi(_WB_REFERENCE_KELVIN)
-	var wb: Vector2 = _wb_kelvin_to_red_blue(_WB_REFERENCE_KELVIN)
-	_params["wb_red"] = wb.x
-	_params["wb_blue"] = wb.y
+	# temperature back from the backend (channelmixerrgb's reload_defaults()
+	# already resolved it from the camera's raw WB coefficients right after
+	# load_image(), before any setter has run -- see dt_backend.h's NOTE on
+	# white balance) and seed the slider with it directly, so a fresh load
+	# stays visually neutral.
+	var as_shot_temperature: float = backend.get_white_balance_temperature()
+	white_balance_slider.value = as_shot_temperature
+	white_balance_value_label.text = "%dK" % roundi(as_shot_temperature)
+	_params["wb_temperature"] = as_shot_temperature
 	var default_edit_id: int = _pick_default_edit_mode_id(
 		backend.get_raw_width(), backend.get_raw_height())
 	edit_res_option.select(default_edit_id)
@@ -460,9 +427,7 @@ func _on_tone_curve_changed(points: PackedVector2Array) -> void:
 
 func _on_white_balance_slider_value_changed(value: float) -> void:
 	white_balance_value_label.text = "%dK" % roundi(value)
-	var wb: Vector2 = _wb_kelvin_to_red_blue(value)
-	_params["wb_red"] = wb.x
-	_params["wb_blue"] = wb.y
+	_params["wb_temperature"] = value
 	_request_render()
 
 
@@ -491,8 +456,7 @@ func _apply_params_to_backend() -> void:
 	backend.set_saturation(_params["saturation"])
 	backend.set_vibrance(_params["vibrance"])
 	backend.set_tonecurve(_params["tonecurve"])
-	backend.set_white_balance_red(_params["wb_red"])
-	backend.set_white_balance_blue(_params["wb_blue"])
+	backend.set_white_balance_temperature(_params["wb_temperature"])
 
 
 func _start_process() -> void:

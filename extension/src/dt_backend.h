@@ -189,28 +189,159 @@ typedef struct dt_iop_vibrance_params_t
   float amount;
 } dt_iop_vibrance_params_t;
 
-// dt_iop_temperature_params_t is likewise private to
-// source/src/iop/temperature.c, so it's redeclared here to match that file
-// exactly (source/src/iop/temperature.c:67-74, DT_MODULE_INTROSPECTION
-// version 4). We drive `red` and `blue` ($MIN: 0.0 $MAX: 8.0 each), but the
-// whole struct (including `green`, `various`, `preset`) must be reproduced
-// verbatim -- field order/types are load-bearing. Unlike every other module
-// here, this struct has NO $DEFAULT in the source: darktable computes the
-// real default per-image from the camera's as-shot white-balance
-// coefficients at load time (reload_defaults()), so `params` already holds
-// the correct as-shot red/green/blue right after load_image() succeeds, same
-// as every other module's untouched fields. get_white_balance_red()/_blue()
-// read that back so the UI can seed its sliders from the real as-shot value
-// instead of a hardcoded default. If temperature.c's struct or introspection
-// version changes upstream, update this block.
-typedef struct dt_iop_temperature_params_t
+// NOTE on white balance (see docs/DARKTABLE_API_NOTES.md section F,
+// channelmixerrgb subsection, and the migration writeup this comment
+// summarizes): earlier revisions of this backend drove `temperature.c`'s
+// red/green/blue directly to implement white balance, matching darktable's
+// LEGACY workflow where `temperature` owns the camera-to-D65 correction. In
+// the modern scene-referred (sigmoid) workflow this checkout defaults to,
+// `temperature` is instead pinned to a neutral D65_LATE preset (1.0/1.0/1.0)
+// and the real chromatic adaptation is performed by `channelmixerrgb` (op
+// name "channelmixerrgb", display name "color calibration"; see
+// source/src/iop/channelmixerrgb.c reload_defaults(), lines ~3844-3888).
+// Force-enabling/committing `temperature` for WB fought that handoff and
+// left the camera-to-D65 correction never applied, which is the "green
+// tint" bug. `temperature` is now left completely untouched by this backend
+// (no setter, no getter, no forced enable/history item); the struct
+// redeclaration for it has been removed along with set/get_white_balance_red/
+// _blue(). White balance is now driven via set_white_balance_temperature()
+// below, which targets `channelmixerrgb`'s `temperature`/`illuminant`/
+// `adaptation` fields instead. If a future task needs to read/write
+// `temperature.c`'s own params again, its struct was: { float red; float
+// green; float blue; float various; int preset; } (source/src/iop/
+// temperature.c:67-74, DT_MODULE_INTROSPECTION version 4).
+
+// dt_iop_channelmixer_rgb_params_t is private to
+// source/src/iop/channelmixerrgb.c, so it's redeclared here to match that
+// file exactly (source/src/iop/channelmixerrgb.c:92-116, DT_MODULE_
+// INTROSPECTION version 3). CHANNEL_SIZE is 4 (channelmixerrgb.c:73). We only
+// drive `illuminant`, `adaptation`, and `temperature` ($MIN: TEMP_MIN=1667.0
+// $MAX: TEMP_MAX=25000.0 $DEFAULT: 5003.0) to implement white balance as a
+// chromatic-adaptation-transform (CAT) problem: illuminant = DT_ILLUMINANT_D
+// (daylight) with `temperature` set from the Kelvin slider, and adaptation =
+// DT_ADAPTATION_CAT16 (both are the module's own defaults for a
+// non-monochrome raw with no other CAT already registered on the pipe -- see
+// reload_defaults() below). The channel-mix matrix (red/green/blue/grey[])
+// and everything else is left at whatever darktable itself initialized, so
+// this backend only ever touches 3 of the ~20 fields. The WHOLE struct must
+// still be reproduced verbatim -- field order/types are load-bearing, since
+// the opaque void* params blob is indexed by offset. Every field here is
+// 4 bytes (float, gboolean/gint, or a 4-byte enum), so the layout is
+// padding-free.
+//
+// Per source/src/iop/channelmixerrgb.c commit_params() (lines ~3092-3098):
+// for any illuminant OTHER than DT_ILLUMINANT_CAMERA/DT_ILLUMINANT_CUSTOM,
+// the module derives the CIE xy chromaticity coordinates (`x`,`y` in this
+// struct) FROM `illuminant`+`temperature` at commit time via
+// illuminant_to_xy() -- it does not read back the `x`,`y` fields we don't
+// set for DT_ILLUMINANT_D. So setting `temperature` alone (with illuminant
+// pinned to DT_ILLUMINANT_D) is sufficient to drive the adaptation matrix;
+// `x`/`y` are left untouched (they default to 0.333 per the struct's own
+// $DEFAULT and are irrelevant for DT_ILLUMINANT_D).
+//
+// Per reload_defaults() (channelmixerrgb.c lines ~3844-3888): on a fresh RAW
+// load with no other module already registered as the pipe's CAT, darktable
+// itself computes the AS-SHOT temperature from the camera's raw white-balance
+// coefficients (find_temperature_from_raw_coeffs()) and typically resolves
+// illuminant to DT_ILLUMINANT_CAMERA or DT_ILLUMINANT_D (via
+// _check_if_close_to_daylight()), NOT the struct's flat $DEFAULT: 5003.0.
+// get_white_balance_temperature() below reads that already-resolved
+// as-shot value back (before this backend's setter ever runs) so the UI can
+// seed its slider from the real per-image default, matching the old
+// get_white_balance_red()/_blue() pattern. If channelmixerrgb.c's struct or
+// introspection version changes upstream, update this block.
+#define DT_BACKEND_CHANNELMIXERRGB_CHANNEL_SIZE 4
+
+typedef enum dt_backend_illuminant_t
 {
-  float red;
-  float green;
-  float blue;
-  float various;
-  int preset;
-} dt_iop_temperature_params_t;
+  DT_BACKEND_ILLUMINANT_PIPE            = 0,
+  DT_BACKEND_ILLUMINANT_A               = 1,
+  DT_BACKEND_ILLUMINANT_D               = 2,
+  DT_BACKEND_ILLUMINANT_E               = 3,
+  DT_BACKEND_ILLUMINANT_F               = 4,
+  DT_BACKEND_ILLUMINANT_LED             = 5,
+  DT_BACKEND_ILLUMINANT_BB              = 6,
+  DT_BACKEND_ILLUMINANT_CUSTOM          = 7,
+  DT_BACKEND_ILLUMINANT_DETECT_SURFACES = 8,
+  DT_BACKEND_ILLUMINANT_DETECT_EDGES    = 9,
+  DT_BACKEND_ILLUMINANT_CAMERA          = 10,
+} dt_backend_illuminant_t;
+
+typedef enum dt_backend_illuminant_fluo_t
+{
+  DT_BACKEND_ILLUMINANT_FLUO_F1  = 0,
+  DT_BACKEND_ILLUMINANT_FLUO_F2  = 1,
+  DT_BACKEND_ILLUMINANT_FLUO_F3  = 2,
+  DT_BACKEND_ILLUMINANT_FLUO_F4  = 3,
+  DT_BACKEND_ILLUMINANT_FLUO_F5  = 4,
+  DT_BACKEND_ILLUMINANT_FLUO_F6  = 5,
+  DT_BACKEND_ILLUMINANT_FLUO_F7  = 6,
+  DT_BACKEND_ILLUMINANT_FLUO_F8  = 7,
+  DT_BACKEND_ILLUMINANT_FLUO_F9  = 8,
+  DT_BACKEND_ILLUMINANT_FLUO_F10 = 9,
+  DT_BACKEND_ILLUMINANT_FLUO_F11 = 10,
+  DT_BACKEND_ILLUMINANT_FLUO_F12 = 11,
+} dt_backend_illuminant_fluo_t;
+
+typedef enum dt_backend_illuminant_led_t
+{
+  DT_BACKEND_ILLUMINANT_LED_B1   = 0,
+  DT_BACKEND_ILLUMINANT_LED_B2   = 1,
+  DT_BACKEND_ILLUMINANT_LED_B3   = 2,
+  DT_BACKEND_ILLUMINANT_LED_B4   = 3,
+  DT_BACKEND_ILLUMINANT_LED_B5   = 4,
+  DT_BACKEND_ILLUMINANT_LED_BH1  = 5,
+  DT_BACKEND_ILLUMINANT_LED_RGB1 = 6,
+  DT_BACKEND_ILLUMINANT_LED_V1   = 7,
+  DT_BACKEND_ILLUMINANT_LED_V2   = 8,
+} dt_backend_illuminant_led_t;
+
+typedef enum dt_backend_adaptation_t
+{
+  DT_BACKEND_ADAPTATION_LINEAR_BRADFORD = 0,
+  DT_BACKEND_ADAPTATION_CAT16           = 1,
+  DT_BACKEND_ADAPTATION_FULL_BRADFORD   = 2,
+  DT_BACKEND_ADAPTATION_XYZ             = 3,
+  DT_BACKEND_ADAPTATION_RGB             = 4,
+} dt_backend_adaptation_t;
+
+typedef enum dt_backend_channelmixerrgb_version_t
+{
+  DT_BACKEND_CHANNELMIXERRGB_V_1 = 0,
+  DT_BACKEND_CHANNELMIXERRGB_V_2 = 1,
+  DT_BACKEND_CHANNELMIXERRGB_V_3 = 2,
+} dt_backend_channelmixerrgb_version_t;
+
+// TEMP_MIN/TEMP_MAX from channelmixerrgb.c:82-83, used to clamp
+// set_white_balance_temperature()'s input.
+#define DT_BACKEND_CHANNELMIXERRGB_TEMP_MIN 1667.0f
+#define DT_BACKEND_CHANNELMIXERRGB_TEMP_MAX 25000.0f
+
+typedef struct dt_iop_channelmixer_rgb_params_t
+{
+  /* params of v1 and v2 */
+  float red[DT_BACKEND_CHANNELMIXERRGB_CHANNEL_SIZE];
+  float green[DT_BACKEND_CHANNELMIXERRGB_CHANNEL_SIZE];
+  float blue[DT_BACKEND_CHANNELMIXERRGB_CHANNEL_SIZE];
+  float saturation[DT_BACKEND_CHANNELMIXERRGB_CHANNEL_SIZE];
+  float lightness[DT_BACKEND_CHANNELMIXERRGB_CHANNEL_SIZE];
+  float grey[DT_BACKEND_CHANNELMIXERRGB_CHANNEL_SIZE];
+  gboolean normalize_R, normalize_G, normalize_B, normalize_sat, normalize_light, normalize_grey;
+  dt_backend_illuminant_t illuminant;
+  dt_backend_illuminant_fluo_t illum_fluo;
+  dt_backend_illuminant_led_t illum_led;
+  dt_backend_adaptation_t adaptation;
+  float x, y;
+  float temperature;
+  float gamut;
+  gboolean clip;
+
+  /* params of v3 */
+  dt_backend_channelmixerrgb_version_t version;
+
+  /* always add new params after this so we can import legacy params with memcpy on the common part of the struct */
+
+} dt_iop_channelmixer_rgb_params_t;
 
 // dt_iop_tonecurve_params_t is likewise private to source/src/iop/tonecurve.c,
 // so it's redeclared here to match that file exactly (source/src/iop/
@@ -279,8 +410,11 @@ private:
   dt_iop_module_t *shadhi_module = nullptr;
   dt_iop_module_t *velvia_module = nullptr;
   dt_iop_module_t *vibrance_module = nullptr;
-  dt_iop_module_t *temperature_module = nullptr;
   dt_iop_module_t *tonecurve_module = nullptr;
+  // White balance now targets channelmixerrgb ("color calibration"), not
+  // temperature -- see the NOTE on white balance above
+  // dt_iop_channelmixer_rgb_params_t.
+  dt_iop_module_t *channelmixer_rgb_module = nullptr;
 
   int processed_width = 0;
   int processed_height = 0;
@@ -335,15 +469,19 @@ public:
   void set_highlights(float value);
   void set_saturation(float value);
   void set_vibrance(float value);
-  void set_white_balance_red(float value);
-  void set_white_balance_blue(float value);
-  // Read back the temperature module's current (as-shot, pre-edit) red/blue
-  // coefficients so the UI can seed its White Balance sliders from the real
-  // per-image default instead of a hardcoded constant -- see the
-  // dt_iop_temperature_params_t comment above. Returns 0.0f (and prints an
-  // error) if no image is loaded or the module can't be found.
-  float get_white_balance_red();
-  float get_white_balance_blue();
+  // White balance via channelmixerrgb's chromatic adaptation -- see the NOTE
+  // on white balance above dt_iop_channelmixer_rgb_params_t. Sets illuminant
+  // = DT_ILLUMINANT_D, adaptation = DT_ADAPTATION_CAT16, and `temperature`
+  // (clamped to DT_BACKEND_CHANNELMIXERRGB_TEMP_MIN/_MAX), leaving the
+  // channel-mix matrix untouched. Enables the module and records a headless
+  // history item, same pattern as every other setter here.
+  void set_white_balance_temperature(float kelvin);
+  // Read back channelmixerrgb's current `temperature` (as-shot right after
+  // load_image(), pre-edit) so the UI can seed its White Balance slider from
+  // the real per-image default instead of a hardcoded constant. Returns
+  // 0.0f (and prints an error) if no image is loaded or the module can't be
+  // found.
+  float get_white_balance_temperature();
   // Drives the tonecurve module's L-channel spline (see dt_iop_tonecurve_params_t
   // above). `points` is a caller-sorted list of {x,y} control points in [0,1]x[0,1]
   // (the coordinate space darktable's own curve editor uses), first point x==0,
