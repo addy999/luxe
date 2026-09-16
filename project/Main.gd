@@ -45,6 +45,7 @@ extends Control
 @onready var edit_res_option: OptionButton = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/EditResOptionButton
 @onready var open_button: Button = $Root/TopBar/TopBarRow/OpenButton
 @onready var export_button: Button = $Root/TopBar/TopBarRow/ExportButton
+@onready var theme_button: Button = $Root/TopBar/TopBarRow/ThemeButton
 @onready var status_label: Label = $Root/BottomBar/BottomRow/StatusLabel
 @onready var resolution_label: Label = $Root/BottomBar/BottomRow/ResolutionLabel
 # Display-zoom controls live in the top bar now: a continuous slider (native-
@@ -307,6 +308,9 @@ func _ready() -> void:
 	# than a _gui_input override) is required because this script is on the root
 	# Control, not the TextureRect.
 	texture_rect.gui_input.connect(_on_texture_rect_gui_input)
+
+	ThemeManager.theme_changed.connect(_on_theme_changed)
+	_on_theme_changed(ThemeManager.is_dark)
 
 	_animate_entrance()
 
@@ -591,6 +595,14 @@ func _on_zoom_slider_value_changed(value: float) -> void:
 	_display_zoom = value / 100.0
 	fit_button.set_pressed_no_signal(false)
 	_apply_zoom_change()
+
+
+func _on_theme_button_pressed() -> void:
+	ThemeManager.toggle_theme()
+
+
+func _on_theme_changed(is_dark: bool) -> void:
+	theme_button.text = "Light Mode" if is_dark else "Dark Mode"
 
 
 func _on_fit_button_toggled(pressed: bool) -> void:

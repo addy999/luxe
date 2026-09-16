@@ -15,6 +15,10 @@ run/main_scene="res://Main.tscn"
 config/features=PackedStringArray("4.6")
 boot_splash/bg_color=Color(0.61861694, 0.618617, 0.6186168, 1)
 
+[autoload]
+
+ThemeManager="*res://ThemeManager.gd"
+
 [display]
 
 window/size/viewport_width=1920
