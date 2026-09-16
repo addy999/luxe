@@ -13,27 +13,19 @@ config_version=5
 config/name="darktable-godot-poc"
 run/main_scene="res://Main.tscn"
 config/features=PackedStringArray("4.6")
+boot_splash/bg_color=Color(0.61861694, 0.618617, 0.6186168, 1)
 
 [display]
 
-window/size/viewport_width=1024
-window/size/viewport_height=768
+window/size/viewport_width=1920
+window/size/viewport_height=1080
 window/stretch/mode="canvas_items"
+
+[dt_backend]
+
+datadir="res://../../source/build/share/darktable"
+moduledir="res://../../source/build/lib/darktable"
 
 [rendering]
 
 textures/vram_compression/import_etc2_astc=true
-
-[dt_backend]
-
-; Local dev/testing only -- resolved relative to this project dir (res://) and
-; passed to the DtBackend GDExtension as DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR
-; before init() is called (see Main.gd::_configure_dt_backend_env()). Not used
-; by an exported .app (that path is resolved at runtime via
-; Contents/Resources/darktable/{share,lib}/darktable -- see
-; PORTABILITY_PLAN.md section 3.5). Edit these here (Project > Project Settings
-; > General > Dt Backend, enable "Advanced Settings" to see them) if your
-; darktable checkout/build lives somewhere other than the sibling source/build/
-; this repo builds by default.
-datadir="res://../../source/build/share/darktable"
-moduledir="res://../../source/build/lib/darktable"

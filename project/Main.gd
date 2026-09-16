@@ -103,7 +103,37 @@ var _dragging: bool = false
 # init() runs. If the vars are already present in the real environment (e.g.
 # someone did launch from a terminal with an explicit override), leave them
 # alone -- an explicit external override should win over this project default.
+#
+# BUNDLE-SAFETY GUARD (PORTABILITY_PLAN.md 5.3.4 root-cause fix): this must
+# never run in an exported/standalone build. NOTE: "standalone" is NOT a real
+# Godot feature tag (verified against Godot's own feature-tags doc; an
+# earlier version of this guard used it and it silently always evaluated to
+# false, since OS.has_feature() returns false for unknown tags rather than
+# erroring -- the guard looked correct but never actually fired). The real,
+# documented tag is "editor": true when running in the editor OR when running
+# the project *from* the editor, false only for an exported build. So the
+# correct guard is `not OS.has_feature("editor")`, i.e. "only do this
+# dev-convenience env var setup when running under the editor." Without this
+# guard, an exported .app would set DT_BACKEND_DATADIR to the res://-relative
+# dev-tree default below, globalized (ProjectSettings.globalize_path() on a
+# res://../../... path with no actual res:// filesystem backing in an
+# exported .app just strips the "res://" prefix, producing a *relative*
+# string like "../../source/build/share/darktable" -- confirmed by an actual
+# move-test launch log, not just reasoned about) -- and compute_dt_dirs()
+# (dt_backend.cpp) used to trust this env var unconditionally (its one
+# candidate that skipped datadir_looks_valid()), passing it straight through
+# as dt_init()'s --datadir. darktable's own dt_loc_init_generic() then
+# realpath()s that relative string against the process's current working
+# directory, which is exactly why the original crash log showed the app's own
+# bundle path prefixed onto "source/build/share/darktable/rawspeed/
+# cameras.xml" -- realpath() of a relative path resolves against CWD, and CWD
+# happened to be the app bundle's own directory. In an exported build, skip
+# this function entirely and let compute_dt_dirs() fall through to its
+# bundle-relative candidates (Godot executable path, then dladdr()), both of
+# which validate with datadir_looks_valid() before being accepted.
 func _configure_dt_backend_env() -> void:
+	if not OS.has_feature("editor"):
+		return
 	if OS.has_environment("DT_BACKEND_DATADIR") and OS.has_environment("DT_BACKEND_MODULEDIR"):
 		return
 	var datadir: String = ProjectSettings.get_setting(

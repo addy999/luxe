@@ -51,12 +51,27 @@ bool path_exists(const std::string &path) {
 }
 
 // A candidate resource_dir is only accepted if it actually contains a real
-// darktable datadir -- darktable.png ships in every darktable datadir install
-// (source/data/darktable.png -> installed as share/darktable/darktable.png),
-// so its presence is a cheap, reliable sentinel that we've found the right
-// directory rather than just an empty/nonexistent path.
+// darktable datadir. The sentinel here used to be "darktable.png" directly
+// under datadir, on the assumption every darktable datadir install ships a
+// flat share/darktable/darktable.png -- WRONG for this darktable checkout
+// (verified: source/build/share/darktable/ has no bare darktable.png at all;
+// the app icon assets only exist nested under icons/hicolor/<size>/apps/ and
+// pixmaps/, per source/data/CMakeLists.txt's install rules). That stale
+// sentinel meant datadir_looks_valid() returned false for every real,
+// correctly-populated datadir this project's own bundle produces, which
+// silently defeated *both* of compute_dt_dirs()'s bundle-relative fallback
+// candidates (PORTABILITY_PLAN.md 5.3.4 root-cause fix, discovered when
+// fixing the DT_BACKEND_DATADIR-override bug: after that fix correctly
+// stopped accepting a bogus dev-tree default in an exported .app, the
+// fallback candidates below it in compute_dt_dirs() were *also* failing to
+// resolve, tracing back to this sentinel never matching anything).
+// "rawspeed/cameras.xml" is used instead: bundle_darktable_deps.sh always
+// copies it (it is the exact file this whole check exists to protect --
+// dt_rawspeed_load_meta() in imageio_rawspeed.cc builds this same relative
+// path off datadir), and it exists directly, unnested, in every real
+// datadir this project produces.
 bool datadir_looks_valid(const std::string &datadir) {
-  gchar *sentinel = g_build_filename(datadir.c_str(), "darktable.png", NULL);
+  gchar *sentinel = g_build_filename(datadir.c_str(), "rawspeed", "cameras.xml", NULL);
   const bool ok = path_exists(sentinel);
   g_free(sentinel);
   return ok;
@@ -94,13 +109,25 @@ bool datadir_looks_valid(const std::string &datadir) {
 //      than silently handing dt_init() a bogus/nonexistent path.
 bool DtBackend::compute_dt_dirs(std::string &datadir, std::string &moduledir) {
   // --- 1. env var override (dev convenience) --------------------------
+  // Validated with the same datadir_looks_valid() sentinel check as the
+  // bundle-relative candidates below (PORTABILITY_PLAN.md 5.3.4 root-cause
+  // fix): this branch used to accept the env var unconditionally, which
+  // meant a wrong-but-existing path (e.g. Main.gd's dev-tree default,
+  // erroneously globalized against an exported .app's bundle path) would be
+  // silently accepted as datadir instead of falling through to the
+  // candidates below that actually know how to find a real bundle datadir.
   const char *env_datadir = std::getenv("DT_BACKEND_DATADIR");
   const char *env_moduledir = std::getenv("DT_BACKEND_MODULEDIR");
   if(env_datadir && env_moduledir && env_datadir[0] != '\0' && env_moduledir[0] != '\0') {
-    datadir = env_datadir;
-    moduledir = env_moduledir;
-    UtilityFunctions::print("DtBackend::compute_dt_dirs: using DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR override");
-    return true;
+    if(datadir_looks_valid(env_datadir)) {
+      datadir = env_datadir;
+      moduledir = env_moduledir;
+      UtilityFunctions::print("DtBackend::compute_dt_dirs: using DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR override");
+      return true;
+    }
+    UtilityFunctions::printerr(
+        "DtBackend::compute_dt_dirs: DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR set but '",
+        env_datadir, "' does not look like a valid datadir (no darktable.png found) -- ignoring override and falling through to bundle-relative detection");
   }
 
   // --- 2. bundle-relative via Godot's own executable path -------------
