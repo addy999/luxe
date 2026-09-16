@@ -33,6 +33,7 @@ void DtBackend::_bind_methods() {
   ClassDB::bind_method(D_METHOD("get_native_width"), &DtBackend::get_native_width);
   ClassDB::bind_method(D_METHOD("get_native_height"), &DtBackend::get_native_height);
   ClassDB::bind_method(D_METHOD("cleanup"), &DtBackend::cleanup);
+  ClassDB::bind_method(D_METHOD("unload_image"), &DtBackend::unload_image);
 }
 
 namespace {
@@ -305,9 +306,11 @@ bool DtBackend::load_image(String path) {
     UtilityFunctions::printerr("DtBackend::load_image: init() was not called");
     return false;
   }
+  // Replace rather than reject: GDScript's "Open" handler no longer needs to
+  // track whether an image is already loaded before calling this, so opening
+  // a second image just swaps the session.
   if(image_loaded) {
-    UtilityFunctions::printerr("DtBackend::load_image: an image is already loaded; this backend holds one session at a time");
-    return false;
+    unload_image();
   }
 
   const CharString path_utf8 = path.utf8();
@@ -720,4 +723,31 @@ void DtBackend::cleanup() {
     dt_cleanup();
     initialized = false;
   }
+}
+
+// Per-image teardown only: pipe -> dev -> mipmap buffer, in that order
+// (mirrors cleanup()'s image_loaded branch above) but leaves `initialized`
+// and `cleaned_up` untouched so the backend stays usable for a subsequent
+// load_image() call. No-op if no image is currently loaded.
+void DtBackend::unload_image() {
+  if(!image_loaded) {
+    return;
+  }
+
+  if(pipe_ready) {
+    dt_dev_pixelpipe_cleanup(&pipe);
+    pipe_ready = false;
+  }
+
+  dt_dev_cleanup(&dev);
+  dt_mipmap_cache_release(&mipmap_buf);
+  std::memset(&mipmap_buf, 0, sizeof(mipmap_buf));
+  image_loaded = false;
+  imgid = NO_IMGID;
+  exposure_module = nullptr;
+
+  processed_width = 0;
+  processed_height = 0;
+  native_width = 0;
+  native_height = 0;
 }

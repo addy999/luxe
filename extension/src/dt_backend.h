@@ -137,6 +137,14 @@ public:
   int get_native_width();
   int get_native_height();
   void cleanup();
+
+  // Tears down the currently loaded image's pipe/dev/mipmap state (mirrors
+  // cleanup()'s per-image branch) without touching `initialized`/
+  // `cleaned_up`, so the backend can go on to load another image in the same
+  // process. Called automatically by load_image() when an image is already
+  // loaded, so GDScript's "Open" action always replaces rather than errors.
+  // Safe to call when no image is loaded (no-op).
+  void unload_image();
 };
 
 } // namespace godot
