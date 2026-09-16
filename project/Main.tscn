@@ -210,6 +210,103 @@ horizontal_alignment = 2
 [node name="HSep" type="HSeparator" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
 layout_mode = 2
 
+[node name="ColorHeader" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
+layout_mode = 2
+theme_type_variation = &"GroupHeader"
+text = "COLOR"
+
+[node name="SaturationLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
+layout_mode = 2
+text = "Saturation"
+
+[node name="SaturationRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="SaturationSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/SaturationRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 4
+min_value = 0.0
+max_value = 100.0
+step = 1.0
+value = 25.0
+
+[node name="SaturationValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/SaturationRow"]
+custom_minimum_size = Vector2(52, 0)
+layout_mode = 2
+text = "25.00"
+horizontal_alignment = 2
+
+[node name="VibranceLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
+layout_mode = 2
+text = "Vibrance"
+
+[node name="VibranceRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="VibranceSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/VibranceRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 4
+min_value = 0.0
+max_value = 100.0
+step = 1.0
+value = 25.0
+
+[node name="VibranceValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/VibranceRow"]
+custom_minimum_size = Vector2(52, 0)
+layout_mode = 2
+text = "25.00"
+horizontal_alignment = 2
+
+[node name="WbRedLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
+layout_mode = 2
+text = "White Balance (Red)"
+
+[node name="WbRedRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="WbRedSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WbRedRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 4
+min_value = 0.0
+max_value = 8.0
+step = 0.01
+value = 1.0
+
+[node name="WbRedValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WbRedRow"]
+custom_minimum_size = Vector2(52, 0)
+layout_mode = 2
+text = "1.00"
+horizontal_alignment = 2
+
+[node name="WbBlueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
+layout_mode = 2
+text = "White Balance (Blue)"
+
+[node name="WbBlueRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="WbBlueSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WbBlueRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 4
+min_value = 0.0
+max_value = 8.0
+step = 0.01
+value = 1.0
+
+[node name="WbBlueValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WbBlueRow"]
+custom_minimum_size = Vector2(52, 0)
+layout_mode = 2
+text = "1.00"
+horizontal_alignment = 2
+
 [node name="ViewHeader" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
 layout_mode = 2
 theme_type_variation = &"GroupHeader"
@@ -271,6 +368,10 @@ use_native_dialog = true
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ContrastRow/ContrastSlider" to="." method="_on_contrast_slider_value_changed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/HighlightsRow/HighlightsSlider" to="." method="_on_highlights_slider_value_changed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ShadowsRow/ShadowsSlider" to="." method="_on_shadows_slider_value_changed"]
+[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/SaturationRow/SaturationSlider" to="." method="_on_saturation_slider_value_changed"]
+[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/VibranceRow/VibranceSlider" to="." method="_on_vibrance_slider_value_changed"]
+[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WbRedRow/WbRedSlider" to="." method="_on_wb_red_slider_value_changed"]
+[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WbBlueRow/WbBlueSlider" to="." method="_on_wb_blue_slider_value_changed"]
 [connection signal="item_selected" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/EditResOptionButton" to="." method="_on_edit_res_option_button_item_selected"]
 [connection signal="file_selected" from="FileDialog" to="." method="_on_file_dialog_file_selected"]
 [connection signal="file_selected" from="ExportDialog" to="." method="_on_export_dialog_file_selected"]

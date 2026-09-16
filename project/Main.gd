@@ -36,6 +36,14 @@ extends Control
 @onready var highlights_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/HighlightsRow/HighlightsValueLabel
 @onready var shadows_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ShadowsRow/ShadowsSlider
 @onready var shadows_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ShadowsRow/ShadowsValueLabel
+@onready var saturation_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/SaturationRow/SaturationSlider
+@onready var saturation_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/SaturationRow/SaturationValueLabel
+@onready var vibrance_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/VibranceRow/VibranceSlider
+@onready var vibrance_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/VibranceRow/VibranceValueLabel
+@onready var wb_red_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WbRedRow/WbRedSlider
+@onready var wb_red_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WbRedRow/WbRedValueLabel
+@onready var wb_blue_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WbBlueRow/WbBlueSlider
+@onready var wb_blue_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WbBlueRow/WbBlueValueLabel
 @onready var edit_res_option: OptionButton = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/EditResOptionButton
 @onready var open_button: Button = $Root/TopBar/TopBarRow/OpenButton
 @onready var export_button: Button = $Root/TopBar/TopBarRow/ExportButton
@@ -74,6 +82,15 @@ var _params: Dictionary = {
 	"contrast": 0.0,
 	"highlights": -50.0,
 	"shadows": 50.0,
+	"saturation": 25.0,
+	"vibrance": 25.0,
+	# wb_red/wb_blue placeholders below are overwritten immediately in
+	# _on_file_dialog_file_selected() with the image's real as-shot white
+	# balance (backend.get_white_balance_red()/_blue()) -- the temperature
+	# module has no fixed $DEFAULT, see dt_backend.h's dt_iop_temperature_params_t
+	# comment. These 1.0 values only matter before any image is loaded.
+	"wb_red": 1.0,
+	"wb_blue": 1.0,
 }
 
 var _processing: bool = false
@@ -209,6 +226,10 @@ func _ready() -> void:
 		contrast_slider.editable = false
 		highlights_slider.editable = false
 		shadows_slider.editable = false
+		saturation_slider.editable = false
+		vibrance_slider.editable = false
+		wb_red_slider.editable = false
+		wb_blue_slider.editable = false
 		return
 
 	status_label.text = "Ready — open an image to begin"
@@ -216,6 +237,10 @@ func _ready() -> void:
 	contrast_value_label.text = "%.2f" % contrast_slider.value
 	highlights_value_label.text = "%.2f" % highlights_slider.value
 	shadows_value_label.text = "%.2f" % shadows_slider.value
+	saturation_value_label.text = "%.2f" % saturation_slider.value
+	vibrance_value_label.text = "%.2f" % vibrance_slider.value
+	wb_red_value_label.text = "%.2f" % wb_red_slider.value
+	wb_blue_value_label.text = "%.2f" % wb_blue_slider.value
 
 	# Populate the edit-resolution dropdown. Item *index* == item *id* here (ids
 	# assigned in order), and add_item(label, id) pins the id explicitly so
@@ -314,6 +339,25 @@ func _on_file_dialog_file_selected(path: String) -> void:
 	shadows_slider.value = 50.0
 	shadows_value_label.text = "%.2f" % 50.0
 	_params["shadows"] = 50.0
+	saturation_slider.value = 25.0
+	saturation_value_label.text = "%.2f" % 25.0
+	_params["saturation"] = 25.0
+	vibrance_slider.value = 25.0
+	vibrance_value_label.text = "%.2f" % 25.0
+	_params["vibrance"] = 25.0
+	# White balance has no fixed default -- read the image's real as-shot
+	# red/blue coefficients back from the backend (already sitting in the
+	# temperature module's params right after load_image()) rather than
+	# resetting to a hardcoded constant. See dt_backend.h's
+	# dt_iop_temperature_params_t comment.
+	var wb_red: float = backend.get_white_balance_red()
+	var wb_blue: float = backend.get_white_balance_blue()
+	wb_red_slider.value = wb_red
+	wb_red_value_label.text = "%.2f" % wb_red
+	_params["wb_red"] = wb_red
+	wb_blue_slider.value = wb_blue
+	wb_blue_value_label.text = "%.2f" % wb_blue
+	_params["wb_blue"] = wb_blue
 	var default_edit_id: int = _pick_default_edit_mode_id(
 		backend.get_raw_width(), backend.get_raw_height())
 	edit_res_option.select(default_edit_id)
@@ -348,6 +392,30 @@ func _on_shadows_slider_value_changed(value: float) -> void:
 	_request_render()
 
 
+func _on_saturation_slider_value_changed(value: float) -> void:
+	saturation_value_label.text = "%.2f" % value
+	_params["saturation"] = value
+	_request_render()
+
+
+func _on_vibrance_slider_value_changed(value: float) -> void:
+	vibrance_value_label.text = "%.2f" % value
+	_params["vibrance"] = value
+	_request_render()
+
+
+func _on_wb_red_slider_value_changed(value: float) -> void:
+	wb_red_value_label.text = "%.2f" % value
+	_params["wb_red"] = value
+	_request_render()
+
+
+func _on_wb_blue_slider_value_changed(value: float) -> void:
+	wb_blue_value_label.text = "%.2f" % value
+	_params["wb_blue"] = value
+	_request_render()
+
+
 # Single entry point for every control: "the edit state changed, bring the
 # preview up to date." Coalesces requests so two renders never overlap on shared
 # process-wide darktable state — if one is already in flight, just flag that
@@ -370,6 +438,10 @@ func _apply_params_to_backend() -> void:
 	backend.set_contrast(_params["contrast"])
 	backend.set_highlights(_params["highlights"])
 	backend.set_shadows(_params["shadows"])
+	backend.set_saturation(_params["saturation"])
+	backend.set_vibrance(_params["vibrance"])
+	backend.set_white_balance_red(_params["wb_red"])
+	backend.set_white_balance_blue(_params["wb_blue"])
 
 
 func _start_process() -> void:
@@ -601,6 +673,10 @@ func _on_export_dialog_file_selected(path: String) -> void:
 	contrast_slider.editable = false
 	highlights_slider.editable = false
 	shadows_slider.editable = false
+	saturation_slider.editable = false
+	vibrance_slider.editable = false
+	wb_red_slider.editable = false
+	wb_blue_slider.editable = false
 	status_label.text = "Exporting %s ..." % path.get_file()
 
 	# Run the (full-res, high-quality) export off the main thread so the UI
@@ -620,6 +696,10 @@ func _on_export_done(ok: bool, path: String) -> void:
 	contrast_slider.editable = true
 	highlights_slider.editable = true
 	shadows_slider.editable = true
+	saturation_slider.editable = true
+	vibrance_slider.editable = true
+	wb_red_slider.editable = true
+	wb_blue_slider.editable = true
 	export_button.disabled = not _image_loaded
 	if ok:
 		status_label.text = "Exported %s" % path.get_file()

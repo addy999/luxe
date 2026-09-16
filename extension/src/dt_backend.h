@@ -59,6 +59,158 @@ typedef struct dt_iop_exposure_params_t
   gboolean compensate_hilite_pres;
 } dt_iop_exposure_params_t;
 
+// dt_iop_colorbalancergb_params_t is likewise private to
+// source/src/iop/colorbalancergb.c, so it's redeclared here to match that file
+// exactly (source/src/iop/colorbalancergb.c:54-106, DT_MODULE_INTROSPECTION
+// version 5). We only drive the `contrast` field ($MIN: -1.0 $MAX: 1.0
+// $DEFAULT: 0.0), but the WHOLE struct and its trailing enum must be reproduced
+// verbatim -- field order and types are load-bearing: the opaque void* params
+// blob is indexed by offset, so a wrong/missing field silently shifts `contrast`
+// to the wrong bytes. Every field here is 4 bytes (float, or the int-sized enum),
+// so the layout is padding-free. The enum name keeps darktable's own upstream
+// spelling `colorbalancrgb` (missing the second `e`) on purpose. If this
+// module's struct or introspection version changes upstream, update this block.
+typedef enum dt_iop_colorbalancrgb_saturation_t
+{
+  DT_COLORBALANCE_SATURATION_JZAZBZ = 0,
+  DT_COLORBALANCE_SATURATION_DTUCS = 1
+} dt_iop_colorbalancrgb_saturation_t;
+
+typedef struct dt_iop_colorbalancergb_params_t
+{
+  /* params of v1 */
+  float shadows_Y;
+  float shadows_C;
+  float shadows_H;
+  float midtones_Y;
+  float midtones_C;
+  float midtones_H;
+  float highlights_Y;
+  float highlights_C;
+  float highlights_H;
+  float global_Y;
+  float global_C;
+  float global_H;
+  float shadows_weight;
+  float white_fulcrum;
+  float highlights_weight;
+  float chroma_shadows;
+  float chroma_highlights;
+  float chroma_global;
+  float chroma_midtones;
+  float saturation_global;
+  float saturation_highlights;
+  float saturation_midtones;
+  float saturation_shadows;
+  float hue_angle;
+
+  /* params of v2 */
+  float brilliance_global;
+  float brilliance_highlights;
+  float brilliance_midtones;
+  float brilliance_shadows;
+
+  /* params of v3 */
+  float mask_grey_fulcrum;
+
+  /* params of v4 */
+  float vibrance;
+  float grey_fulcrum;
+  float contrast;
+
+  /* params of v5 */
+  dt_iop_colorbalancrgb_saturation_t saturation_formula;
+} dt_iop_colorbalancergb_params_t;
+
+// dt_iop_shadhi_params_t is likewise private to source/src/iop/shadhi.c, so
+// it's redeclared here to match that file exactly (source/src/iop/shadhi.c:
+// 66-80, DT_MODULE_INTROSPECTION version 5). We only drive `shadows` ($MIN:
+// -100.0 $MAX: 100.0 $DEFAULT: 50.0) and `highlights` ($MIN: -100.0 $MAX:
+// 100.0 $DEFAULT: -50.0), but the whole struct must be reproduced verbatim --
+// field order/types are load-bearing (offset-indexed opaque void* params
+// blob), including `reserved2`, which carries no introspection tag but must
+// stay in place or every field after it (compress onward) shifts. The op
+// name for lookup is "shadhi" (source filename), while name() returns the
+// display string "shadows and highlights". dt_gaussian_order_t is normally
+// declared in source/src/common/gaussian.h; redeclared here for the same
+// reason. If shadhi.c's struct or introspection version changes upstream,
+// update this block.
+typedef enum dt_gaussian_order_t
+{
+  DT_IOP_GAUSSIAN_ZERO = 0,
+  DT_IOP_GAUSSIAN_ONE = 1,
+  DT_IOP_GAUSSIAN_TWO = 2
+} dt_gaussian_order_t;
+
+typedef enum dt_iop_shadhi_algo_t
+{
+  SHADHI_ALGO_GAUSSIAN,
+  SHADHI_ALGO_BILATERAL
+} dt_iop_shadhi_algo_t;
+
+typedef struct dt_iop_shadhi_params_t
+{
+  dt_gaussian_order_t order;
+  float radius;
+  float shadows;
+  float whitepoint;
+  float highlights;
+  float reserved2;
+  float compress;
+  float shadows_ccorrect;
+  float highlights_ccorrect;
+  unsigned int flags;
+  float low_approximation;
+  dt_iop_shadhi_algo_t shadhi_algo;
+} dt_iop_shadhi_params_t;
+
+// dt_iop_velvia_params_t is likewise private to source/src/iop/velvia.c, so
+// it's redeclared here to match that file exactly (source/src/iop/velvia.c:
+// 40-44, DT_MODULE_INTROSPECTION version 2). We only drive `strength` ($MIN:
+// 0.0 $MAX: 100.0 $DEFAULT: 25.0), but the whole struct (including `bias`)
+// must be reproduced verbatim -- field order/types are load-bearing. If
+// velvia.c's struct or introspection version changes upstream, update this
+// block. "velvia" is a saturation-boost module and is what this app's
+// "Saturation" slider drives.
+typedef struct dt_iop_velvia_params_t
+{
+  float strength;
+  float bias;
+} dt_iop_velvia_params_t;
+
+// dt_iop_vibrance_params_t is likewise private to source/src/iop/vibrance.c,
+// so it's redeclared here to match that file exactly (source/src/iop/
+// vibrance.c:37-40, DT_MODULE_INTROSPECTION version 2). Single-field struct:
+// `amount` ($MIN: 0.0 $MAX: 100.0 $DEFAULT: 25.0). If vibrance.c's struct or
+// introspection version changes upstream, update this block.
+typedef struct dt_iop_vibrance_params_t
+{
+  float amount;
+} dt_iop_vibrance_params_t;
+
+// dt_iop_temperature_params_t is likewise private to
+// source/src/iop/temperature.c, so it's redeclared here to match that file
+// exactly (source/src/iop/temperature.c:67-74, DT_MODULE_INTROSPECTION
+// version 4). We drive `red` and `blue` ($MIN: 0.0 $MAX: 8.0 each), but the
+// whole struct (including `green`, `various`, `preset`) must be reproduced
+// verbatim -- field order/types are load-bearing. Unlike every other module
+// here, this struct has NO $DEFAULT in the source: darktable computes the
+// real default per-image from the camera's as-shot white-balance
+// coefficients at load time (reload_defaults()), so `params` already holds
+// the correct as-shot red/green/blue right after load_image() succeeds, same
+// as every other module's untouched fields. get_white_balance_red()/_blue()
+// read that back so the UI can seed its sliders from the real as-shot value
+// instead of a hardcoded default. If temperature.c's struct or introspection
+// version changes upstream, update this block.
+typedef struct dt_iop_temperature_params_t
+{
+  float red;
+  float green;
+  float blue;
+  float various;
+  int preset;
+} dt_iop_temperature_params_t;
+
 namespace godot {
 
 class DtBackend : public RefCounted {
@@ -78,6 +230,11 @@ private:
   // Cached module pointer for repeated set_exposure() calls (see
   // DARKTABLE_API_NOTES.md section F) so we don't re-search dev.iop.
   dt_iop_module_t *exposure_module = nullptr;
+  dt_iop_module_t *colorbalance_module = nullptr;
+  dt_iop_module_t *shadhi_module = nullptr;
+  dt_iop_module_t *velvia_module = nullptr;
+  dt_iop_module_t *vibrance_module = nullptr;
+  dt_iop_module_t *temperature_module = nullptr;
 
   int processed_width = 0;
   int processed_height = 0;
@@ -127,6 +284,20 @@ public:
   bool init();
   bool load_image(String path);
   void set_exposure(float ev);
+  void set_contrast(float value);
+  void set_shadows(float value);
+  void set_highlights(float value);
+  void set_saturation(float value);
+  void set_vibrance(float value);
+  void set_white_balance_red(float value);
+  void set_white_balance_blue(float value);
+  // Read back the temperature module's current (as-shot, pre-edit) red/blue
+  // coefficients so the UI can seed its White Balance sliders from the real
+  // per-image default instead of a hardcoded constant -- see the
+  // dt_iop_temperature_params_t comment above. Returns 0.0f (and prints an
+  // error) if no image is loaded or the module can't be found.
+  float get_white_balance_red();
+  float get_white_balance_blue();
   PackedByteArray process_fit(int max_width, int max_height);
   // General ROI render, the same math darktable's own darkroom uses for
   // fit/100%/arbitrary zoom (source/src/develop/develop.c:874-890):

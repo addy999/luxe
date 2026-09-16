@@ -25,6 +25,15 @@ void DtBackend::_bind_methods() {
   ClassDB::bind_method(D_METHOD("init"), &DtBackend::init);
   ClassDB::bind_method(D_METHOD("load_image", "path"), &DtBackend::load_image);
   ClassDB::bind_method(D_METHOD("set_exposure", "ev"), &DtBackend::set_exposure);
+  ClassDB::bind_method(D_METHOD("set_contrast", "value"), &DtBackend::set_contrast);
+  ClassDB::bind_method(D_METHOD("set_shadows", "value"), &DtBackend::set_shadows);
+  ClassDB::bind_method(D_METHOD("set_highlights", "value"), &DtBackend::set_highlights);
+  ClassDB::bind_method(D_METHOD("set_saturation", "value"), &DtBackend::set_saturation);
+  ClassDB::bind_method(D_METHOD("set_vibrance", "value"), &DtBackend::set_vibrance);
+  ClassDB::bind_method(D_METHOD("set_white_balance_red", "value"), &DtBackend::set_white_balance_red);
+  ClassDB::bind_method(D_METHOD("set_white_balance_blue", "value"), &DtBackend::set_white_balance_blue);
+  ClassDB::bind_method(D_METHOD("get_white_balance_red"), &DtBackend::get_white_balance_red);
+  ClassDB::bind_method(D_METHOD("get_white_balance_blue"), &DtBackend::get_white_balance_blue);
   ClassDB::bind_method(D_METHOD("process_fit", "max_width", "max_height"), &DtBackend::process_fit);
   ClassDB::bind_method(D_METHOD("render_view", "viewport_w", "viewport_h", "scale", "center_x", "center_y"), &DtBackend::render_view);
   ClassDB::bind_method(D_METHOD("export_image", "path"), &DtBackend::export_image);
@@ -396,6 +405,11 @@ bool DtBackend::load_image(String path) {
   pipe_ready = true;
   image_loaded = true;
   exposure_module = nullptr;
+  colorbalance_module = nullptr;
+  shadhi_module = nullptr;
+  velvia_module = nullptr;
+  vibrance_module = nullptr;
+  temperature_module = nullptr;
   native_width = 0;
   native_height = 0;
   return true;
@@ -427,6 +441,240 @@ void DtBackend::set_exposure(float ev) {
   exposure_module->enabled = TRUE;
 
   dt_dev_add_history_item_ext(&dev, exposure_module, TRUE, TRUE);
+}
+
+// Section F, same pattern as set_exposure(): locate the colorbalancergb ("color
+// balance rgb") module once, clamp to the contrast field's $MIN/$MAX
+// (-1.0..1.0), write only that field directly into its live params blob, enable
+// it, and record a headless history item. This is a scene-referred, pivoted
+// contrast (grey_fulcrum), unlike colisa's asymmetric Lab curve. All other
+// params keep the module's introspection defaults already sitting in the blob
+// (e.g. grey_fulcrum 0.1845, saturation_formula DTUCS) -- we never zero them,
+// exactly like set_exposure() only touches one field of a multi-field struct.
+void DtBackend::set_contrast(float value) {
+  if(!image_loaded) {
+    UtilityFunctions::printerr("DtBackend::set_contrast: no image loaded");
+    return;
+  }
+
+  if(value < -1.0f) value = -1.0f;
+  if(value > 1.0f) value = 1.0f;
+
+  if(!colorbalance_module) {
+    colorbalance_module = dt_iop_get_module_from_list(dev.iop, "colorbalancergb");
+    if(!colorbalance_module) {
+      UtilityFunctions::printerr("DtBackend::set_contrast: could not find \"colorbalancergb\" module in dev.iop");
+      return;
+    }
+  }
+
+  dt_iop_colorbalancergb_params_t *p = (dt_iop_colorbalancergb_params_t *)colorbalance_module->params;
+  p->contrast = value;
+  colorbalance_module->enabled = TRUE;
+
+  dt_dev_add_history_item_ext(&dev, colorbalance_module, TRUE, TRUE);
+}
+
+// Section F, same pattern as set_exposure()/set_contrast(): locate the shadhi
+// ("shadows and highlights") module once, clamp to each field's $MIN/$MAX
+// (-100.0..100.0), write only that field directly into its live params blob,
+// enable it, and record a headless history item. shadows and highlights are
+// looked up via the same cached module pointer since they live in one module.
+void DtBackend::set_shadows(float value) {
+  if(!image_loaded) {
+    UtilityFunctions::printerr("DtBackend::set_shadows: no image loaded");
+    return;
+  }
+
+  if(value < -100.0f) value = -100.0f;
+  if(value > 100.0f) value = 100.0f;
+
+  if(!shadhi_module) {
+    shadhi_module = dt_iop_get_module_from_list(dev.iop, "shadhi");
+    if(!shadhi_module) {
+      UtilityFunctions::printerr("DtBackend::set_shadows: could not find \"shadhi\" module in dev.iop");
+      return;
+    }
+  }
+
+  dt_iop_shadhi_params_t *p = (dt_iop_shadhi_params_t *)shadhi_module->params;
+  p->shadows = value;
+  shadhi_module->enabled = TRUE;
+
+  dt_dev_add_history_item_ext(&dev, shadhi_module, TRUE, TRUE);
+}
+
+void DtBackend::set_highlights(float value) {
+  if(!image_loaded) {
+    UtilityFunctions::printerr("DtBackend::set_highlights: no image loaded");
+    return;
+  }
+
+  if(value < -100.0f) value = -100.0f;
+  if(value > 100.0f) value = 100.0f;
+
+  if(!shadhi_module) {
+    shadhi_module = dt_iop_get_module_from_list(dev.iop, "shadhi");
+    if(!shadhi_module) {
+      UtilityFunctions::printerr("DtBackend::set_highlights: could not find \"shadhi\" module in dev.iop");
+      return;
+    }
+  }
+
+  dt_iop_shadhi_params_t *p = (dt_iop_shadhi_params_t *)shadhi_module->params;
+  p->highlights = value;
+  shadhi_module->enabled = TRUE;
+
+  dt_dev_add_history_item_ext(&dev, shadhi_module, TRUE, TRUE);
+}
+
+// Section F, same pattern as set_exposure(): locate the velvia ("saturation
+// boost") module once, clamp to `strength`'s $MIN/$MAX (0.0..100.0), write
+// only that field, enable, record a headless history item.
+void DtBackend::set_saturation(float value) {
+  if(!image_loaded) {
+    UtilityFunctions::printerr("DtBackend::set_saturation: no image loaded");
+    return;
+  }
+
+  if(value < 0.0f) value = 0.0f;
+  if(value > 100.0f) value = 100.0f;
+
+  if(!velvia_module) {
+    velvia_module = dt_iop_get_module_from_list(dev.iop, "velvia");
+    if(!velvia_module) {
+      UtilityFunctions::printerr("DtBackend::set_saturation: could not find \"velvia\" module in dev.iop");
+      return;
+    }
+  }
+
+  dt_iop_velvia_params_t *p = (dt_iop_velvia_params_t *)velvia_module->params;
+  p->strength = value;
+  velvia_module->enabled = TRUE;
+
+  dt_dev_add_history_item_ext(&dev, velvia_module, TRUE, TRUE);
+}
+
+// Section F, same pattern as set_exposure(): locate the vibrance module once,
+// clamp to `amount`'s $MIN/$MAX (0.0..100.0), write the field, enable, record
+// a headless history item.
+void DtBackend::set_vibrance(float value) {
+  if(!image_loaded) {
+    UtilityFunctions::printerr("DtBackend::set_vibrance: no image loaded");
+    return;
+  }
+
+  if(value < 0.0f) value = 0.0f;
+  if(value > 100.0f) value = 100.0f;
+
+  if(!vibrance_module) {
+    vibrance_module = dt_iop_get_module_from_list(dev.iop, "vibrance");
+    if(!vibrance_module) {
+      UtilityFunctions::printerr("DtBackend::set_vibrance: could not find \"vibrance\" module in dev.iop");
+      return;
+    }
+  }
+
+  dt_iop_vibrance_params_t *p = (dt_iop_vibrance_params_t *)vibrance_module->params;
+  p->amount = value;
+  vibrance_module->enabled = TRUE;
+
+  dt_dev_add_history_item_ext(&dev, vibrance_module, TRUE, TRUE);
+}
+
+// Section F, same pattern as set_exposure(): locate the temperature ("white
+// balance") module once, clamp to `red`'s $MIN/$MAX (0.0..8.0), write only
+// that field, enable, record a headless history item. See the
+// dt_iop_temperature_params_t comment in dt_backend.h: unlike other modules,
+// this one's meaningful "default" is per-image (as-shot WB), read back via
+// get_white_balance_red()/_blue() rather than a fixed constant.
+void DtBackend::set_white_balance_red(float value) {
+  if(!image_loaded) {
+    UtilityFunctions::printerr("DtBackend::set_white_balance_red: no image loaded");
+    return;
+  }
+
+  if(value < 0.0f) value = 0.0f;
+  if(value > 8.0f) value = 8.0f;
+
+  if(!temperature_module) {
+    temperature_module = dt_iop_get_module_from_list(dev.iop, "temperature");
+    if(!temperature_module) {
+      UtilityFunctions::printerr("DtBackend::set_white_balance_red: could not find \"temperature\" module in dev.iop");
+      return;
+    }
+  }
+
+  dt_iop_temperature_params_t *p = (dt_iop_temperature_params_t *)temperature_module->params;
+  p->red = value;
+  temperature_module->enabled = TRUE;
+
+  dt_dev_add_history_item_ext(&dev, temperature_module, TRUE, TRUE);
+}
+
+void DtBackend::set_white_balance_blue(float value) {
+  if(!image_loaded) {
+    UtilityFunctions::printerr("DtBackend::set_white_balance_blue: no image loaded");
+    return;
+  }
+
+  if(value < 0.0f) value = 0.0f;
+  if(value > 8.0f) value = 8.0f;
+
+  if(!temperature_module) {
+    temperature_module = dt_iop_get_module_from_list(dev.iop, "temperature");
+    if(!temperature_module) {
+      UtilityFunctions::printerr("DtBackend::set_white_balance_blue: could not find \"temperature\" module in dev.iop");
+      return;
+    }
+  }
+
+  dt_iop_temperature_params_t *p = (dt_iop_temperature_params_t *)temperature_module->params;
+  p->blue = value;
+  temperature_module->enabled = TRUE;
+
+  dt_dev_add_history_item_ext(&dev, temperature_module, TRUE, TRUE);
+}
+
+// Read-only: returns the temperature module's current red/blue coefficients
+// without touching enabled/history, so the UI can seed its White Balance
+// sliders from the real per-image as-shot default (see set_white_balance_red()
+// comment above). Returns 0.0f if no image is loaded or the module can't be
+// found.
+float DtBackend::get_white_balance_red() {
+  if(!image_loaded) {
+    UtilityFunctions::printerr("DtBackend::get_white_balance_red: no image loaded");
+    return 0.0f;
+  }
+
+  if(!temperature_module) {
+    temperature_module = dt_iop_get_module_from_list(dev.iop, "temperature");
+    if(!temperature_module) {
+      UtilityFunctions::printerr("DtBackend::get_white_balance_red: could not find \"temperature\" module in dev.iop");
+      return 0.0f;
+    }
+  }
+
+  dt_iop_temperature_params_t *p = (dt_iop_temperature_params_t *)temperature_module->params;
+  return p->red;
+}
+
+float DtBackend::get_white_balance_blue() {
+  if(!image_loaded) {
+    UtilityFunctions::printerr("DtBackend::get_white_balance_blue: no image loaded");
+    return 0.0f;
+  }
+
+  if(!temperature_module) {
+    temperature_module = dt_iop_get_module_from_list(dev.iop, "temperature");
+    if(!temperature_module) {
+      UtilityFunctions::printerr("DtBackend::get_white_balance_blue: could not find \"temperature\" module in dev.iop");
+      return 0.0f;
+    }
+  }
+
+  dt_iop_temperature_params_t *p = (dt_iop_temperature_params_t *)temperature_module->params;
+  return p->blue;
 }
 
 // Shared re-sync + native-dimension refresh, used by both process_fit() and
@@ -729,6 +977,11 @@ void DtBackend::cleanup() {
     image_loaded = false;
     imgid = NO_IMGID;
     exposure_module = nullptr;
+    colorbalance_module = nullptr;
+    shadhi_module = nullptr;
+    velvia_module = nullptr;
+    vibrance_module = nullptr;
+    temperature_module = nullptr;
   }
 
   if(initialized) {
@@ -757,6 +1010,11 @@ void DtBackend::unload_image() {
   image_loaded = false;
   imgid = NO_IMGID;
   exposure_module = nullptr;
+  colorbalance_module = nullptr;
+  shadhi_module = nullptr;
+  velvia_module = nullptr;
+  vibrance_module = nullptr;
+  temperature_module = nullptr;
 
   processed_width = 0;
   processed_height = 0;
