@@ -106,9 +106,11 @@ var _params: Dictionary = {
 # channelmixerrgb's `temperature` field (illuminant pinned to DT_ILLUMINANT_D,
 # daylight), and darktable's own illuminant_to_xy() derives the correct
 # chromatic-adaptation matrix from it. No linear bias hack needed.
-const _WB_MIN_KELVIN: float = 2000.0
-const _WB_MAX_KELVIN: float = 12000.0
-const _WB_REFERENCE_KELVIN: float = 6500.0
+#
+# The slider's Kelvin range lives in Main.tscn (min 1667, max 25000) to match
+# channelmixerrgb's TEMP_MIN/TEMP_MAX, so a raw's as-shot temperature (used to
+# seed the slider at load) never clamps. On load the slider is set to the
+# image's real as-shot CCT via backend.get_white_balance_temperature().
 
 var _processing: bool = false
 # A render request that arrived while a render was already in flight. We store no

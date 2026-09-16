@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" uid="uid://b02co8417l8ik" path="res://Main.gd" id="1_main"]
 [ext_resource type="Theme" uid="uid://dtluxetheme01" path="res://main_theme.tres" id="2_theme"]
-[ext_resource type="Script" path="res://ToneCurveEditor.gd" id="3_tonecurve"]
+[ext_resource type="Script" uid="uid://ceu8uebg1suob" path="res://ToneCurveEditor.gd" id="3_tonecurve"]
 
 [node name="Main" type="Control" unique_id=445136820]
 layout_mode = 3
@@ -206,17 +206,17 @@ layout_mode = 2
 text = "50.00"
 horizontal_alignment = 2
 
-[node name="ToneCurveLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
+[node name="ToneCurveLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=1464777149]
 layout_mode = 2
 text = "Tone Curve"
 
-[node name="ToneCurveEditor" type="Control" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
+[node name="ToneCurveEditor" type="Control" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=366149802]
 custom_minimum_size = Vector2(0, 180)
 layout_mode = 2
 size_flags_horizontal = 3
 script = ExtResource("3_tonecurve")
 
-[node name="HSep" type="HSeparator" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
+[node name="HSep" type="HSeparator" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=824791273]
 layout_mode = 2
 
 [node name="ColorHeader" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=832506801]
@@ -264,24 +264,24 @@ layout_mode = 2
 text = "25.00"
 horizontal_alignment = 2
 
-[node name="WhiteBalanceLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
+[node name="WhiteBalanceLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=519775704]
 layout_mode = 2
 text = "White Balance (K)"
 
-[node name="WhiteBalanceRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
+[node name="WhiteBalanceRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=1348136188]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="WhiteBalanceSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WhiteBalanceRow"]
+[node name="WhiteBalanceSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WhiteBalanceRow" unique_id=1428931396]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
-min_value = 2000.0
-max_value = 12000.0
+min_value = 1667.0
+max_value = 25000.0
 step = 50.0
 value = 6500.0
 
-[node name="WhiteBalanceValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WhiteBalanceRow"]
+[node name="WhiteBalanceValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WhiteBalanceRow" unique_id=224940577]
 custom_minimum_size = Vector2(52, 0)
 layout_mode = 2
 text = "6500K"

@@ -690,8 +690,16 @@ float DtBackend::get_white_balance_temperature() {
     }
   }
 
-  dt_iop_channelmixer_rgb_params_t *p = (dt_iop_channelmixer_rgb_params_t *)channelmixer_rgb_module->params;
-  return p->temperature;
+  // The image's as-shot Kelvin is computed by channelmixerrgb's reload_defaults()
+  // -> _check_if_close_to_daylight() into DEFAULT params, not the live params.
+  // For a normal color raw the live params use illuminant=DT_ILLUMINANT_CAMERA
+  // with an x/y chromaticity, leaving params->temperature at the flat ~5003
+  // introspection default; the meaningful as-shot CCT lands in
+  // default_params->temperature (channelmixerrgb.c reload_defaults ~3883-3886).
+  // This getter exists solely to seed the UI slider at load, so read the
+  // as-shot value from default_params.
+  dt_iop_channelmixer_rgb_params_t *dp = (dt_iop_channelmixer_rgb_params_t *)channelmixer_rgb_module->default_params;
+  return dp->temperature;
 }
 
 // Shared re-sync + native-dimension refresh, used by both process_fit() and
