@@ -30,12 +30,11 @@ void DtBackend::_bind_methods() {
   ClassDB::bind_method(D_METHOD("set_highlights", "value"), &DtBackend::set_highlights);
   ClassDB::bind_method(D_METHOD("set_saturation", "value"), &DtBackend::set_saturation);
   ClassDB::bind_method(D_METHOD("set_vibrance", "value"), &DtBackend::set_vibrance);
+  ClassDB::bind_method(D_METHOD("set_tonecurve", "points"), &DtBackend::set_tonecurve);
   ClassDB::bind_method(D_METHOD("set_white_balance_red", "value"), &DtBackend::set_white_balance_red);
   ClassDB::bind_method(D_METHOD("set_white_balance_blue", "value"), &DtBackend::set_white_balance_blue);
   ClassDB::bind_method(D_METHOD("get_white_balance_red"), &DtBackend::get_white_balance_red);
   ClassDB::bind_method(D_METHOD("get_white_balance_blue"), &DtBackend::get_white_balance_blue);
-  ClassDB::bind_method(D_METHOD("set_blacks", "value"), &DtBackend::set_blacks);
-  ClassDB::bind_method(D_METHOD("set_whites", "value"), &DtBackend::set_whites);
   ClassDB::bind_method(D_METHOD("process_fit", "max_width", "max_height"), &DtBackend::process_fit);
   ClassDB::bind_method(D_METHOD("render_view", "viewport_w", "viewport_h", "scale", "center_x", "center_y"), &DtBackend::render_view);
   ClassDB::bind_method(D_METHOD("export_image", "path"), &DtBackend::export_image);
@@ -412,7 +411,7 @@ bool DtBackend::load_image(String path) {
   velvia_module = nullptr;
   vibrance_module = nullptr;
   temperature_module = nullptr;
-  filmicrgb_module = nullptr;
+  tonecurve_module = nullptr;
   native_width = 0;
   native_height = 0;
   return true;
@@ -444,62 +443,6 @@ void DtBackend::set_exposure(float ev) {
   exposure_module->enabled = TRUE;
 
   dt_dev_add_history_item_ext(&dev, exposure_module, TRUE, TRUE);
-}
-
-// Same pattern as set_exposure(): locate the filmicrgb ("filmic rgb") module
-// once (shared cache between set_blacks/set_whites), clamp to the field's
-// $MIN/$MAX, write only that one field directly into the live params blob,
-// enable it, record a headless history item. All other fields (grey points,
-// latitude, contrast, balance, etc.) keep whatever introspection defaults are
-// already sitting in the blob -- filmicrgb.c's dt_iop_filmic_rgb_compute_spline()
-// reads the whole struct to build its tone curve, so we never zero/reconstruct
-// it, only ever touch black_point_source / white_point_source.
-void DtBackend::set_blacks(float value) {
-  if(!image_loaded) {
-    UtilityFunctions::printerr("DtBackend::set_blacks: no image loaded");
-    return;
-  }
-
-  if(value < -16.0f) value = -16.0f;
-  if(value > -0.1f) value = -0.1f;
-
-  if(!filmicrgb_module) {
-    filmicrgb_module = dt_iop_get_module_from_list(dev.iop, "filmicrgb");
-    if(!filmicrgb_module) {
-      UtilityFunctions::printerr("DtBackend::set_blacks: could not find \"filmicrgb\" module in dev.iop");
-      return;
-    }
-  }
-
-  dt_iop_filmicrgb_params_t *p = (dt_iop_filmicrgb_params_t *)filmicrgb_module->params;
-  p->black_point_source = value;
-  filmicrgb_module->enabled = TRUE;
-
-  dt_dev_add_history_item_ext(&dev, filmicrgb_module, TRUE, TRUE);
-}
-
-void DtBackend::set_whites(float value) {
-  if(!image_loaded) {
-    UtilityFunctions::printerr("DtBackend::set_whites: no image loaded");
-    return;
-  }
-
-  if(value < 0.1f) value = 0.1f;
-  if(value > 16.0f) value = 16.0f;
-
-  if(!filmicrgb_module) {
-    filmicrgb_module = dt_iop_get_module_from_list(dev.iop, "filmicrgb");
-    if(!filmicrgb_module) {
-      UtilityFunctions::printerr("DtBackend::set_whites: could not find \"filmicrgb\" module in dev.iop");
-      return;
-    }
-  }
-
-  dt_iop_filmicrgb_params_t *p = (dt_iop_filmicrgb_params_t *)filmicrgb_module->params;
-  p->white_point_source = value;
-  filmicrgb_module->enabled = TRUE;
-
-  dt_dev_add_history_item_ext(&dev, filmicrgb_module, TRUE, TRUE);
 }
 
 // Section F, same pattern as set_exposure(): locate the colorbalancergb ("color
@@ -639,6 +582,57 @@ void DtBackend::set_vibrance(float value) {
   vibrance_module->enabled = TRUE;
 
   dt_dev_add_history_item_ext(&dev, vibrance_module, TRUE, TRUE);
+}
+
+// Drives the tonecurve module's L-channel spline. Unlike every scalar setter
+// above, `params` here is a curve: we overwrite the whole L-channel node
+// array/count from `points` (clamped/ordered by the caller -- see the
+// dt_backend.h comment on set_tonecurve()) and leave the a/b channels and
+// every other field (autoscale, preset, unbound_ab, preserve_colors) exactly
+// as introspection defaults left them. Interpolation type is forced to
+// MONOTONE_HERMITE to match the module's own default and this backend's
+// curve widget, which draws the same monotone-hermite spline (see
+// docs/DARKTABLE_API_NOTES.md section F's tonecurve subsection).
+void DtBackend::set_tonecurve(PackedVector2Array points) {
+  if(!image_loaded) {
+    UtilityFunctions::printerr("DtBackend::set_tonecurve: no image loaded");
+    return;
+  }
+
+  int n = points.size();
+  if(n < 2) {
+    UtilityFunctions::printerr("DtBackend::set_tonecurve: need at least 2 points");
+    return;
+  }
+  if(n > DT_BACKEND_TONECURVE_MAXNODES) {
+    UtilityFunctions::printerr("DtBackend::set_tonecurve: too many points");
+    return;
+  }
+
+  if(!tonecurve_module) {
+    tonecurve_module = dt_iop_get_module_from_list(dev.iop, "tonecurve");
+    if(!tonecurve_module) {
+      UtilityFunctions::printerr("DtBackend::set_tonecurve: could not find \"tonecurve\" module in dev.iop");
+      return;
+    }
+  }
+
+  dt_iop_tonecurve_params_t *p = (dt_iop_tonecurve_params_t *)tonecurve_module->params;
+  for(int i = 0; i < n; i++) {
+    Vector2 pt = points[i];
+    float x = pt.x, y = pt.y;
+    if(x < 0.0f) x = 0.0f;
+    if(x > 1.0f) x = 1.0f;
+    if(y < 0.0f) y = 0.0f;
+    if(y > 1.0f) y = 1.0f;
+    p->tonecurve[0][i].x = x;
+    p->tonecurve[0][i].y = y;
+  }
+  p->tonecurve_nodes[0] = n;
+  p->tonecurve_type[0] = DT_BACKEND_MONOTONE_HERMITE;
+  tonecurve_module->enabled = TRUE;
+
+  dt_dev_add_history_item_ext(&dev, tonecurve_module, TRUE, TRUE);
 }
 
 // Section F, same pattern as set_exposure(): locate the temperature ("white
@@ -1041,8 +1035,8 @@ void DtBackend::cleanup() {
     velvia_module = nullptr;
     vibrance_module = nullptr;
     temperature_module = nullptr;
-    filmicrgb_module = nullptr;
-  }
+    tonecurve_module = nullptr;
+    }
 
   if(initialized) {
     dt_cleanup();
@@ -1075,7 +1069,7 @@ void DtBackend::unload_image() {
   velvia_module = nullptr;
   vibrance_module = nullptr;
   temperature_module = nullptr;
-  filmicrgb_module = nullptr;
+  tonecurve_module = nullptr;
 
   processed_width = 0;
   processed_height = 0;

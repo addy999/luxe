@@ -2,6 +2,7 @@
 
 [ext_resource type="Script" uid="uid://b02co8417l8ik" path="res://Main.gd" id="1_main"]
 [ext_resource type="Theme" uid="uid://dtluxetheme01" path="res://main_theme.tres" id="2_theme"]
+[ext_resource type="Script" path="res://ToneCurveEditor.gd" id="3_tonecurve"]
 
 [node name="Main" type="Control" unique_id=445136820]
 layout_mode = 3
@@ -205,6 +206,16 @@ layout_mode = 2
 text = "50.00"
 horizontal_alignment = 2
 
+[node name="ToneCurveLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
+layout_mode = 2
+text = "Tone Curve"
+
+[node name="ToneCurveEditor" type="Control" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
+custom_minimum_size = Vector2(0, 180)
+layout_mode = 2
+size_flags_horizontal = 3
+script = ExtResource("3_tonecurve")
+
 [node name="HSep" type="HSeparator" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
 layout_mode = 2
 
@@ -338,6 +349,7 @@ use_native_dialog = true
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ContrastRow/ContrastSlider" to="." method="_on_contrast_slider_value_changed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/HighlightsRow/HighlightsSlider" to="." method="_on_highlights_slider_value_changed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ShadowsRow/ShadowsSlider" to="." method="_on_shadows_slider_value_changed"]
+[connection signal="curve_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ToneCurveEditor" to="." method="_on_tone_curve_changed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/SaturationRow/SaturationSlider" to="." method="_on_saturation_slider_value_changed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/VibranceRow/VibranceSlider" to="." method="_on_vibrance_slider_value_changed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WhiteBalanceRow/WhiteBalanceSlider" to="." method="_on_white_balance_slider_value_changed"]

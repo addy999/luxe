@@ -40,6 +40,7 @@ extends Control
 @onready var saturation_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/SaturationRow/SaturationValueLabel
 @onready var vibrance_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/VibranceRow/VibranceSlider
 @onready var vibrance_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/VibranceRow/VibranceValueLabel
+@onready var tone_curve_editor: ToneCurveEditor = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ToneCurveEditor
 @onready var white_balance_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WhiteBalanceRow/WhiteBalanceSlider
 @onready var white_balance_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WhiteBalanceRow/WhiteBalanceValueLabel
 @onready var edit_res_option: OptionButton = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/EditResOptionButton
@@ -83,6 +84,10 @@ var _params: Dictionary = {
 	"shadows": 50.0,
 	"saturation": 25.0,
 	"vibrance": 25.0,
+	# Tone curve L-channel control points, owned by ToneCurveEditor -- see
+	# _on_tone_curve_changed() below. This default (identity, 2 nodes) matches
+	# tonecurve.c's own init() default.
+	"tonecurve": PackedVector2Array([Vector2(0.0, 0.0), Vector2(1.0, 1.0)]),
 	# wb_red/wb_blue are DERIVED, not directly slider-owned -- see
 	# _wb_kelvin_to_red_blue() below. They're computed from the single White
 	# Balance (K) slider plus this image's as-shot baseline
@@ -388,6 +393,7 @@ func _on_file_dialog_file_selected(path: String) -> void:
 	vibrance_slider.value = 25.0
 	vibrance_value_label.text = "%.2f" % 25.0
 	_params["vibrance"] = 25.0
+	tone_curve_editor.reset_to_default()
 	# White balance has no fixed default -- read this image's real as-shot
 	# red/blue coefficients back from the backend (already sitting in the
 	# temperature module's params right after load_image()) as the baseline
@@ -447,6 +453,11 @@ func _on_vibrance_slider_value_changed(value: float) -> void:
 	_request_render()
 
 
+func _on_tone_curve_changed(points: PackedVector2Array) -> void:
+	_params["tonecurve"] = points
+	_request_render()
+
+
 func _on_white_balance_slider_value_changed(value: float) -> void:
 	white_balance_value_label.text = "%dK" % roundi(value)
 	var wb: Vector2 = _wb_kelvin_to_red_blue(value)
@@ -479,6 +490,7 @@ func _apply_params_to_backend() -> void:
 	backend.set_shadows(_params["shadows"])
 	backend.set_saturation(_params["saturation"])
 	backend.set_vibrance(_params["vibrance"])
+	backend.set_tonecurve(_params["tonecurve"])
 	backend.set_white_balance_red(_params["wb_red"])
 	backend.set_white_balance_blue(_params["wb_blue"])
 

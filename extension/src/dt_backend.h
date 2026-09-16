@@ -17,6 +17,7 @@
 
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
+#include <godot_cpp/variant/packed_vector2_array.hpp>
 #include <godot_cpp/variant/string.hpp>
 
 // darktable headless core headers.
@@ -211,6 +212,50 @@ typedef struct dt_iop_temperature_params_t
   int preset;
 } dt_iop_temperature_params_t;
 
+// dt_iop_tonecurve_params_t is likewise private to source/src/iop/tonecurve.c,
+// so it's redeclared here to match that file exactly (source/src/iop/
+// tonecurve.c:81-112, DT_MODULE_INTROSPECTION version 5). Unlike every other
+// module above, the field we drive (`tonecurve[0]`, the L-channel curve) is a
+// fixed-size array of {x,y} node structs plus a live node count
+// (`tonecurve_nodes[0]`), not a single scalar -- see set_tonecurve() below and
+// docs/DARKTABLE_API_NOTES.md section F's tonecurve subsection for the spline
+// UI this backs. DT_IOP_TONECURVE_MAXNODES is 20 (tonecurve.c:48). The whole
+// struct (all three L/a/b channels, autoscale, preset, unbound_ab,
+// preserve_colors) must be reproduced verbatim even though we only ever touch
+// channel 0 -- field order/types are load-bearing. If tonecurve.c's struct or
+// introspection version changes upstream, update this block.
+#define DT_BACKEND_TONECURVE_MAXNODES 20
+
+typedef struct dt_iop_tonecurve_node_t
+{
+  float x;
+  float y;
+} dt_iop_tonecurve_node_t;
+
+typedef enum dt_iop_tonecurve_autoscale_t
+{
+  DT_S_SCALE_MANUAL = 0,
+  DT_S_SCALE_AUTOMATIC = 1,
+  DT_S_SCALE_AUTOMATIC_XYZ = 2,
+  DT_S_SCALE_AUTOMATIC_RGB = 3,
+} dt_iop_tonecurve_autoscale_t;
+
+// Mirrors the plain #defines CUBIC_SPLINE/CATMULL_ROM/MONOTONE_HERMITE from
+// source/src/common/curve_tools.h:27-29 (0/1/2) -- tonecurve_type[] stores one
+// of these as a plain int, not a named enum type, in the real struct.
+#define DT_BACKEND_MONOTONE_HERMITE 2
+
+typedef struct dt_iop_tonecurve_params_t
+{
+  dt_iop_tonecurve_node_t tonecurve[3][DT_BACKEND_TONECURVE_MAXNODES]; // L, a, b
+  int tonecurve_nodes[3];
+  int tonecurve_type[3];
+  dt_iop_tonecurve_autoscale_t tonecurve_autoscale_ab;
+  int tonecurve_preset;
+  int tonecurve_unbound_ab;
+  int preserve_colors; // dt_iop_rgb_norms_t, 4-byte enum
+} dt_iop_tonecurve_params_t;
+
 namespace godot {
 
 class DtBackend : public RefCounted {
@@ -235,6 +280,7 @@ private:
   dt_iop_module_t *velvia_module = nullptr;
   dt_iop_module_t *vibrance_module = nullptr;
   dt_iop_module_t *temperature_module = nullptr;
+  dt_iop_module_t *tonecurve_module = nullptr;
 
   int processed_width = 0;
   int processed_height = 0;
@@ -298,6 +344,13 @@ public:
   // error) if no image is loaded or the module can't be found.
   float get_white_balance_red();
   float get_white_balance_blue();
+  // Drives the tonecurve module's L-channel spline (see dt_iop_tonecurve_params_t
+  // above). `points` is a caller-sorted list of {x,y} control points in [0,1]x[0,1]
+  // (the coordinate space darktable's own curve editor uses), first point x==0,
+  // last point x==1, 2..DT_BACKEND_TONECURVE_MAXNODES points. Node ordering/
+  // spacing/endpoint rules are enforced by the GDScript curve widget, not here --
+  // see godot-poc/DARKTABLE_API_NOTES.md section F's tonecurve subsection.
+  void set_tonecurve(PackedVector2Array points);
   PackedByteArray process_fit(int max_width, int max_height);
   // General ROI render, the same math darktable's own darkroom uses for
   // fit/100%/arbitrary zoom (source/src/develop/develop.c:874-890):
