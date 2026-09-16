@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540">
+  <rect width="960" height="540" fill="#252525"/>
+
+  <!-- Monogram: aperture-ish ring made of overlapping arcs, echoing a lens iris -->
+  <g transform="translate(480, 220)">
+    <circle cx="0" cy="0" r="46" fill="none" stroke="#4a9de0" stroke-width="6"/>
+    <path d="M 0 -46 A 46 46 0 0 1 39.8 -23" fill="none" stroke="#66b3ea" stroke-width="6" stroke-linecap="round"/>
+  </g>
+
+  <text x="480" y="330" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="72" font-weight="300" letter-spacing="6" fill="#f0f0f0"
+        text-anchor="middle">LUXE</text>
+
+  <text x="480" y="368" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="16" font-weight="400" letter-spacing="3" fill="#7a7a7a"
+        text-anchor="middle">RAW PHOTO EDITOR</text>
+</svg>

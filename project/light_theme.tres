@@ -85,10 +85,10 @@ corner_radius_top_right = 4
 corner_radius_bottom_right = 4
 corner_radius_bottom_left = 4
 
-[sub_resource type="StyleBoxFlat" id="slider_fill"]
+[sub_resource type="StyleBoxFlat" id="slider_track"]
 content_margin_top = 3.0
 content_margin_bottom = 3.0
-bg_color = Color(0.145, 0.4, 0.68, 1)
+bg_color = Color(0.74, 0.74, 0.74, 1)
 corner_radius_top_left = 3
 corner_radius_top_right = 3
 corner_radius_bottom_right = 3
@@ -103,10 +103,10 @@ corner_radius_top_right = 3
 corner_radius_bottom_right = 3
 corner_radius_bottom_left = 3
 
-[sub_resource type="StyleBoxFlat" id="slider_track"]
+[sub_resource type="StyleBoxFlat" id="slider_fill"]
 content_margin_top = 3.0
 content_margin_bottom = 3.0
-bg_color = Color(0.74, 0.74, 0.74, 1)
+bg_color = Color(0.145, 0.4, 0.68, 1)
 corner_radius_top_left = 3
 corner_radius_top_right = 3
 corner_radius_bottom_right = 3
@@ -114,6 +114,50 @@ corner_radius_bottom_left = 3
 
 [sub_resource type="StyleBoxFlat" id="panel_generic"]
 bg_color = Color(0.93, 0.93, 0.93, 1)
+
+[sub_resource type="StyleBoxFlat" id="lineedit_focus"]
+draw_center = false
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.145, 0.4, 0.68, 1)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[sub_resource type="StyleBoxFlat" id="lineedit_normal"]
+content_margin_left = 8.0
+content_margin_top = 6.0
+content_margin_right = 8.0
+content_margin_bottom = 6.0
+bg_color = Color(0.87, 0.87, 0.87, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.75, 0.75, 0.75, 1)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[sub_resource type="StyleBoxFlat" id="lineedit_readonly"]
+content_margin_left = 8.0
+content_margin_top = 6.0
+content_margin_right = 8.0
+content_margin_bottom = 6.0
+bg_color = Color(0.93, 0.93, 0.93, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.75, 0.75, 0.75, 0.5)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
 
 [sub_resource type="StyleBoxFlat" id="popup_hover"]
 bg_color = Color(0.8, 0.8, 0.8, 1)
@@ -138,6 +182,13 @@ corner_radius_top_right = 4
 corner_radius_bottom_right = 4
 corner_radius_bottom_left = 4
 
+[sub_resource type="StyleBoxFlat" id="progress_bg"]
+bg_color = Color(0.87, 0.87, 0.87, 1)
+corner_radius_top_left = 3
+corner_radius_top_right = 3
+corner_radius_bottom_right = 3
+corner_radius_bottom_left = 3
+
 [sub_resource type="StyleBoxFlat" id="canvas_bg"]
 bg_color = Color(0.82, 0.82, 0.82, 1)
 
@@ -146,65 +197,21 @@ bg_color = Color(0.93, 0.93, 0.93, 1)
 border_width_left = 1
 border_color = Color(0.75, 0.75, 0.75, 1)
 
-[sub_resource type="StyleBoxFlat" id="panel_topbar"]
-content_margin_left = 14.0
-content_margin_top = 8.0
-content_margin_right = 14.0
-content_margin_bottom = 8.0
-bg_color = Color(0.93, 0.93, 0.93, 1)
-border_width_bottom = 1
-border_color = Color(0.75, 0.75, 0.75, 1)
-
-[sub_resource type="StyleBoxFlat" id="lineedit_normal"]
-content_margin_left = 8.0
+[sub_resource type="StyleBoxFlat" id="tab_disabled"]
+content_margin_left = 12.0
 content_margin_top = 6.0
-content_margin_right = 8.0
+content_margin_right = 12.0
 content_margin_bottom = 6.0
-bg_color = Color(0.87, 0.87, 0.87, 1)
-border_width_left = 1
-border_width_top = 1
-border_width_right = 1
-border_width_bottom = 1
-border_color = Color(0.75, 0.75, 0.75, 1)
-corner_radius_top_left = 4
-corner_radius_top_right = 4
-corner_radius_bottom_right = 4
-corner_radius_bottom_left = 4
+bg_color = Color(0, 0, 0, 0)
 
-[sub_resource type="StyleBoxFlat" id="lineedit_focus"]
-draw_center = false
-border_width_left = 1
-border_width_top = 1
-border_width_right = 1
-border_width_bottom = 1
-border_color = Color(0.145, 0.4, 0.68, 1)
-corner_radius_top_left = 4
-corner_radius_top_right = 4
-corner_radius_bottom_right = 4
-corner_radius_bottom_left = 4
-
-[sub_resource type="StyleBoxFlat" id="lineedit_readonly"]
-content_margin_left = 8.0
+[sub_resource type="StyleBoxFlat" id="tab_hovered"]
+content_margin_left = 12.0
 content_margin_top = 6.0
-content_margin_right = 8.0
+content_margin_right = 12.0
 content_margin_bottom = 6.0
-bg_color = Color(0.93, 0.93, 0.93, 1)
-border_width_left = 1
-border_width_top = 1
-border_width_right = 1
-border_width_bottom = 1
-border_color = Color(0.75, 0.75, 0.75, 0.5)
+bg_color = Color(0.8, 0.8, 0.8, 1)
 corner_radius_top_left = 4
 corner_radius_top_right = 4
-corner_radius_bottom_right = 4
-corner_radius_bottom_left = 4
-
-[sub_resource type="StyleBoxFlat" id="tree_selected"]
-bg_color = Color(0.145, 0.4, 0.68, 1)
-corner_radius_top_left = 4
-corner_radius_top_right = 4
-corner_radius_bottom_right = 4
-corner_radius_bottom_left = 4
 
 [sub_resource type="StyleBoxFlat" id="tab_selected"]
 content_margin_left = 12.0
@@ -224,28 +231,21 @@ content_margin_right = 12.0
 content_margin_bottom = 6.0
 bg_color = Color(0, 0, 0, 0)
 
-[sub_resource type="StyleBoxFlat" id="tab_hovered"]
-content_margin_left = 12.0
-content_margin_top = 6.0
-content_margin_right = 12.0
-content_margin_bottom = 6.0
-bg_color = Color(0.8, 0.8, 0.8, 1)
+[sub_resource type="StyleBoxFlat" id="panel_topbar"]
+content_margin_left = 14.0
+content_margin_top = 8.0
+content_margin_right = 14.0
+content_margin_bottom = 8.0
+bg_color = Color(0.93, 0.93, 0.93, 1)
+border_width_bottom = 1
+border_color = Color(0.75, 0.75, 0.75, 1)
+
+[sub_resource type="StyleBoxFlat" id="tree_selected"]
+bg_color = Color(0.145, 0.4, 0.68, 1)
 corner_radius_top_left = 4
 corner_radius_top_right = 4
-
-[sub_resource type="StyleBoxFlat" id="tab_disabled"]
-content_margin_left = 12.0
-content_margin_top = 6.0
-content_margin_right = 12.0
-content_margin_bottom = 6.0
-bg_color = Color(0, 0, 0, 0)
-
-[sub_resource type="StyleBoxFlat" id="progress_bg"]
-bg_color = Color(0.87, 0.87, 0.87, 1)
-corner_radius_top_left = 3
-corner_radius_top_right = 3
-corner_radius_bottom_right = 3
-corner_radius_bottom_left = 3
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
 
 [resource]
 default_font_size = 13
