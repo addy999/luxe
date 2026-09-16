@@ -24,13 +24,13 @@ const HIT_RADIUS: float = 10.0
 const POINT_RADIUS: float = 4.5
 const PADDING: float = 10.0
 
-const COLOR_BG: Color = Color(0.11, 0.11, 0.11, 1.0)
-const COLOR_BORDER: Color = Color(0.227, 0.227, 0.227, 1.0)
-const COLOR_GRID: Color = Color(0.227, 0.227, 0.227, 0.5)
-const COLOR_DIAGONAL: Color = Color(0.4, 0.4, 0.4, 0.6)
-const COLOR_CURVE: Color = Color(0.29, 0.616, 0.878, 1.0)
-const COLOR_POINT: Color = Color(0.95, 0.95, 0.95, 1.0)
-const COLOR_POINT_SELECTED: Color = Color(0.4, 0.702, 0.949, 1.0)
+var _color_bg: Color
+var _color_border: Color
+var _color_grid: Color
+var _color_diagonal: Color
+var _color_curve: Color
+var _color_point: Color
+var _color_point_selected: Color
 
 var _points: Array[Vector2] = [Vector2(0.0, 0.0), Vector2(1.0, 1.0)]
 var _dragging_index: int = -1
@@ -38,6 +38,34 @@ var _dragging_index: int = -1
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	custom_minimum_size = Vector2(0, 180)
+	ThemeManager.theme_changed.connect(_on_theme_changed)
+	_update_colors(ThemeManager.is_dark)
+
+
+# Mirrors main_theme.tres/light_theme.tres's canvas_bg so the curve panel
+# matches the rest of the app instead of staying hardcoded to dark mode.
+func _on_theme_changed(is_dark: bool) -> void:
+	_update_colors(is_dark)
+	queue_redraw()
+
+
+func _update_colors(is_dark: bool) -> void:
+	if is_dark:
+		_color_bg = Color(0.11, 0.11, 0.11, 1.0)
+		_color_border = Color(0.227, 0.227, 0.227, 1.0)
+		_color_grid = Color(0.227, 0.227, 0.227, 0.5)
+		_color_diagonal = Color(0.4, 0.4, 0.4, 0.6)
+		_color_curve = Color(0.29, 0.616, 0.878, 1.0)
+		_color_point = Color(0.95, 0.95, 0.95, 1.0)
+		_color_point_selected = Color(0.4, 0.702, 0.949, 1.0)
+	else:
+		_color_bg = Color(0.82, 0.82, 0.82, 1.0)
+		_color_border = Color(0.6, 0.6, 0.6, 1.0)
+		_color_grid = Color(0.6, 0.6, 0.6, 0.5)
+		_color_diagonal = Color(0.35, 0.35, 0.35, 0.6)
+		_color_curve = Color(0.12, 0.4, 0.65, 1.0)
+		_color_point = Color(0.15, 0.15, 0.15, 1.0)
+		_color_point_selected = Color(0.09, 0.3, 0.55, 1.0)
 
 
 func _get_minimum_size() -> Vector2:
@@ -83,18 +111,18 @@ func _screen_to_curve(p: Vector2) -> Vector2:
 
 func _draw() -> void:
 	var r: Rect2 = _curve_rect()
-	draw_rect(Rect2(Vector2.ZERO, size), COLOR_BG, true)
-	draw_rect(Rect2(Vector2.ZERO, size), COLOR_BORDER, false, 1.0)
+	draw_rect(Rect2(Vector2.ZERO, size), _color_bg, true)
+	draw_rect(Rect2(Vector2.ZERO, size), _color_border, false, 1.0)
 
 	# Quarter gridlines.
 	for i in range(1, 4):
 		var t: float = i / 4.0
 		var gx: float = r.position.x + t * r.size.x
 		var gy: float = r.position.y + t * r.size.y
-		draw_line(Vector2(gx, r.position.y), Vector2(gx, r.position.y + r.size.y), COLOR_GRID, 1.0)
-		draw_line(Vector2(r.position.x, gy), Vector2(r.position.x + r.size.x, gy), COLOR_GRID, 1.0)
+		draw_line(Vector2(gx, r.position.y), Vector2(gx, r.position.y + r.size.y), _color_grid, 1.0)
+		draw_line(Vector2(r.position.x, gy), Vector2(r.position.x + r.size.x, gy), _color_grid, 1.0)
 
-	draw_line(_curve_to_screen(Vector2(0, 0)), _curve_to_screen(Vector2(1, 1)), COLOR_DIAGONAL, 1.0)
+	draw_line(_curve_to_screen(Vector2(0, 0)), _curve_to_screen(Vector2(1, 1)), _color_diagonal, 1.0)
 
 	# Sampled spline curve.
 	var samples: int = 64
@@ -102,13 +130,13 @@ func _draw() -> void:
 	for i in range(1, samples + 1):
 		var x: float = float(i) / float(samples)
 		var cur: Vector2 = _curve_to_screen(Vector2(x, _sample_curve(x)))
-		draw_line(prev, cur, COLOR_CURVE, 2.0)
+		draw_line(prev, cur, _color_curve, 2.0)
 		prev = cur
 
 	# Control points.
 	for i in range(_points.size()):
 		var screen_pt: Vector2 = _curve_to_screen(_points[i])
-		var color: Color = COLOR_POINT_SELECTED if i == _dragging_index else COLOR_POINT
+		var color: Color = _color_point_selected if i == _dragging_index else _color_point
 		draw_circle(screen_pt, POINT_RADIUS, color)
 
 

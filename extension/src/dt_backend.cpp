@@ -478,8 +478,9 @@ void DtBackend::set_contrast(float value) {
 }
 
 // Section F, same pattern as set_exposure()/set_contrast(): locate the shadhi
-// ("shadows and highlights") module once, clamp to each field's $MIN/$MAX
-// (-100.0..100.0), write only that field directly into its live params blob,
+// ("shadows and highlights") module once, clamp to -70.0..70.0 (tighter than
+// the module's own $MIN/$MAX of -100.0..100.0 since the full range is too
+// extreme), write only that field directly into its live params blob,
 // enable it, and record a headless history item. shadows and highlights are
 // looked up via the same cached module pointer since they live in one module.
 void DtBackend::set_shadows(float value) {
@@ -488,8 +489,8 @@ void DtBackend::set_shadows(float value) {
     return;
   }
 
-  if(value < -100.0f) value = -100.0f;
-  if(value > 100.0f) value = 100.0f;
+  if(value < -70.0f) value = -70.0f;
+  if(value > 70.0f) value = 70.0f;
 
   if(!shadhi_module) {
     shadhi_module = dt_iop_get_module_from_list(dev.iop, "shadhi");
@@ -512,8 +513,8 @@ void DtBackend::set_highlights(float value) {
     return;
   }
 
-  if(value < -100.0f) value = -100.0f;
-  if(value > 100.0f) value = 100.0f;
+  if(value < -70.0f) value = -70.0f;
+  if(value > 70.0f) value = 70.0f;
 
   if(!shadhi_module) {
     shadhi_module = dt_iop_get_module_from_list(dev.iop, "shadhi");
