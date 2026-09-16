@@ -1,6 +1,6 @@
 extends Control
 
-# darktable-godot-poc — Main scene controller.
+# Luxe — Main scene controller.
 # Bridges the GDExtension `DtBackend` class to the UI. There are now two
 # independent view knobs, deliberately decoupled:
 #

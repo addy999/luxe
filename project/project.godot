@@ -10,7 +10,7 @@ config_version=5
 
 [application]
 
-config/name="darktable-godot-poc"
+config/name="Luxe"
 run/main_scene="res://Main.tscn"
 config/features=PackedStringArray("4.6")
 boot_splash/bg_color=Color(0.61861694, 0.618617, 0.6186168, 1)
