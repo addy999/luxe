@@ -30,6 +30,8 @@ extends Control
 @onready var texture_rect: TextureRect = $Root/MiddleHBox/Scroll/TextureRect
 @onready var exposure_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ExposureRow/ExposureSlider
 @onready var exposure_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ExposureRow/ExposureValueLabel
+@onready var contrast_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ContrastRow/ContrastSlider
+@onready var contrast_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ContrastRow/ContrastValueLabel
 @onready var edit_res_option: OptionButton = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/EditResOptionButton
 @onready var open_button: Button = $Root/TopBar/TopBarRow/OpenButton
 @onready var export_button: Button = $Root/TopBar/TopBarRow/ExportButton
@@ -65,6 +67,7 @@ var _image_loaded: bool = false
 # the key and calls _request_render().
 var _params: Dictionary = {
 	"exposure": 0.0,
+	"contrast": 0.0,
 }
 
 var _processing: bool = false
@@ -197,10 +200,12 @@ func _ready() -> void:
 		status_label.text = "Error: DtBackend.init() failed"
 		open_button.disabled = true
 		exposure_slider.editable = false
+		contrast_slider.editable = false
 		return
 
 	status_label.text = "Ready — open an image to begin"
 	exposure_value_label.text = "%.2f" % exposure_slider.value
+	contrast_value_label.text = "%.2f" % contrast_slider.value
 
 	# Populate the edit-resolution dropdown. Item *index* == item *id* here (ids
 	# assigned in order), and add_item(label, id) pins the id explicitly so
@@ -290,6 +295,9 @@ func _on_file_dialog_file_selected(path: String) -> void:
 	exposure_slider.value = 0.0
 	exposure_value_label.text = "%.2f" % 0.0
 	_params["exposure"] = 0.0
+	contrast_slider.value = 0.0
+	contrast_value_label.text = "%.2f" % 0.0
+	_params["contrast"] = 0.0
 	var default_edit_id: int = _pick_default_edit_mode_id(
 		backend.get_raw_width(), backend.get_raw_height())
 	edit_res_option.select(default_edit_id)
@@ -303,6 +311,12 @@ func _on_file_dialog_file_selected(path: String) -> void:
 func _on_exposure_slider_value_changed(value: float) -> void:
 	exposure_value_label.text = "%.2f" % value
 	_params["exposure"] = value
+	_request_render()
+
+
+func _on_contrast_slider_value_changed(value: float) -> void:
+	contrast_value_label.text = "%.2f" % value
+	_params["contrast"] = value
 	_request_render()
 
 
@@ -325,6 +339,7 @@ func _request_render() -> void:
 # process-wide pipe state and must not race the worker's render_view().
 func _apply_params_to_backend() -> void:
 	backend.set_exposure(_params["exposure"])
+	backend.set_contrast(_params["contrast"])
 
 
 func _start_process() -> void:
@@ -553,6 +568,7 @@ func _on_export_dialog_file_selected(path: String) -> void:
 	export_button.disabled = true
 	open_button.disabled = true
 	exposure_slider.editable = false
+	contrast_slider.editable = false
 	status_label.text = "Exporting %s ..." % path.get_file()
 
 	# Run the (full-res, high-quality) export off the main thread so the UI
@@ -569,6 +585,7 @@ func _on_export_done(ok: bool, path: String) -> void:
 	_exporting = false
 	open_button.disabled = false
 	exposure_slider.editable = true
+	contrast_slider.editable = true
 	export_button.disabled = not _image_loaded
 	if ok:
 		status_label.text = "Exported %s" % path.get_file()

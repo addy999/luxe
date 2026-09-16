@@ -139,6 +139,28 @@ layout_mode = 2
 text = "0.00"
 horizontal_alignment = 2
 
+[node name="ContrastLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
+layout_mode = 2
+text = "Contrast"
+
+[node name="ContrastRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="ContrastSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ContrastRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 4
+min_value = -1.0
+max_value = 1.0
+step = 0.05
+
+[node name="ContrastValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ContrastRow"]
+custom_minimum_size = Vector2(52, 0)
+layout_mode = 2
+text = "0.00"
+horizontal_alignment = 2
+
 [node name="HSep" type="HSeparator" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
 layout_mode = 2
 
@@ -200,6 +222,7 @@ use_native_dialog = true
 [connection signal="toggled" from="Root/TopBar/TopBarRow/FitButton" to="." method="_on_fit_button_toggled"]
 [connection signal="value_changed" from="Root/TopBar/TopBarRow/ZoomSlider" to="." method="_on_zoom_slider_value_changed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ExposureRow/ExposureSlider" to="." method="_on_exposure_slider_value_changed"]
+[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ContrastRow/ContrastSlider" to="." method="_on_contrast_slider_value_changed"]
 [connection signal="item_selected" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/EditResOptionButton" to="." method="_on_edit_res_option_button_item_selected"]
 [connection signal="file_selected" from="FileDialog" to="." method="_on_file_dialog_file_selected"]
 [connection signal="file_selected" from="ExportDialog" to="." method="_on_export_dialog_file_selected"]
