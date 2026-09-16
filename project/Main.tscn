@@ -91,7 +91,12 @@ layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 
-[node name="TextureRect" type="TextureRect" parent="Root/MiddleHBox/Scroll" unique_id=533634347]
+[node name="Center" type="CenterContainer" parent="Root/MiddleHBox/Scroll" unique_id=1751169207]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="TextureRect" type="TextureRect" parent="Root/MiddleHBox/Scroll/Center" unique_id=533634347]
 layout_mode = 2
 size_flags_horizontal = 0
 size_flags_vertical = 0

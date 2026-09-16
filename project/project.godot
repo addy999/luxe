@@ -11,13 +11,12 @@ config_version=5
 [application]
 
 config/name="Luxe"
-config/icon="res://assets/icon.png"
 run/main_scene="res://Main.tscn"
 config/features=PackedStringArray("4.6")
 boot_splash/bg_color=Color(0.145, 0.145, 0.145, 1)
+boot_splash/stretch_mode=0
 boot_splash/image="res://assets/boot_splash.png"
-boot_splash/fullsize=false
-boot_splash/use_filter=true
+config/icon="res://assets/icon.png"
 
 [autoload]
 
@@ -27,7 +26,6 @@ ThemeManager="*res://ThemeManager.gd"
 
 window/size/viewport_width=1920
 window/size/viewport_height=1080
-window/stretch/mode="disabled"
 window/size/viewport_min_width=900
 window/size/viewport_min_height=600
 

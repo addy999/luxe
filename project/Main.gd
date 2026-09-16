@@ -27,7 +27,7 @@ extends Control
 # zoom at 100%. export_image() is untouched and always renders full-resolution.
 
 @onready var scroll_container: ScrollContainer = $Root/MiddleHBox/Scroll
-@onready var texture_rect: TextureRect = $Root/MiddleHBox/Scroll/TextureRect
+@onready var texture_rect: TextureRect = $Root/MiddleHBox/Scroll/Center/TextureRect
 @onready var exposure_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ExposureRow/ExposureSlider
 @onready var exposure_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ExposureRow/ExposureValueLabel
 @onready var contrast_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ContrastRow/ContrastSlider
@@ -620,7 +620,8 @@ func _apply_display_layout() -> void:
 	else:
 		# Fixed zoom: on-screen size = native * display_zoom, filled exactly by
 		# the buffer (STRETCH_SCALE). Larger than the pane -> scrollbars/drag-pan;
-		# smaller -> anchored top-left (acceptable for a PoC).
+		# smaller -> the CenterContainer wrapper (Scroll/Center) keeps it centered
+		# instead of pinned to the ScrollContainer's default top-left corner.
 		texture_rect.stretch_mode = _STRETCH_SCALE
 		texture_rect.custom_minimum_size = Vector2(native_w, native_h) * _display_zoom
 
@@ -646,12 +647,11 @@ func _on_edit_res_option_button_item_selected(index: int) -> void:
 
 
 func _on_zoom_slider_value_changed(value: float) -> void:
-	# Dragging the slider always means an explicit positive zoom, so drop out of
-	# Fit (silently, so we don't re-enter _on_fit_button_toggled). value is in
-	# percent of native; _display_zoom is the fraction.
-	_display_zoom = value / 100.0
-	fit_button.set_pressed_no_signal(false)
-	_apply_zoom_change()
+	# Dragging the slider always means an explicit positive zoom, so drop out
+	# of Fit. Routed through _set_display_zoom() so the slider anchors on the
+	# viewport center exactly like Cmd+wheel/pinch, instead of drifting to the
+	# top-left corner the way a bare _apply_zoom_change() call would.
+	_set_display_zoom(value)
 
 
 func _on_theme_button_pressed() -> void:
@@ -665,11 +665,13 @@ func _on_theme_changed(is_dark: bool) -> void:
 func _on_fit_button_toggled(pressed: bool) -> void:
 	if pressed:
 		# Engage the Fit sentinel; leave the slider where it is as a fallback.
+		# No anchor math needed -- Fit is always centered via the Center wrapper.
 		_display_zoom = -1.0
+		_apply_zoom_change()
 	else:
-		# Fit released -> snap to whatever the slider currently reads.
-		_display_zoom = zoom_slider.value / 100.0
-	_apply_zoom_change()
+		# Fit released -> snap to whatever the slider currently reads, anchored
+		# on the viewport center (== image center, since Fit was centered).
+		_set_display_zoom(zoom_slider.value)
 
 
 func _apply_zoom_change() -> void:
@@ -751,11 +753,114 @@ func _on_texture_rect_gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			_dragging = event.pressed
+			return
+		# Cmd+wheel (Ctrl+wheel on Windows/Linux) zooms instead of the
+		# ScrollContainer's default wheel-scroll, so only claim wheel events
+		# when the modifier is held.
+		if event.pressed and event.is_command_or_control_pressed():
+			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+				_zoom_by_factor(1.1)
+			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+				_zoom_by_factor(1.0 / 1.1)
 		return
 
 	if event is InputEventMouseMotion and _dragging:
 		scroll_container.scroll_horizontal -= int(event.relative.x)
 		scroll_container.scroll_vertical -= int(event.relative.y)
+		return
+
+	# Trackpad pinch. factor is already a multiplier centered on 1.0 (>1 =
+	# fingers spreading = zoom in), so it feeds _zoom_by_factor directly.
+	if event is InputEventMagnifyGesture:
+		_zoom_by_factor(event.factor)
+		return
+
+	# Trackpad two-finger scroll arrives as InputEventPanGesture, not
+	# InputEventMouseButton wheel events, so Cmd+scroll needs its own branch.
+	# delta.y < 0 means scrolling up (away from the user) => zoom in.
+	if event is InputEventPanGesture and event.is_command_or_control_pressed():
+		if event.delta.y < 0.0:
+			_zoom_by_factor(1.05)
+		elif event.delta.y > 0.0:
+			_zoom_by_factor(1.0 / 1.05)
+
+
+func _zoom_by_factor(multiplier: float) -> void:
+	# Cmd+wheel / pinch entry point: turn a relative multiplier into an
+	# absolute target percent, then hand off to the same path the slider and
+	# Fit-release use.
+	if backend == null:
+		return
+	var native_w: int = backend.get_native_width()
+	var native_h: int = backend.get_native_height()
+	if native_w <= 0 or native_h <= 0:
+		return
+	var old_effective_zoom: float
+	if _display_zoom < 0.0:
+		var viewport_size: Vector2 = scroll_container.size
+		old_effective_zoom = min(viewport_size.x / float(native_w), viewport_size.y / float(native_h))
+	else:
+		old_effective_zoom = _display_zoom
+	_set_display_zoom(old_effective_zoom * 100.0 * multiplier)
+
+
+func _set_display_zoom(target_pct: float) -> void:
+	# Single path for every way display zoom can change (slider drag, Fit
+	# release, Cmd+wheel, trackpad pinch): compute the pre-zoom anchor point,
+	# apply the new zoom, then re-center scroll on that same point so all
+	# inputs behave identically instead of each hand-rolling its own scroll
+	# math (the slider used to just call _apply_zoom_change() directly, which
+	# left scroll untouched and drifted the image toward the top-left corner).
+	if backend == null:
+		return
+	var native_w: int = backend.get_native_width()
+	var native_h: int = backend.get_native_height()
+	if native_w <= 0 or native_h <= 0:
+		return
+	var viewport_size: Vector2 = scroll_container.size
+
+	# Ratio (0..1 per axis) of the viewport-center point within the current
+	# content. Fit mode has no scrollbars and is always centered, so the
+	# viewport center is always the image center regardless of letterboxing.
+	var ratio: Vector2
+	if _display_zoom < 0.0:
+		ratio = Vector2(0.5, 0.5)
+	else:
+		var old_content_size: Vector2 = Vector2(native_w, native_h) * _display_zoom
+		if old_content_size.x > 0.0 and old_content_size.y > 0.0:
+			var center_old: Vector2 = Vector2(scroll_container.scroll_horizontal, scroll_container.scroll_vertical) + viewport_size / 2.0
+			ratio = center_old / old_content_size
+		else:
+			ratio = Vector2(0.5, 0.5)
+
+	target_pct = clamp(target_pct, _ZOOM_MIN_PCT, _ZOOM_MAX_PCT)
+	_display_zoom = target_pct / 100.0
+	zoom_slider.set_value_no_signal(target_pct)
+	fit_button.set_pressed_no_signal(false)
+	_apply_zoom_change()
+
+	# Re-center scroll on the same content ratio at the new zoom, so whatever
+	# was under the cursor/viewport-center stays there across zoom -> pan ->
+	# zoom sequences. scroll_horizontal/vertical clamp against the
+	# ScrollContainer's own H/V ScrollBar max_value/page, which only get
+	# recomputed on the container's *next* layout pass (one or more frames
+	# after TextureRect's resize propagates up through the Center wrapper) --
+	# waiting for that (even polling) is racy. Instead, push the scrollbars to
+	# the new content size ourselves right now; Godot's own upcoming sort pass
+	# will recompute the identical numbers, so this is just applying them a
+	# frame early with no conflict.
+	var new_content_size: Vector2 = Vector2(native_w, native_h) * _display_zoom
+	var target_scroll: Vector2 = ratio * new_content_size - viewport_size / 2.0
+	var h_bar: ScrollBar = scroll_container.get_h_scroll_bar()
+	var v_bar: ScrollBar = scroll_container.get_v_scroll_bar()
+	h_bar.max_value = new_content_size.x
+	h_bar.page = viewport_size.x
+	v_bar.max_value = new_content_size.y
+	v_bar.page = viewport_size.y
+
+	var max_scroll: Vector2 = Vector2(max(new_content_size.x - viewport_size.x, 0.0), max(new_content_size.y - viewport_size.y, 0.0))
+	scroll_container.scroll_horizontal = roundi(clamp(target_scroll.x, 0.0, max_scroll.x))
+	scroll_container.scroll_vertical = roundi(clamp(target_scroll.y, 0.0, max_scroll.y))
 
 
 func _on_export_button_pressed() -> void:
