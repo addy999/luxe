@@ -40,10 +40,8 @@ extends Control
 @onready var saturation_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/SaturationRow/SaturationValueLabel
 @onready var vibrance_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/VibranceRow/VibranceSlider
 @onready var vibrance_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/VibranceRow/VibranceValueLabel
-@onready var wb_red_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WbRedRow/WbRedSlider
-@onready var wb_red_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WbRedRow/WbRedValueLabel
-@onready var wb_blue_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WbBlueRow/WbBlueSlider
-@onready var wb_blue_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WbBlueRow/WbBlueValueLabel
+@onready var white_balance_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WhiteBalanceRow/WhiteBalanceSlider
+@onready var white_balance_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WhiteBalanceRow/WhiteBalanceValueLabel
 @onready var edit_res_option: OptionButton = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/EditResOptionButton
 @onready var open_button: Button = $Root/TopBar/TopBarRow/OpenButton
 @onready var export_button: Button = $Root/TopBar/TopBarRow/ExportButton
@@ -84,14 +82,57 @@ var _params: Dictionary = {
 	"shadows": 50.0,
 	"saturation": 25.0,
 	"vibrance": 25.0,
-	# wb_red/wb_blue placeholders below are overwritten immediately in
-	# _on_file_dialog_file_selected() with the image's real as-shot white
-	# balance (backend.get_white_balance_red()/_blue()) -- the temperature
-	# module has no fixed $DEFAULT, see dt_backend.h's dt_iop_temperature_params_t
-	# comment. These 1.0 values only matter before any image is loaded.
+	# wb_red/wb_blue are DERIVED, not directly slider-owned -- see
+	# _wb_kelvin_to_red_blue() below. They're computed from the single White
+	# Balance (K) slider plus this image's as-shot baseline
+	# (_wb_baseline_red/_wb_baseline_blue), then land here for
+	# _apply_params_to_backend() to push, same as every other param. These 1.0
+	# placeholders only matter before any image is loaded.
 	"wb_red": 1.0,
 	"wb_blue": 1.0,
 }
+
+# --- White Balance (K) slider mapping -----------------------------------------
+# The temperature module's real params are red/blue multipliers, not a single
+# Kelvin value -- and converting an absolute Kelvin to camera-correct
+# multipliers needs darktable's per-camera color matrix + spectral tables
+# (source/src/iop/temperature.c's _temp2mul()/_prepare_matrices()), which are
+# private to that module and only populated via its (GUI-only) gui_init(), not
+# available headlessly here. So this is an intentional simplification, not a
+# colorimetric CCT conversion: a single slider, labeled in Kelvin for a
+# familiar "cool <-> warm" feel, linearly biases this image's as-shot
+# red/blue baseline (_wb_baseline_red/_wb_baseline_blue, read once via
+# backend.get_white_balance_red()/_blue() at load time). At
+# _WB_REFERENCE_KELVIN the slider reproduces the as-shot baseline exactly
+# (bias 0); moving it up/down ramps red up/blue down (warmer) or red down/blue
+# up (cooler), matching the Lightroom/ACR convention where a HIGHER Kelvin
+# value looks warmer/more orange and a LOWER value looks cooler/more blue.
+const _WB_MIN_KELVIN: float = 2000.0
+const _WB_MAX_KELVIN: float = 12000.0
+const _WB_REFERENCE_KELVIN: float = 6500.0
+# At the slider's extremes, red/blue are biased by up to +/-50% of the as-shot
+# baseline -- enough to be clearly visible without being able to push the
+# clamped backend values ([0, 8], see dt_backend.cpp set_white_balance_red/
+# _blue) to a degenerate extreme.
+const _WB_MAX_BIAS: float = 0.5
+
+var _wb_baseline_red: float = 1.0
+var _wb_baseline_blue: float = 1.0
+
+
+# Maps the White Balance (K) slider to (red, blue) multipliers -- see the
+# comment block above. `kelvin` is clamped to the slider's own range, so the
+# two branches below can't divide by a zero-width half-range.
+func _wb_kelvin_to_red_blue(kelvin: float) -> Vector2:
+	var k: float = clampf(kelvin, _WB_MIN_KELVIN, _WB_MAX_KELVIN)
+	var t: float
+	if k >= _WB_REFERENCE_KELVIN:
+		t = (k - _WB_REFERENCE_KELVIN) / (_WB_MAX_KELVIN - _WB_REFERENCE_KELVIN)
+	else:
+		t = (k - _WB_REFERENCE_KELVIN) / (_WB_REFERENCE_KELVIN - _WB_MIN_KELVIN)
+	var red: float = _wb_baseline_red * (1.0 + t * _WB_MAX_BIAS)
+	var blue: float = _wb_baseline_blue * (1.0 - t * _WB_MAX_BIAS)
+	return Vector2(red, blue)
 
 var _processing: bool = false
 # A render request that arrived while a render was already in flight. We store no
@@ -228,8 +269,7 @@ func _ready() -> void:
 		shadows_slider.editable = false
 		saturation_slider.editable = false
 		vibrance_slider.editable = false
-		wb_red_slider.editable = false
-		wb_blue_slider.editable = false
+		white_balance_slider.editable = false
 		return
 
 	status_label.text = "Ready — open an image to begin"
@@ -239,8 +279,7 @@ func _ready() -> void:
 	shadows_value_label.text = "%.2f" % shadows_slider.value
 	saturation_value_label.text = "%.2f" % saturation_slider.value
 	vibrance_value_label.text = "%.2f" % vibrance_slider.value
-	wb_red_value_label.text = "%.2f" % wb_red_slider.value
-	wb_blue_value_label.text = "%.2f" % wb_blue_slider.value
+	white_balance_value_label.text = "%dK" % roundi(white_balance_slider.value)
 
 	# Populate the edit-resolution dropdown. Item *index* == item *id* here (ids
 	# assigned in order), and add_item(label, id) pins the id explicitly so
@@ -345,19 +384,19 @@ func _on_file_dialog_file_selected(path: String) -> void:
 	vibrance_slider.value = 25.0
 	vibrance_value_label.text = "%.2f" % 25.0
 	_params["vibrance"] = 25.0
-	# White balance has no fixed default -- read the image's real as-shot
+	# White balance has no fixed default -- read this image's real as-shot
 	# red/blue coefficients back from the backend (already sitting in the
-	# temperature module's params right after load_image()) rather than
-	# resetting to a hardcoded constant. See dt_backend.h's
-	# dt_iop_temperature_params_t comment.
-	var wb_red: float = backend.get_white_balance_red()
-	var wb_blue: float = backend.get_white_balance_blue()
-	wb_red_slider.value = wb_red
-	wb_red_value_label.text = "%.2f" % wb_red
-	_params["wb_red"] = wb_red
-	wb_blue_slider.value = wb_blue
-	wb_blue_value_label.text = "%.2f" % wb_blue
-	_params["wb_blue"] = wb_blue
+	# temperature module's params right after load_image()) as the baseline
+	# _wb_kelvin_to_red_blue() biases from, rather than resetting to a
+	# hardcoded constant. See dt_backend.h's dt_iop_temperature_params_t
+	# comment and the White Balance (K) slider mapping comment above _params.
+	_wb_baseline_red = backend.get_white_balance_red()
+	_wb_baseline_blue = backend.get_white_balance_blue()
+	white_balance_slider.value = _WB_REFERENCE_KELVIN
+	white_balance_value_label.text = "%dK" % roundi(_WB_REFERENCE_KELVIN)
+	var wb: Vector2 = _wb_kelvin_to_red_blue(_WB_REFERENCE_KELVIN)
+	_params["wb_red"] = wb.x
+	_params["wb_blue"] = wb.y
 	var default_edit_id: int = _pick_default_edit_mode_id(
 		backend.get_raw_width(), backend.get_raw_height())
 	edit_res_option.select(default_edit_id)
@@ -404,15 +443,11 @@ func _on_vibrance_slider_value_changed(value: float) -> void:
 	_request_render()
 
 
-func _on_wb_red_slider_value_changed(value: float) -> void:
-	wb_red_value_label.text = "%.2f" % value
-	_params["wb_red"] = value
-	_request_render()
-
-
-func _on_wb_blue_slider_value_changed(value: float) -> void:
-	wb_blue_value_label.text = "%.2f" % value
-	_params["wb_blue"] = value
+func _on_white_balance_slider_value_changed(value: float) -> void:
+	white_balance_value_label.text = "%dK" % roundi(value)
+	var wb: Vector2 = _wb_kelvin_to_red_blue(value)
+	_params["wb_red"] = wb.x
+	_params["wb_blue"] = wb.y
 	_request_render()
 
 
@@ -675,8 +710,7 @@ func _on_export_dialog_file_selected(path: String) -> void:
 	shadows_slider.editable = false
 	saturation_slider.editable = false
 	vibrance_slider.editable = false
-	wb_red_slider.editable = false
-	wb_blue_slider.editable = false
+	white_balance_slider.editable = false
 	status_label.text = "Exporting %s ..." % path.get_file()
 
 	# Run the (full-res, high-quality) export off the main thread so the UI
@@ -698,8 +732,7 @@ func _on_export_done(ok: bool, path: String) -> void:
 	shadows_slider.editable = true
 	saturation_slider.editable = true
 	vibrance_slider.editable = true
-	wb_red_slider.editable = true
-	wb_blue_slider.editable = true
+	white_balance_slider.editable = true
 	export_button.disabled = not _image_loaded
 	if ok:
 		status_label.text = "Exported %s" % path.get_file()

@@ -4,7 +4,7 @@ entry_symbol = "dt_backend_library_init"
 compatibility_minimum = "4.1"
 ; The installed Godot editor on this machine is 4.6.beta3, but godot-cpp
 ; is only available up to the 4.5 branch upstream (no 4.6 branch exists
-; yet as of writing -- see build-darktable.md). compatibility_minimum is
+; yet as of writing -- see ../../docs/build-darktable.md). compatibility_minimum is
 ; kept at 4.1 (the lowest ABI godot-cpp 4.5 supports) rather than 4.6 so
 ; the extension isn't rejected outright; verify against the actual 4.6
 ; GDExtension ABI once a matching godot-cpp branch/tag is published.
