@@ -91,6 +91,17 @@ private:
   int native_width = 0;
   int native_height = 0;
 
+  // Raw sensor/file dimensions (dev.image_storage->width/height), captured at
+  // load_image() time, before any pipeline processing runs. Unlike
+  // native_width/native_height (which need a process_fit()/render_view() call
+  // to populate), these are available immediately after a successful
+  // load_image(), so GDScript can pick a size-appropriate default edit scale
+  // before the first render. Close enough to the final processed size for that
+  // purpose (crop/rotate modules can change it slightly, but not by orders of
+  // magnitude).
+  int raw_width = 0;
+  int raw_height = 0;
+
   // Shared helper: re-syncs the pipe and refreshes native_width/native_height.
   // Called by both process_fit() and render_view() so there is exactly one
   // place that calls dt_dev_pixelpipe_get_dimensions().
@@ -136,6 +147,10 @@ public:
   // (both call refresh_native_dimensions() first); returns 0,0 before that.
   int get_native_width();
   int get_native_height();
+  // Raw file dimensions -- see raw_width/raw_height above. Valid immediately
+  // after a successful load_image(); returns 0,0 before that.
+  int get_raw_width();
+  int get_raw_height();
   void cleanup();
 
   // Tears down the currently loaded image's pipe/dev/mipmap state (mirrors

@@ -42,6 +42,10 @@ extends Control
 @onready var zoom_value_label: Label = $Root/TopBar/TopBarRow/ZoomValueLabel
 @onready var file_dialog: FileDialog = $FileDialog
 @onready var export_dialog: FileDialog = $ExportDialog
+# Chrome panels, referenced only for the one-shot entrance animation.
+@onready var top_bar: PanelContainer = $Root/TopBar
+@onready var right_panel: PanelContainer = $Root/MiddleHBox/RightPanel
+@onready var bottom_bar: PanelContainer = $Root/BottomBar
 
 var backend: DtBackend = null
 var image_texture: ImageTexture = null
@@ -68,8 +72,33 @@ const _EDIT_MODES: Array = [
 	{"id": 2, "label": "50%", "scale": 0.50},
 	{"id": 3, "label": "25%", "scale": 0.25},
 ]
-const _EDIT_DEFAULT_ID: int = 0 # 100% — WYSIWYG by default; dial down for speed.
-var _edit_scale: float = 1.00
+const _EDIT_DEFAULT_ID: int = 2 # 50% — fallback used until an image's size is known.
+var _edit_scale: float = 0.50
+
+# Size-adaptive default: bigger raw files get a smaller default edit scale, so
+# the initial render of a huge file isn't dramatically slower than a normal
+# one. Checked in order; first threshold the image's megapixel count meets or
+# exceeds wins. Based on raw_width/raw_height (DtBackend::get_raw_width/
+# get_raw_height), which are known right after load_image() -- before the
+# first pipe run, unlike get_native_width()/get_native_height().
+const _EDIT_DEFAULT_BY_SIZE: Array = [
+	{"min_megapixels": 20.0, "id": 3}, # huge (e.g. medium format, stitched) -> 25%
+	{"min_megapixels": 12.0, "id": 2}, # large (typical modern camera) -> 50%
+	{"min_megapixels": 0.0, "id": 0},  # normal/HD -> 100%
+]
+
+
+# Picks the default edit-mode id for a newly loaded image, based on its raw
+# pixel count. Falls back to _EDIT_DEFAULT_ID if the size isn't known yet
+# (raw_w/raw_h <= 0).
+func _pick_default_edit_mode_id(raw_w: int, raw_h: int) -> int:
+	if raw_w <= 0 or raw_h <= 0:
+		return _EDIT_DEFAULT_ID
+	var megapixels: float = (raw_w * raw_h) / 1000000.0
+	for tier in _EDIT_DEFAULT_BY_SIZE:
+		if megapixels >= tier["min_megapixels"]:
+			return tier["id"]
+	return _EDIT_DEFAULT_ID
 
 # An oversized viewport handed to render_view() so its MIN(viewport, pipe_dim)
 # clamp always resolves to pipe_dim — i.e. the whole image at _edit_scale, never
@@ -185,6 +214,36 @@ func _ready() -> void:
 	# Control, not the TextureRect.
 	texture_rect.gui_input.connect(_on_texture_rect_gui_input)
 
+	_animate_entrance()
+
+
+func _animate_entrance() -> void:
+	# One-shot: the chrome settles in on launch. Each bar fades from transparent
+	# and scales up a hair (0.98 -> 1.0), staggered so the eye reads top -> panel
+	# -> status. We animate modulate and scale, NOT position: containers own their
+	# children's position/size and re-sort would stomp a position tween, but scale
+	# is a transform the layout leaves alone. Fast (~0.3s), gentle cubic ease-out
+	# — present, not showy. This is a photo tool; motion must never upstage pixels.
+	var bars: Array = [top_bar, right_panel, bottom_bar]
+	# Hide immediately so there's no first-frame flash before we have real sizes.
+	for bar in bars:
+		if bar != null:
+			bar.modulate.a = 0.0
+			bar.scale = Vector2(0.98, 0.98)
+	# One frame so the containers have laid out and each bar has a real size to
+	# center the scale pivot on (at _ready, sizes are still zero).
+	await get_tree().process_frame
+	for i in bars.size():
+		var bar: Control = bars[i]
+		if bar == null:
+			continue
+		bar.pivot_offset = bar.size * 0.5
+		var tw: Tween = create_tween().set_parallel(true) \
+			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+		var delay: float = 0.05 * i
+		tw.tween_property(bar, "modulate:a", 1.0, 0.30).set_delay(delay)
+		tw.tween_property(bar, "scale", Vector2.ONE, 0.30).set_delay(delay)
+
 
 func _on_open_button_pressed() -> void:
 	file_dialog.popup_centered()
@@ -210,10 +269,15 @@ func _on_file_dialog_file_selected(path: String) -> void:
 	export_button.disabled = false
 
 	# Reset both view knobs for the new image, then kick off the initial render.
+	# The edit-resolution default is picked from this image's raw size (huge ->
+	# 25%, large -> 50%, normal/HD -> 100%) rather than a fixed id, so the first
+	# render of a huge file isn't dramatically slower than a normal one.
 	exposure_slider.value = 0.0
 	exposure_value_label.text = "%.2f" % 0.0
-	edit_res_option.select(_EDIT_DEFAULT_ID)
-	_edit_scale = _EDIT_MODES[_EDIT_DEFAULT_ID]["scale"]
+	var default_edit_id: int = _pick_default_edit_mode_id(
+		backend.get_raw_width(), backend.get_raw_height())
+	edit_res_option.select(default_edit_id)
+	_edit_scale = _EDIT_MODES[default_edit_id]["scale"]
 	_display_zoom = -1.0
 	fit_button.set_pressed_no_signal(true)
 	_update_zoom_readout()

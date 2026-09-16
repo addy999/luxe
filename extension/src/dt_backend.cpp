@@ -32,6 +32,8 @@ void DtBackend::_bind_methods() {
   ClassDB::bind_method(D_METHOD("get_height"), &DtBackend::get_height);
   ClassDB::bind_method(D_METHOD("get_native_width"), &DtBackend::get_native_width);
   ClassDB::bind_method(D_METHOD("get_native_height"), &DtBackend::get_native_height);
+  ClassDB::bind_method(D_METHOD("get_raw_width"), &DtBackend::get_raw_width);
+  ClassDB::bind_method(D_METHOD("get_raw_height"), &DtBackend::get_raw_height);
   ClassDB::bind_method(D_METHOD("cleanup"), &DtBackend::cleanup);
   ClassDB::bind_method(D_METHOD("unload_image"), &DtBackend::unload_image);
 }
@@ -362,6 +364,8 @@ bool DtBackend::load_image(String path) {
   const dt_image_t *img = &dev.image_storage;
   const int wd = img->width;
   const int ht = img->height;
+  raw_width = wd;
+  raw_height = ht;
 
   // Section D, step 3: DARKTABLE_API_NOTES.md is explicit that
   // dt_dev_pixelpipe_init_full() does NOT exist in this checkout -- only
@@ -388,9 +392,6 @@ bool DtBackend::load_image(String path) {
   dt_dev_pixelpipe_set_icc(&pipe, DT_COLORSPACE_DISPLAY, NULL, DT_INTENT_LAST);
   dt_dev_pixelpipe_create_nodes(&pipe, &dev);
   dt_dev_pixelpipe_synch_all(&pipe, &dev);
-
-  (void)wd;
-  (void)ht;
 
   pipe_ready = true;
   image_loaded = true;
@@ -696,6 +697,17 @@ int DtBackend::get_native_height() {
   return native_height;
 }
 
+// Raw file dimensions, captured at load_image() time -- see raw_width/
+// raw_height above. Available immediately after a successful load_image(),
+// unlike get_native_width()/get_native_height() which need a render first.
+int DtBackend::get_raw_width() {
+  return raw_width;
+}
+
+int DtBackend::get_raw_height() {
+  return raw_height;
+}
+
 // Section H: pixelpipe -> dev -> mipmap buffer -> process-wide dt_cleanup(),
 // in that exact order. Guarded against double-cleanup since GDScript may
 // call this from both a close handler and object destruction.
@@ -750,4 +762,6 @@ void DtBackend::unload_image() {
   processed_height = 0;
   native_width = 0;
   native_height = 0;
+  raw_width = 0;
+  raw_height = 0;
 }
