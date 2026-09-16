@@ -51,13 +51,28 @@ var backend: DtBackend = null
 var image_texture: ImageTexture = null
 
 var _image_loaded: bool = false
+
+# --- Edit state: the authoritative "what to render" ---------------------------
+# Every darktable module parameter the UI can drive lives here as key -> desired
+# value. Any control's value_changed handler writes its key immediately, then
+# calls _request_render(). The render queue always re-snapshots THIS dict at the
+# moment a render starts, so a change to one parameter while a render driven by
+# another is still in flight is never lost or clobbered — and any burst of
+# changes collapses into a single follow-up render.
+#
+# To expose a new module (see .claude/skills/add-darktable-module): add its key
+# here, add one line to _apply_params_to_backend(), and add a control that writes
+# the key and calls _request_render().
+var _params: Dictionary = {
+	"exposure": 0.0,
+}
+
 var _processing: bool = false
-# Any queued re-render (an EV change, or an edit-resolution change that landed
-# while a render was in flight) is expressed as "there is a pending EV equal to
-# whatever we want the next render to use". _pending_ev is only meaningful when
-# _has_pending_ev is true; the next render also picks up the current _edit_scale.
-var _has_pending_ev: bool = false
-var _pending_ev: float = 0.0
+# A render request that arrived while a render was already in flight. We store no
+# value — the next _start_process() re-snapshots _params/_edit_scale, so it always
+# renders the latest state. Exactly one follow-up render runs no matter how many
+# requests coalesced into this flag.
+var _render_queued: bool = false
 var _current_task_id: int = -1
 var _exporting: bool = false
 var _export_path: String = ""
@@ -274,6 +289,7 @@ func _on_file_dialog_file_selected(path: String) -> void:
 	# render of a huge file isn't dramatically slower than a normal one.
 	exposure_slider.value = 0.0
 	exposure_value_label.text = "%.2f" % 0.0
+	_params["exposure"] = 0.0
 	var default_edit_id: int = _pick_default_edit_mode_id(
 		backend.get_raw_width(), backend.get_raw_height())
 	edit_res_option.select(default_edit_id)
@@ -281,34 +297,46 @@ func _on_file_dialog_file_selected(path: String) -> void:
 	_display_zoom = -1.0
 	fit_button.set_pressed_no_signal(true)
 	_update_zoom_readout()
-	_start_process(0.0)
+	_request_render()
 
 
 func _on_exposure_slider_value_changed(value: float) -> void:
 	exposure_value_label.text = "%.2f" % value
+	_params["exposure"] = value
+	_request_render()
 
-	if not _image_loaded or _exporting:
+
+# Single entry point for every control: "the edit state changed, bring the
+# preview up to date." Coalesces requests so two renders never overlap on shared
+# process-wide darktable state — if one is already in flight, just flag that
+# another is needed; _on_process_done() runs it when the current one finishes.
+func _request_render() -> void:
+	if backend == null or not _image_loaded or _exporting:
 		return
-
 	if _processing:
-		# A task is already running; remember the latest value and pick it up
-		# when the running task completes.
-		_has_pending_ev = true
-		_pending_ev = value
+		_render_queued = true
 		return
+	_start_process()
 
-	_start_process(value)
+
+# Push the current desired parameters into their darktable modules. This is the
+# ONE place that maps _params keys to backend setters — adding a module means
+# adding one line here. Runs on the main thread: darktable's set_* calls mutate
+# process-wide pipe state and must not race the worker's render_view().
+func _apply_params_to_backend() -> void:
+	backend.set_exposure(_params["exposure"])
 
 
-func _start_process(ev: float) -> void:
+func _start_process() -> void:
 	if backend == null or not _image_loaded or _exporting:
 		return
 
 	_processing = true
+	_render_queued = false
 	# Block export while a preview render is in flight: both run darktable's pipe
 	# over shared process-wide state, so they must not overlap.
 	export_button.disabled = true
-	backend.set_exposure(ev)
+	_apply_params_to_backend()
 
 	# Snapshot _edit_scale on the main thread and hand the plain value into the
 	# worker task. render_view() with an oversized viewport renders the whole
@@ -350,10 +378,10 @@ func _on_process_done(bytes: PackedByteArray, width: int, height: int) -> void:
 
 	_processing = false
 
-	if _has_pending_ev:
-		var ev: float = _pending_ev
-		_has_pending_ev = false
-		_start_process(ev)
+	if _render_queued and _image_loaded and not _exporting:
+		# Changes landed mid-render; render once more with the latest _params.
+		_render_queued = false
+		_start_process()
 	elif _image_loaded and not _exporting:
 		# Pipe is idle again -> exporting is safe.
 		export_button.disabled = false
@@ -398,17 +426,10 @@ func _on_edit_res_option_button_item_selected(index: int) -> void:
 	var id: int = edit_res_option.get_item_id(index)
 	_edit_scale = _EDIT_MODES[id]["scale"]
 
-	if not _image_loaded or _exporting:
-		return
-
-	# Re-render the pipe at the new edit resolution, same queuing pattern as the
-	# slider so we never overlap two tasks over shared darktable state.
-	if _processing:
-		_has_pending_ev = true
-		_pending_ev = exposure_slider.value
-		return
-
-	_start_process(exposure_slider.value)
+	# Re-render at the new edit resolution. _request_render() re-snapshots
+	# _edit_scale and _params, so it carries the current exposure automatically
+	# and coalesces safely if a render is already running.
+	_request_render()
 
 
 func _on_zoom_slider_value_changed(value: float) -> void:
