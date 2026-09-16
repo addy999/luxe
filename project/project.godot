@@ -19,11 +19,10 @@ boot_splash/bg_color=Color(0.61861694, 0.618617, 0.6186168, 1)
 
 window/size/viewport_width=1920
 window/size/viewport_height=1080
-window/size/viewport_min_width=900
-window/size/viewport_min_height=600
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
-window/stretch/aspect="expand"
+window/size/viewport_min_width=900
+window/size/viewport_min_height=600
 
 [dt_backend]
 

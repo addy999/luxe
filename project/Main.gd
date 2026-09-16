@@ -32,6 +32,10 @@ extends Control
 @onready var exposure_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ExposureRow/ExposureValueLabel
 @onready var contrast_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ContrastRow/ContrastSlider
 @onready var contrast_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ContrastRow/ContrastValueLabel
+@onready var highlights_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/HighlightsRow/HighlightsSlider
+@onready var highlights_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/HighlightsRow/HighlightsValueLabel
+@onready var shadows_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ShadowsRow/ShadowsSlider
+@onready var shadows_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ShadowsRow/ShadowsValueLabel
 @onready var edit_res_option: OptionButton = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/EditResOptionButton
 @onready var open_button: Button = $Root/TopBar/TopBarRow/OpenButton
 @onready var export_button: Button = $Root/TopBar/TopBarRow/ExportButton
@@ -68,6 +72,8 @@ var _image_loaded: bool = false
 var _params: Dictionary = {
 	"exposure": 0.0,
 	"contrast": 0.0,
+	"highlights": -50.0,
+	"shadows": 50.0,
 }
 
 var _processing: bool = false
@@ -201,11 +207,15 @@ func _ready() -> void:
 		open_button.disabled = true
 		exposure_slider.editable = false
 		contrast_slider.editable = false
+		highlights_slider.editable = false
+		shadows_slider.editable = false
 		return
 
 	status_label.text = "Ready — open an image to begin"
 	exposure_value_label.text = "%.2f" % exposure_slider.value
 	contrast_value_label.text = "%.2f" % contrast_slider.value
+	highlights_value_label.text = "%.2f" % highlights_slider.value
+	shadows_value_label.text = "%.2f" % shadows_slider.value
 
 	# Populate the edit-resolution dropdown. Item *index* == item *id* here (ids
 	# assigned in order), and add_item(label, id) pins the id explicitly so
@@ -298,6 +308,12 @@ func _on_file_dialog_file_selected(path: String) -> void:
 	contrast_slider.value = 0.0
 	contrast_value_label.text = "%.2f" % 0.0
 	_params["contrast"] = 0.0
+	highlights_slider.value = -50.0
+	highlights_value_label.text = "%.2f" % -50.0
+	_params["highlights"] = -50.0
+	shadows_slider.value = 50.0
+	shadows_value_label.text = "%.2f" % 50.0
+	_params["shadows"] = 50.0
 	var default_edit_id: int = _pick_default_edit_mode_id(
 		backend.get_raw_width(), backend.get_raw_height())
 	edit_res_option.select(default_edit_id)
@@ -317,6 +333,18 @@ func _on_exposure_slider_value_changed(value: float) -> void:
 func _on_contrast_slider_value_changed(value: float) -> void:
 	contrast_value_label.text = "%.2f" % value
 	_params["contrast"] = value
+	_request_render()
+
+
+func _on_highlights_slider_value_changed(value: float) -> void:
+	highlights_value_label.text = "%.2f" % value
+	_params["highlights"] = value
+	_request_render()
+
+
+func _on_shadows_slider_value_changed(value: float) -> void:
+	shadows_value_label.text = "%.2f" % value
+	_params["shadows"] = value
 	_request_render()
 
 
@@ -340,6 +368,8 @@ func _request_render() -> void:
 func _apply_params_to_backend() -> void:
 	backend.set_exposure(_params["exposure"])
 	backend.set_contrast(_params["contrast"])
+	backend.set_highlights(_params["highlights"])
+	backend.set_shadows(_params["shadows"])
 
 
 func _start_process() -> void:
@@ -569,6 +599,8 @@ func _on_export_dialog_file_selected(path: String) -> void:
 	open_button.disabled = true
 	exposure_slider.editable = false
 	contrast_slider.editable = false
+	highlights_slider.editable = false
+	shadows_slider.editable = false
 	status_label.text = "Exporting %s ..." % path.get_file()
 
 	# Run the (full-res, high-quality) export off the main thread so the UI
@@ -586,6 +618,8 @@ func _on_export_done(ok: bool, path: String) -> void:
 	open_button.disabled = false
 	exposure_slider.editable = true
 	contrast_slider.editable = true
+	highlights_slider.editable = true
+	shadows_slider.editable = true
 	export_button.disabled = not _image_loaded
 	if ok:
 		status_label.text = "Exported %s" % path.get_file()

@@ -161,6 +161,52 @@ layout_mode = 2
 text = "0.00"
 horizontal_alignment = 2
 
+[node name="HighlightsLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
+layout_mode = 2
+text = "Highlights"
+
+[node name="HighlightsRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="HighlightsSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/HighlightsRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 4
+min_value = -100.0
+max_value = 100.0
+step = 1.0
+value = -50.0
+
+[node name="HighlightsValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/HighlightsRow"]
+custom_minimum_size = Vector2(52, 0)
+layout_mode = 2
+text = "-50.00"
+horizontal_alignment = 2
+
+[node name="ShadowsLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
+layout_mode = 2
+text = "Shadows"
+
+[node name="ShadowsRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="ShadowsSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ShadowsRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 4
+min_value = -100.0
+max_value = 100.0
+step = 1.0
+value = 50.0
+
+[node name="ShadowsValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ShadowsRow"]
+custom_minimum_size = Vector2(52, 0)
+layout_mode = 2
+text = "50.00"
+horizontal_alignment = 2
+
 [node name="HSep" type="HSeparator" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox"]
 layout_mode = 2
 
@@ -223,6 +269,8 @@ use_native_dialog = true
 [connection signal="value_changed" from="Root/TopBar/TopBarRow/ZoomSlider" to="." method="_on_zoom_slider_value_changed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ExposureRow/ExposureSlider" to="." method="_on_exposure_slider_value_changed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ContrastRow/ContrastSlider" to="." method="_on_contrast_slider_value_changed"]
+[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/HighlightsRow/HighlightsSlider" to="." method="_on_highlights_slider_value_changed"]
+[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ShadowsRow/ShadowsSlider" to="." method="_on_shadows_slider_value_changed"]
 [connection signal="item_selected" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/EditResOptionButton" to="." method="_on_edit_res_option_button_item_selected"]
 [connection signal="file_selected" from="FileDialog" to="." method="_on_file_dialog_file_selected"]
 [connection signal="file_selected" from="ExportDialog" to="." method="_on_export_dialog_file_selected"]
