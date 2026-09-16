@@ -66,6 +66,14 @@ var image_texture: ImageTexture = null
 
 var _image_loaded: bool = false
 
+# Per-image default white balance (the camera's as-shot CCT, resolved on load).
+# Unlike the other sliders, WB has no fixed default -- its reset target is this
+# value, refreshed in _on_image_loaded(). 6500.0 is only a pre-load placeholder.
+var _wb_default_temperature: float = 6500.0
+# Every reset icon button, tracked so they can be disabled together when the
+# backend fails to init (mirrors the slider .editable handling below).
+var _reset_buttons: Array[Button] = []
+
 # --- Edit state: the authoritative "what to render" ---------------------------
 # Every darktable module parameter the UI can drive lives here as key -> desired
 # value. Any control's value_changed handler writes its key immediately, then
@@ -235,6 +243,11 @@ func _configure_dt_backend_env() -> void:
 
 
 func _ready() -> void:
+	# Build the per-slider/per-module reset icon buttons first so they exist even
+	# on the backend-failure path below (where they get disabled alongside the
+	# sliders they'd otherwise reset).
+	_setup_reset_buttons()
+
 	_configure_dt_backend_env()
 	backend = DtBackend.new()
 	var ok: bool = backend.init()
@@ -248,6 +261,8 @@ func _ready() -> void:
 		saturation_slider.editable = false
 		vibrance_slider.editable = false
 		white_balance_slider.editable = false
+		for btn in _reset_buttons:
+			btn.disabled = true
 		return
 
 	status_label.text = "Ready — open an image to begin"
@@ -376,6 +391,8 @@ func _on_file_dialog_file_selected(path: String) -> void:
 	white_balance_slider.value = as_shot_temperature
 	white_balance_value_label.text = "%dK" % roundi(as_shot_temperature)
 	_params["wb_temperature"] = as_shot_temperature
+	# This image's as-shot CCT is the WB slider's reset target from now on.
+	_wb_default_temperature = as_shot_temperature
 	var default_edit_id: int = _pick_default_edit_mode_id(
 		backend.get_raw_width(), backend.get_raw_height())
 	edit_res_option.select(default_edit_id)
@@ -431,6 +448,68 @@ func _on_white_balance_slider_value_changed(value: float) -> void:
 	white_balance_value_label.text = "%dK" % roundi(value)
 	_params["wb_temperature"] = value
 	_request_render()
+
+
+# --- Reset buttons ------------------------------------------------------------
+# Each slider/module gets a small flat "↺" icon button that restores its default.
+# Built in code (rather than in Main.tscn) so the one appearance/behaviour lives
+# in one place and adding a module means one _add_slider_reset() line, matching
+# the single-line-per-module convention _apply_params_to_backend() already uses.
+
+# A small, flat, borderless icon button that blends into a slider row. focus is
+# disabled so tabbing still lands on the sliders, not these secondary controls.
+func _make_reset_button(tooltip_text: String) -> Button:
+	var btn := Button.new()
+	btn.text = "↺"
+	btn.flat = true
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.tooltip_text = tooltip_text
+	btn.custom_minimum_size = Vector2(24, 0)
+	btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	_reset_buttons.append(btn)
+	return btn
+
+
+# Appends a reset button to a slider's row (the slider's HBoxContainer parent),
+# so it sits just right of the value label. Setting slider.value fires the
+# existing value_changed handler, which updates the label, _params and render --
+# so a reset flows through the exact same path as a manual drag.
+func _add_slider_reset(slider: HSlider, default_value: float) -> void:
+	var btn := _make_reset_button("Reset to default")
+	btn.pressed.connect(func() -> void: slider.value = default_value)
+	slider.get_parent().add_child(btn)
+
+
+func _setup_reset_buttons() -> void:
+	_add_slider_reset(exposure_slider, 0.0)
+	_add_slider_reset(contrast_slider, 0.0)
+	_add_slider_reset(highlights_slider, -50.0)
+	_add_slider_reset(shadows_slider, 50.0)
+	_add_slider_reset(saturation_slider, 25.0)
+	_add_slider_reset(vibrance_slider, 25.0)
+
+	# White balance resets to the image's as-shot CCT, not a fixed constant --
+	# the lambda reads _wb_default_temperature live so it tracks the loaded image.
+	var wb_btn := _make_reset_button("Reset to as-shot white balance")
+	wb_btn.pressed.connect(func() -> void:
+		white_balance_slider.value = _wb_default_temperature)
+	white_balance_slider.get_parent().add_child(wb_btn)
+
+	# Tone curve: its "Tone Curve" label is a bare Label above the editor, so wrap
+	# label + reset button in a row and drop it in at the label's old slot.
+	var tone_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ToneCurveLabel
+	var vbox: Node = tone_label.get_parent()
+	var slot: int = tone_label.get_index()
+	var tone_header := HBoxContainer.new()
+	tone_header.add_theme_constant_override("separation", 8)
+	vbox.add_child(tone_header)
+	vbox.move_child(tone_header, slot)
+	tone_label.reparent(tone_header)
+	tone_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var tone_btn := _make_reset_button("Reset tone curve")
+	tone_btn.pressed.connect(func() -> void: tone_curve_editor.reset_to_default())
+	tone_header.add_child(tone_btn)
 
 
 # Single entry point for every control: "the edit state changed, bring the
