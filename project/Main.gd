@@ -26,16 +26,20 @@ extends Control
 # not true detail. True 1:1 detail requires BOTH edit resolution and display
 # zoom at 100%. export_image() is untouched and always renders full-resolution.
 
-@onready var scroll_container: ScrollContainer = $VBox/Scroll
-@onready var texture_rect: TextureRect = $VBox/Scroll/TextureRect
-@onready var exposure_slider: HSlider = $VBox/Controls/ExposureRow/ExposureSlider
-@onready var exposure_value_label: Label = $VBox/Controls/ExposureRow/ExposureValueLabel
-@onready var edit_res_option: OptionButton = $VBox/Controls/ViewRow/EditResOptionButton
-@onready var display_zoom_option: OptionButton = $VBox/Controls/ViewRow/DisplayZoomOptionButton
-@onready var open_button: Button = $VBox/Controls/OpenRow/OpenButton
-@onready var export_button: Button = $VBox/Controls/OpenRow/ExportButton
-@onready var status_label: Label = $VBox/Controls/OpenRow/StatusLabel
-@onready var resolution_label: Label = $VBox/Controls/ResolutionLabel
+@onready var scroll_container: ScrollContainer = $Root/MiddleHBox/Scroll
+@onready var texture_rect: TextureRect = $Root/MiddleHBox/Scroll/TextureRect
+@onready var exposure_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ExposureRow/ExposureSlider
+@onready var exposure_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ExposureRow/ExposureValueLabel
+@onready var edit_res_option: OptionButton = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/EditResOptionButton
+@onready var open_button: Button = $Root/TopBar/TopBarRow/OpenButton
+@onready var export_button: Button = $Root/TopBar/TopBarRow/ExportButton
+@onready var status_label: Label = $Root/BottomBar/BottomRow/StatusLabel
+@onready var resolution_label: Label = $Root/BottomBar/BottomRow/ResolutionLabel
+# Display-zoom controls live in the top bar now: a continuous slider (native-
+# relative %) plus a toggle for the Fit sentinel. See _display_zoom below.
+@onready var zoom_slider: HSlider = $Root/TopBar/TopBarRow/ZoomSlider
+@onready var fit_button: Button = $Root/TopBar/TopBarRow/FitButton
+@onready var zoom_value_label: Label = $Root/TopBar/TopBarRow/ZoomValueLabel
 @onready var file_dialog: FileDialog = $FileDialog
 @onready var export_dialog: FileDialog = $ExportDialog
 
@@ -74,16 +78,13 @@ var _edit_scale: float = 1.00
 const _WHOLE_IMAGE_VIEWPORT: int = 1000000
 
 # --- Knob 2: display zoom (frontend TextureRect scale) ------------------------
-# On-screen size relative to *native* pixels. -1.0 sentinel = Fit (letterbox the
-# whole image into the pane). Item ids on DisplayZoomOptionButton index in.
-const _DISPLAY_FIT_ID: int = 0
-const _DISPLAY_MODES: Array = [
-	{"id": 0, "label": "Fit", "zoom": -1.0},
-	{"id": 1, "label": "25%", "zoom": 0.25},
-	{"id": 2, "label": "50%", "zoom": 0.50},
-	{"id": 3, "label": "100%", "zoom": 1.00},
-	{"id": 4, "label": "200%", "zoom": 2.00},
-]
+# On-screen size relative to *native* pixels. Driven by the top-bar ZoomSlider
+# (a continuous percentage) plus the FitButton toggle. The slider itself cannot
+# encode "Fit", so the -1.0 sentinel lives only in _display_zoom below and is
+# mirrored in the UI: FitButton pressed + ZoomValueLabel showing "Fit". Dragging
+# the slider drops out of Fit into a positive native-relative scale.
+const _ZOOM_MIN_PCT: float = 10.0
+const _ZOOM_MAX_PCT: float = 400.0
 var _display_zoom: float = -1.0 # -1.0 = Fit; otherwise native-relative scale.
 
 # TextureRect StretchMode ids (confirmed via dynamic-rag godot_retrieve):
@@ -157,19 +158,20 @@ func _ready() -> void:
 	status_label.text = "Ready — open an image to begin"
 	exposure_value_label.text = "%.2f" % exposure_slider.value
 
-	# Populate both dropdowns. Item *index* == item *id* here (ids assigned in
-	# order), and add_item(label, id) pins the id explicitly so lookups stay
-	# correct even if entries are reordered (confirmed via dynamic-rag
-	# godot_retrieve against OptionButton's docs).
+	# Populate the edit-resolution dropdown. Item *index* == item *id* here (ids
+	# assigned in order), and add_item(label, id) pins the id explicitly so
+	# lookups stay correct even if entries are reordered (confirmed via dynamic-
+	# rag godot_retrieve against OptionButton's docs).
 	for mode in _EDIT_MODES:
 		edit_res_option.add_item(mode["label"], mode["id"])
 	edit_res_option.select(_EDIT_DEFAULT_ID)
 	_edit_scale = _EDIT_MODES[_EDIT_DEFAULT_ID]["scale"]
 
-	for mode in _DISPLAY_MODES:
-		display_zoom_option.add_item(mode["label"], mode["id"])
-	display_zoom_option.select(_DISPLAY_FIT_ID)
-	_display_zoom = _DISPLAY_MODES[_DISPLAY_FIT_ID]["zoom"]
+	# Display zoom starts in Fit. The scene already sets the slider to 100 and the
+	# Fit toggle on; mirror that into _display_zoom and the readout.
+	_display_zoom = -1.0
+	fit_button.set_pressed_no_signal(true)
+	_update_zoom_readout()
 
 	# Re-lay-out on pane resize. This only recomputes the frontend display size
 	# (Fit depends on the pane's size); edit resolution is viewport-independent
@@ -212,8 +214,9 @@ func _on_file_dialog_file_selected(path: String) -> void:
 	exposure_value_label.text = "%.2f" % 0.0
 	edit_res_option.select(_EDIT_DEFAULT_ID)
 	_edit_scale = _EDIT_MODES[_EDIT_DEFAULT_ID]["scale"]
-	display_zoom_option.select(_DISPLAY_FIT_ID)
-	_display_zoom = _DISPLAY_MODES[_DISPLAY_FIT_ID]["zoom"]
+	_display_zoom = -1.0
+	fit_button.set_pressed_no_signal(true)
+	_update_zoom_readout()
 	_start_process(0.0)
 
 
@@ -344,12 +347,29 @@ func _on_edit_res_option_button_item_selected(index: int) -> void:
 	_start_process(exposure_slider.value)
 
 
-func _on_display_zoom_option_button_item_selected(index: int) -> void:
-	var id: int = display_zoom_option.get_item_id(index)
-	_display_zoom = _DISPLAY_MODES[id]["zoom"]
+func _on_zoom_slider_value_changed(value: float) -> void:
+	# Dragging the slider always means an explicit positive zoom, so drop out of
+	# Fit (silently, so we don't re-enter _on_fit_button_toggled). value is in
+	# percent of native; _display_zoom is the fraction.
+	_display_zoom = value / 100.0
+	fit_button.set_pressed_no_signal(false)
+	_apply_zoom_change()
 
-	# Frontend-only knob: no pipe re-render. Just re-lay-out the existing buffer
-	# and refresh the readout.
+
+func _on_fit_button_toggled(pressed: bool) -> void:
+	if pressed:
+		# Engage the Fit sentinel; leave the slider where it is as a fallback.
+		_display_zoom = -1.0
+	else:
+		# Fit released -> snap to whatever the slider currently reads.
+		_display_zoom = zoom_slider.value / 100.0
+	_apply_zoom_change()
+
+
+func _apply_zoom_change() -> void:
+	# Shared tail for both display-zoom controls. Frontend-only knob: no pipe
+	# re-render. Refresh the readout, then re-lay-out the existing buffer.
+	_update_zoom_readout()
 	if not _image_loaded:
 		return
 	_apply_display_layout()
@@ -357,6 +377,23 @@ func _on_display_zoom_option_button_item_selected(index: int) -> void:
 		_update_resolution_label(image_texture.get_width(), image_texture.get_height())
 	else:
 		_update_resolution_label(0, 0)
+
+
+func _update_zoom_readout() -> void:
+	# The top-bar "%"/"Fit" label. In Fit, also park the slider thumb on the
+	# effective fit percent (no-signal) so it reflects what is actually on screen.
+	if _display_zoom < 0.0:
+		zoom_value_label.text = "Fit"
+		if backend != null:
+			var native_w: int = backend.get_native_width()
+			var native_h: int = backend.get_native_height()
+			if native_w > 0 and native_h > 0:
+				var avail: Vector2 = scroll_container.size
+				var fit: float = min(avail.x / float(native_w), avail.y / float(native_h))
+				var pct: float = clamp(fit * 100.0, _ZOOM_MIN_PCT, _ZOOM_MAX_PCT)
+				zoom_slider.set_value_no_signal(pct)
+	else:
+		zoom_value_label.text = "%d%%" % roundi(_display_zoom * 100.0)
 
 
 func _update_resolution_label(buf_w: int, buf_h: int) -> void:
