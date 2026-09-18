@@ -104,7 +104,9 @@ var _reset_buttons: Array[Button] = []
 #
 # To expose a new module (see .claude/skills/add-darktable-module): add its key
 # here, add one line to _apply_params_to_backend(), and add a control that writes
-# the key and calls _request_render().
+# the key and calls _request_render(). Only params whose value changed since the
+# last apply are pushed (see _applied_params / _params_differ below), so a new
+# module needs no extra bookkeeping: just keep writing its key as usual.
 var _params: Dictionary = {
 	"exposure": 0.0,
 	"contrast": 0.0,
@@ -127,6 +129,12 @@ var _params: Dictionary = {
 	# the crop overlay UI (see _on_crop_overlay_applied below).
 	"crop": Rect2(0, 0, 1, 1),
 }
+
+# Last values actually pushed to the backend, keyed like _params. A key missing
+# here (or one whose _params value differs) is stale and gets pushed by
+# _apply_params_to_backend(). Emptied on image load to force a full sync, since
+# load_image resets the backend's modules and its state must be re-pushed.
+var _applied_params: Dictionary = {}
 
 # --- White Balance (K) slider mapping -----------------------------------------
 # White balance is implemented via channelmixerrgb ("color calibration")'s
@@ -403,6 +411,12 @@ func _on_file_dialog_file_selected(path: String) -> void:
 	_update_empty_state()
 	status_label.text = "Loaded %s" % path.get_file()
 
+	# load_image() resets the backend's modules, so nothing from the previous
+	# image is still applied. Drop the applied snapshot to force the next render
+	# to push every param fresh (the "first render after load is a full sync"
+	# case); the per-param resets below then just seed _params.
+	_applied_params.clear()
+
 	# Default the export filename to "<source>_edited.jpg".
 	_source_basename = path.get_file().get_basename()
 	export_button.disabled = false
@@ -579,21 +593,56 @@ func _request_render() -> void:
 	_start_process()
 
 
+# True if `key`'s desired value differs from what was last pushed. A key that has
+# never been applied counts as different, which is what makes the first render
+# after an image load a full sync.
+func _params_differ(key: String) -> bool:
+	if not _applied_params.has(key):
+		return true
+	return _params[key] != _applied_params[key]
+
+
+# Record the values just pushed. Arrays are duplicated so a later in-place edit
+# (e.g. ToneCurveEditor mutating its points) can't silently mutate the snapshot.
+func _snapshot_applied_params() -> void:
+	for key in _params:
+		var value: Variant = _params[key]
+		if value is PackedVector2Array:
+			value = (value as PackedVector2Array).duplicate()
+		_applied_params[key] = value
+
+
 # Push the current desired parameters into their darktable modules. This is the
-# ONE place that maps _params keys to backend setters — adding a module means
-# adding one line here. Runs on the main thread: darktable's set_* calls mutate
-# process-wide pipe state and must not race the worker's render_view().
+# ONE place that maps _params keys to backend setters, so adding a module means
+# adding one guarded line here. Runs on the main thread: darktable's set_* calls
+# mutate process-wide pipe state and must not race the worker's render_view().
+#
+# Only params that actually changed since the last apply are pushed. Every setter
+# calls dt_dev_add_history_item_ext(), and darktable only dedups history against
+# the LAST item on the stack (which is always the crop item), so re-pushing all
+# nine on every render appended up to 9 history items per slider tick, and every
+# render replayed all of it: that is the slowdown that grew the longer you dragged.
 func _apply_params_to_backend() -> void:
-	backend.set_exposure(_params["exposure"])
-	backend.set_contrast(_params["contrast"])
-	backend.set_highlights(_params["highlights"])
-	backend.set_shadows(_params["shadows"])
-	backend.set_saturation(_params["saturation"])
-	backend.set_vibrance(_params["vibrance"])
-	backend.set_tonecurve(_params["tonecurve"])
-	backend.set_white_balance_temperature(_params["wb_temperature"])
-	var crop: Rect2 = _params["crop"]
-	backend.set_crop(crop.position.x, crop.position.y, crop.end.x, crop.end.y)
+	if _params_differ("exposure"):
+		backend.set_exposure(_params["exposure"])
+	if _params_differ("contrast"):
+		backend.set_contrast(_params["contrast"])
+	if _params_differ("highlights"):
+		backend.set_highlights(_params["highlights"])
+	if _params_differ("shadows"):
+		backend.set_shadows(_params["shadows"])
+	if _params_differ("saturation"):
+		backend.set_saturation(_params["saturation"])
+	if _params_differ("vibrance"):
+		backend.set_vibrance(_params["vibrance"])
+	if _params_differ("tonecurve"):
+		backend.set_tonecurve(_params["tonecurve"])
+	if _params_differ("wb_temperature"):
+		backend.set_white_balance_temperature(_params["wb_temperature"])
+	if _params_differ("crop"):
+		var crop: Rect2 = _params["crop"]
+		backend.set_crop(crop.position.x, crop.position.y, crop.end.x, crop.end.y)
+	_snapshot_applied_params()
 
 
 func _start_process() -> void:
