@@ -1,1 +1,10 @@
 project/.godot
+project/Luxe.app/
+project/.godot
+**/.DS_STORE
+dist/
+project/bin
+extension/.sconsign.dblite
+extension/src/*.os
+scripts/.smoke_out/
+extension/godot-cpp
