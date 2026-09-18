@@ -929,6 +929,17 @@ PackedByteArray DtBackend::render_view(int viewport_w, int viewport_h, double sc
   // R,G,B,A. Swap byte 0 <-> byte 2 per pixel and force alpha to 0xFF, since
   // the notes explicitly warn darktable's own path does not reliably write
   // a usable alpha byte here.
+  //
+  // Godot 4 dropped FORMAT_BGRA8 from Image::Format (the enum jumps RGB8 ->
+  // RGBA8 -> RGBA4444), so there is no format we could hand the BGRx buffer
+  // to unconverted; the swap stays. Each pixel is independent, so parallelize
+  // it the way darktable parallelizes its own swap (imageio.c:1437's
+  // DT_OMP_FOR). _OPENMP is defined only when the build enables OpenMP (see
+  // SConstruct/-Xclang -fopenmp); without it this compiles to the same serial
+  // loop as before.
+#ifdef _OPENMP
+#pragma omp parallel for default(firstprivate) schedule(static)
+#endif
   for(int64_t k = 0; k < pixel_count; ++k) {
     const uint8_t *src_px = backbuf + k * 4;
     uint8_t *dst_px = dst + k * 4;

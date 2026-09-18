@@ -155,6 +155,17 @@ if env["platform"] == "macos":
     # can coexist without a dual-build -- see PORTABILITY_PLAN.md section 3.4.
     env.Append(LINKFLAGS=["-Wl,-rpath,@loader_path"])
 
+# --- OpenMP: compile pragmas in, not just link libomp ----------------------
+# dt_link_flags.json already puts libomp on the link line (darktable's own
+# build links it), but linking alone does not enable OpenMP in the compiler
+# frontend. godot-cpp drives Apple clang by default, which rejects a bare
+# -fopenmp and wants the frontend flag spelled -Xclang -fopenmp; the version
+# pin matches darktable's own CMake flags in source/build/compile_commands.json.
+# This is what defines _OPENMP for the parallel byte swap in render_view();
+# without it the pragma is skipped and the loop stays serial.
+if env["platform"] == "macos":
+    env.Append(CXXFLAGS=["-Xclang", "-fopenmp", "-fopenmp-version=51"])
+
 # darktable.h transitively pulls in dozens of third-party headers (GTK3,
 # glib, librsvg, json-glib, exiv2, lensfun, OpenCV, OpenEXR, ...). Rather
 # than hand-maintain that list, dt_link_flags.json is generated once from
