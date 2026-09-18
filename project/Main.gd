@@ -65,14 +65,6 @@ extends Control
 # Crop UI: the top-bar toggle button plus the overlay editor (instantiated in
 # code, parented to texture_rect while open -- see CropOverlay.gd).
 @onready var crop_button: Button = $Root/TopBar/TopBarRow/CropButton
-# Hold-over splash: Godot's boot splash only lives while the engine is still
-# initializing and vanishes the moment the main scene's first frame is ready,
-# so on a fast launch it flashes for a frame or two. We re-show the same image
-# (project settings boot_splash/image + bg_color) as a top-most overlay for
-# ~2s and fade it out, so Luxe always gets a consistent splash beat.
-const SPLASH_HOLD_SEC := 1.0
-const SPLASH_BG_COLOR := Color(0.145, 0.145, 0.145, 1)
-var _splash_layer: CanvasLayer = null
 
 const CropOverlayScript := preload("res://CropOverlay.gd")
 var _crop_overlay: Control = null
@@ -281,6 +273,15 @@ func _ready() -> void:
 	# sliders they'd otherwise reset).
 	_setup_reset_buttons()
 
+	_animate_entrance()
+	_update_empty_state()
+	await get_tree().process_frame
+	if not _init_backend():
+		return
+	_finish_ready()
+
+
+func _init_backend() -> bool:
 	_configure_dt_backend_env()
 	backend = DtBackend.new()
 	var ok: bool = backend.init()
@@ -296,8 +297,11 @@ func _ready() -> void:
 		white_balance_slider.editable = false
 		for btn in _reset_buttons:
 			btn.disabled = true
-		return
+		return false
+	return true
 
+
+func _finish_ready() -> void:
 	status_label.text = "Ready — open an image to begin"
 	exposure_value_label.text = "%.2f" % exposure_slider.value
 	contrast_value_label.text = "%.2f" % contrast_slider.value
@@ -340,15 +344,6 @@ func _ready() -> void:
 	crop_button.toggled.connect(_on_crop_button_toggled)
 	crop_button.disabled = true
 
-	# The entrance animation fires behind the splash overlay; the chrome has
-	# finished settling by the time the splash fades out. The splash is strictly
-	# a launch beat — never call _show_splash() from _update_empty_state() or any
-	# other repeated path, or it re-appears mid-session (e.g. on the first image
-	# load after clicking the empty-state Open button).
-	_animate_entrance()
-	_show_splash()
-	_update_empty_state()
-
 
 # Empty-canvas placeholder: with no image loaded, hide the (blank) Scroll pane
 # so the centered "Open Image…" call-to-action owns the whole canvas area; once
@@ -357,93 +352,6 @@ func _update_empty_state() -> void:
 	var empty: bool = not _image_loaded
 	empty_state.visible = empty
 	scroll_container.visible = not empty
-
-
-func _show_splash() -> void:
-	# Re-show the boot splash as a full-window overlay so the app keeps a ~2s
-	# splash beat instead of the engine splash flashing by on fast launches.
-	# CanvasLayer (layer 100) sits above every UI node including popups.
-	# Render the SVG source (imported at 4x scale, so it's crisp on retina)
-	# rather than the low-res PNG the engine splash uses.
-	var tex: Texture2D = load("res://assets/boot_splash.svg")
-	if tex == null:
-		return
-	var rect_bg: ColorRect = ColorRect.new()
-	rect_bg.color = SPLASH_BG_COLOR
-	rect_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	var rect_img: TextureRect = TextureRect.new()
-	rect_img.texture = tex
-	rect_img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	rect_img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	rect_img.set_anchors_preset(Control.PRESET_FULL_RECT)
-
-	# The SVG only carries the ring graphic (ThorVG can't render <text>), so the
-	# wordmark and subtitle are drawn here as Labels. Positions are fractions of
-	# the 960x540 SVG viewBox, resolved per-frame against the TextureRect's
-	# actual image rect so they track the ring through any window size.
-	var wordmark: Label = Label.new()
-	wordmark.text = "LUXE"
-	wordmark.add_theme_font_size_override("font_size", 72)
-	wordmark.add_theme_constant_override("line_spacing", 0)
-	wordmark.add_theme_color_override("font_color", Color(0.941, 0.941, 0.941))
-	wordmark.add_theme_font_override("font", ThemeDB.fallback_font)
-	var subtitle: Label = Label.new()
-	subtitle.text = "RAW PHOTO EDITOR"
-	subtitle.add_theme_font_size_override("font_size", 16)
-	subtitle.add_theme_color_override("font_color", Color(0.478, 0.478, 0.478))
-	subtitle.add_theme_font_override("font", ThemeDB.fallback_font)
-	# Letter-spacing needs a per-glyph effect; approximate via a ThemeOverride
-	# is not available, so we skip it (slightly tighter than the SVG, acceptable).
-	var loading_label: Label = Label.new()
-	loading_label.text = "Loading..."
-	loading_label.add_theme_font_size_override("font_size", 16)
-	loading_label.add_theme_color_override("font_color", Color(0.48, 0.48, 0.48))
-	loading_label.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM, Control.PRESET_MODE_MINSIZE, 48)
-	rect_img.resized.connect(_position_splash_text.bind(wordmark, subtitle))
-	var root: Control = Control.new()
-	root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	root.mouse_filter = Control.MOUSE_FILTER_STOP
-	root.add_child(rect_bg)
-	root.add_child(rect_img)
-	rect_img.add_child(wordmark)
-	rect_img.add_child(subtitle)
-	root.add_child(loading_label)
-	_splash_layer = CanvasLayer.new()
-	_splash_layer.layer = 100
-	_splash_layer.add_child(root)
-	add_child(_splash_layer)
-	# Position the text once now (the resized signal covers later resizes).
-	_position_splash_text(wordmark, subtitle)
-	# Hold, then fade out over 0.3s and free the layer.
-	var tw: Tween = create_tween()
-	tw.tween_interval(SPLASH_HOLD_SEC)
-	tw.tween_property(root, "modulate:a", 0.0, 0.30) \
-		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
-	tw.tween_callback(func() -> void:
-		_splash_layer.queue_free()
-		_splash_layer = null
-	)
-
-
-func _position_splash_text(wordmark: Label, subtitle: Label) -> void:
-	# Map the SVG viewBox coordinates (960x540) onto the TextureRect's actual
-	# drawn image rect (KEEP_ASPECT_CENTERED within its full-rect anchors), so
-	# the Labels sit exactly where the SVG text was, at every window size.
-	var vr: TextureRect = wordmark.get_parent() as TextureRect
-	if vr == null or vr.texture == null:
-		return
-	var vs := Vector2(960, 540)
-	var tex_size: Vector2 = Vector2(vr.texture.get_width(), vr.texture.get_height())
-	var scale: float = min(vr.size.x / tex_size.x, vr.size.y / tex_size.y)
-	var img_size: Vector2 = tex_size * scale
-	var img_origin: Vector2 = (vr.size - img_size) * 0.5
-	# SVG coords: LUXE baseline at y=330 centered x=480; subtitle baseline y=368.
-	# Labels are positioned by top-left, so offset up by the font ascent approx
-	# (0.75 * size) to land the baseline correctly.
-	var wordmark_pos := img_origin + Vector2(480, 330) / vs * img_size
-	wordmark.position = wordmark_pos - Vector2(wordmark.size.x * 0.5, 72 * 0.75)
-	var subtitle_pos := img_origin + Vector2(480, 368) / vs * img_size
-	subtitle.position = subtitle_pos - Vector2(subtitle.size.x * 0.5, 16 * 0.75)
 
 
 func _animate_entrance() -> void:
