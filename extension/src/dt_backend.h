@@ -387,6 +387,46 @@ typedef struct dt_iop_tonecurve_params_t
   int preserve_colors; // dt_iop_rgb_norms_t, 4-byte enum
 } dt_iop_tonecurve_params_t;
 
+// dt_iop_clipping_params_t is likewise private to source/src/iop/clipping.c,
+// so it's redeclared here to match that file exactly (source/src/iop/
+// clipping.c:58-79, DT_MODULE_INTROSPECTION version 5). We only drive the
+// crop box cx/cy/cw/ch -- which are LEFT/TOP/RIGHT/BOTTOM edges, NOT x/y/w/h
+// (the $DESCRIPTION labels at clipping.c:61-64 and commit_params' copysignf
+// at clipping.c:3094-3104 confirm; sign of cw/ch encodes flip, magnitude is
+// the edge) -- as normalized fractions 0..1 of the whole image. commit_params
+// clamps them (clipping.c:1325-1328): cx/cy to 0..0.9, |cw|/|ch| to 0.1..1.0.
+// No crop = cx=0, cy=0, cw=1, ch=1 (image.c initializes usercrop to {0,0,1,1},
+// and clipping's own commit_box resets to the same when first enabled). All
+// other fields (angle, keystone quad, ratio) are left at the module's
+// introspection defaults so no rotation/keystone/aspect-lock is applied.
+// The WHOLE struct must be reproduced verbatim -- field order/types are
+// load-bearing (opaque void* params blob indexed by offset). gboolean is
+// glib's gint (4 bytes) and every field here is 4 bytes, so the layout is
+// padding-free. If clipping.c's struct or introspection version changes
+// upstream, update this block.
+typedef struct dt_iop_clipping_params_t
+{
+  float angle; // $MIN: -180.0 $MAX: 180.0
+  float cx;    // $MIN: 0.0 $MAX: 1.0 $DESCRIPTION: "left"
+  float cy;    // $MIN: 0.0 $MAX: 1.0 $DESCRIPTION: "top"
+  float cw;    // $MIN: 0.0 $MAX: 1.0 $DESCRIPTION: "right"
+  float ch;    // $MIN: 0.0 $MAX: 1.0 $DESCRIPTION: "bottom"
+  float k_h, k_v;
+  float kxa;   // $MIN: 0.0 $MAX: 1.0 $DEFAULT: 0.2
+  float kya;   // $MIN: 0.0 $MAX: 1.0 $DEFAULT: 0.2
+  float kxb;   // $MIN: 0.0 $MAX: 1.0 $DEFAULT: 0.8
+  float kyb;   // $MIN: 0.0 $MAX: 1.0 $DEFAULT: 0.2
+  float kxc;   // $MIN: 0.0 $MAX: 1.0 $DEFAULT: 0.8
+  float kyc;   // $MIN: 0.0 $MAX: 1.0 $DEFAULT: 0.8
+  float kxd;   // $MIN: 0.0 $MAX: 1.0 $DEFAULT: 0.2
+  float kyd;   // $MIN: 0.0 $MAX: 1.0 $DEFAULT: 0.8
+  int k_type, k_sym;
+  int k_apply;   // $DEFAULT: 0
+  int crop_auto; // gboolean: $DEFAULT: TRUE ("automatic cropping")
+  int ratio_n;   // $DEFAULT: -1
+  int ratio_d;   // $DEFAULT: -1
+} dt_iop_clipping_params_t;
+
 namespace godot {
 
 class DtBackend : public RefCounted {
@@ -415,6 +455,7 @@ private:
   // temperature -- see the NOTE on white balance above
   // dt_iop_channelmixer_rgb_params_t.
   dt_iop_module_t *channelmixer_rgb_module = nullptr;
+  dt_iop_module_t *clipping_module = nullptr;
 
   int processed_width = 0;
   int processed_height = 0;
@@ -482,6 +523,15 @@ public:
   // 0.0f (and prints an error) if no image is loaded or the module can't be
   // found.
   float get_white_balance_temperature();
+  // Drives the clipping module's crop box ("clipping", display name "crop &
+  // rotate"). All four values are normalized 0..1 fractions of the whole
+  // image; (left, top) is one corner, (right, bottom) the opposite corner.
+  // Clamped to the module's own commit_params() ranges (left/top 0..0.9,
+  // right/bottom 0.1..1.0). Passing the full frame (0, 0, 1, 1) DISABLES the
+  // module instead of enabling it, so "no crop" costs nothing in the pipe.
+  // Enables the module and records a headless history item, same pattern as
+  // every other setter here. Rotation/keystone/aspect are never touched.
+  void set_crop(float left, float top, float right, float bottom);
   // Drives the tonecurve module's L-channel spline (see dt_iop_tonecurve_params_t
   // above). `points` is a caller-sorted list of {x,y} control points in [0,1]x[0,1]
   // (the coordinate space darktable's own curve editor uses), first point x==0,

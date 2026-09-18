@@ -56,6 +56,20 @@ extends Control
 @onready var zoom_value_label: Label = $Root/TopBar/TopBarRow/ZoomValueLabel
 @onready var file_dialog: FileDialog = $FileDialog
 @onready var export_dialog: FileDialog = $ExportDialog
+# Crop UI: the top-bar toggle button plus the overlay editor (instantiated in
+# code, parented to texture_rect while open -- see CropOverlay.gd).
+@onready var crop_button: Button = $Root/TopBar/TopBarRow/CropButton
+
+const CropOverlayScript := preload("res://CropOverlay.gd")
+var _crop_overlay: Control = null
+# Done/Cancel bar for the crop overlay. Lives anchored to the Scroll pane (NOT
+# the overlay, which is image-sized and scrolls off-screen at high zoom).
+var _crop_bar: HBoxContainer = null
+# The committed crop while the overlay is open. While editing, the pipe
+# renders the FULL frame (crop temporarily lifted) so the user always adjusts
+# the box over the whole image, exactly like darktable's own darkroom UI;
+# this remembers what to fall back to on Cancel.
+var _crop_before_edit: Rect2 = Rect2(0, 0, 1, 1)
 # Chrome panels, referenced only for the one-shot entrance animation.
 @onready var top_bar: PanelContainer = $Root/TopBar
 @onready var right_panel: PanelContainer = $Root/MiddleHBox/RightPanel
@@ -101,6 +115,11 @@ var _params: Dictionary = {
 	# placeholder only matters before any image is loaded; on load it's
 	# replaced by the image's real as-shot temperature (see _on_image_loaded()).
 	"wb_temperature": 6500.0,
+	# Crop box in normalized image fractions, stored as edges (NOT x/y/w/h --
+	# darktable's clipping module stores left/top/right/bottom). Full frame =
+	# no crop; the backend disables the clipping module for that case. Owned by
+	# the crop overlay UI (see _on_crop_overlay_applied below).
+	"crop": Rect2(0, 0, 1, 1),
 }
 
 # --- White Balance (K) slider mapping -----------------------------------------
@@ -304,6 +323,9 @@ func _ready() -> void:
 	ThemeManager.theme_changed.connect(_on_theme_changed)
 	_on_theme_changed(ThemeManager.is_dark)
 
+	crop_button.toggled.connect(_on_crop_button_toggled)
+	crop_button.disabled = true
+
 	_animate_entrance()
 
 
@@ -357,6 +379,8 @@ func _on_file_dialog_file_selected(path: String) -> void:
 	# Default the export filename to "<source>_edited.jpg".
 	_source_basename = path.get_file().get_basename()
 	export_button.disabled = false
+	crop_button.disabled = false
+	crop_button.set_pressed_no_signal(false)
 
 	# Reset both view knobs for the new image, then kick off the initial render.
 	# The edit-resolution default is picked from this image's raw size (huge ->
@@ -391,6 +415,9 @@ func _on_file_dialog_file_selected(path: String) -> void:
 	white_balance_slider.value = as_shot_temperature
 	white_balance_value_label.text = "%dK" % roundi(as_shot_temperature)
 	_params["wb_temperature"] = as_shot_temperature
+	# Reset crop to the full frame for the new image (crop state is not
+	# per-image persistent yet; same policy as every slider above).
+	_params["crop"] = Rect2(0, 0, 1, 1)
 	# This image's as-shot CCT is the WB slider's reset target from now on.
 	_wb_default_temperature = as_shot_temperature
 	var default_edit_id: int = _pick_default_edit_mode_id(
@@ -538,6 +565,8 @@ func _apply_params_to_backend() -> void:
 	backend.set_vibrance(_params["vibrance"])
 	backend.set_tonecurve(_params["tonecurve"])
 	backend.set_white_balance_temperature(_params["wb_temperature"])
+	var crop: Rect2 = _params["crop"]
+	backend.set_crop(crop.position.x, crop.position.y, crop.end.x, crop.end.y)
 
 
 func _start_process() -> void:
@@ -581,6 +610,10 @@ func _on_process_done(bytes: PackedByteArray, width: int, height: int) -> void:
 				or image_texture.get_height() != height:
 			image_texture = ImageTexture.create_from_image(img)
 			texture_rect.texture = image_texture
+			# A new buffer means new Fit-letterbox geometry; keep the crop
+			# overlay (if open) glued to the drawn image region.
+			if _crop_overlay != null:
+				_crop_overlay.sync_to_texture()
 		else:
 			image_texture.update(img)
 		status_label.text = "Preview updated"
@@ -660,6 +693,8 @@ func _on_theme_button_pressed() -> void:
 
 func _on_theme_changed(is_dark: bool) -> void:
 	theme_button.text = "Light Mode" if is_dark else "Dark Mode"
+	if _crop_overlay != null:
+		_crop_overlay.apply_theme(is_dark)
 
 
 func _on_fit_button_toggled(pressed: bool) -> void:
@@ -863,8 +898,90 @@ func _set_display_zoom(target_pct: float) -> void:
 	scroll_container.scroll_vertical = roundi(clamp(target_scroll.y, 0.0, max_scroll.y))
 
 
+# --- Crop ----------------------------------------------------------------------
+# The crop toggle opens an interactive overlay over the displayed image
+# (CropOverlay.gd). Done commits the box into _params["crop"] and re-renders
+# (the pixelpipe's clipping module now crops the output); clicking the button
+# again reopens the overlay pre-seeded with the current crop so it can be
+# resumed and adjusted. Cancel restores the pre-edit crop.
+func _on_crop_button_toggled(pressed: bool) -> void:
+	if not _image_loaded:
+		crop_button.set_pressed_no_signal(false)
+		return
+	if pressed:
+		_open_crop_overlay()
+	else:
+		_close_crop_overlay()
+
+
+func _open_crop_overlay() -> void:
+	if _crop_overlay != null:
+		return
+	_crop_overlay = CropOverlayScript.new()
+	_crop_overlay.apply_theme(ThemeManager.is_dark)
+	# Lift the committed crop for the duration of the edit so the overlay shows
+	# (and edits against) the whole image; the box being edited is seeded from
+	# the committed crop so re-opening resumes where the last Done left off.
+	# The overlay re-syncs its own geometry on every zoom/Fit/host resize
+	# (resized signal) and via sync_to_texture() when the lift render swaps the
+	# buffer, so the box stays glued to the drawn image at all times.
+	_crop_before_edit = _params["crop"]
+	_params["crop"] = Rect2(0, 0, 1, 1)
+	_request_render()
+	_crop_overlay.open(texture_rect, _crop_before_edit)
+	# Done/Cancel bar anchored to the visible pane so it stays clickable at any
+	# zoom (the overlay itself is image-sized). Done closes over the live
+	# overlay so it always commits the box's CURRENT state.
+	var overlay: Control = _crop_overlay
+	_crop_bar = CropOverlayScript.build_bar(scroll_container)
+	var cancel_btn := Button.new()
+	cancel_btn.text = "Cancel"
+	_crop_bar.add_child(cancel_btn)
+	var done_btn := Button.new()
+	done_btn.text = "Done"
+	_crop_bar.add_child(done_btn)
+	done_btn.pressed.connect(func() -> void:
+		_on_crop_overlay_applied(overlay.get_rect_normalized()))
+	cancel_btn.pressed.connect(_on_crop_overlay_canceled)
+
+
+func _close_crop_overlay() -> void:
+	if _crop_overlay == null:
+		return
+	_crop_overlay.close()
+	_crop_overlay = null
+	if _crop_bar != null:
+		# _crop_bar is the HBox; its parent PanelContainer is what was added to
+		# the pane -- free that whole chrome subtree.
+		_crop_bar.get_parent().queue_free()
+		_crop_bar = null
+
+
+func _on_crop_overlay_applied(rect: Rect2) -> void:
+	_close_crop_overlay()
+	crop_button.set_pressed_no_signal(false)
+	_params["crop"] = rect
+	_request_render()
+	if rect == Rect2(0, 0, 1, 1):
+		status_label.text = "Crop cleared"
+	else:
+		status_label.text = "Crop applied (%d%%, %d%%) - (%d%%, %d%%)" % [
+			roundi(rect.position.x * 100), roundi(rect.position.y * 100),
+			roundi(rect.end.x * 100), roundi(rect.end.y * 100)]
+
+
+func _on_crop_overlay_canceled() -> void:
+	_close_crop_overlay()
+	crop_button.set_pressed_no_signal(false)
+	# Restore the crop the pipe temporarily dropped when the overlay opened.
+	_params["crop"] = _crop_before_edit
+	_request_render()
+
+
 func _on_export_button_pressed() -> void:
-	if not _image_loaded or _exporting or _processing:
+	# Also block while the crop overlay is open: it has temporarily lifted the
+	# crop from the pipe, so an export now would export the uncropped frame.
+	if not _image_loaded or _exporting or _processing or _crop_overlay != null:
 		return
 	export_dialog.current_file = "%s_edited.jpg" % _source_basename
 	export_dialog.popup_centered()

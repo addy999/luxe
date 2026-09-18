@@ -31,6 +31,7 @@ void DtBackend::_bind_methods() {
   ClassDB::bind_method(D_METHOD("set_saturation", "value"), &DtBackend::set_saturation);
   ClassDB::bind_method(D_METHOD("set_vibrance", "value"), &DtBackend::set_vibrance);
   ClassDB::bind_method(D_METHOD("set_tonecurve", "points"), &DtBackend::set_tonecurve);
+  ClassDB::bind_method(D_METHOD("set_crop", "left", "top", "right", "bottom"), &DtBackend::set_crop);
   ClassDB::bind_method(D_METHOD("set_white_balance_temperature", "kelvin"), &DtBackend::set_white_balance_temperature);
   ClassDB::bind_method(D_METHOD("get_white_balance_temperature"), &DtBackend::get_white_balance_temperature);
   ClassDB::bind_method(D_METHOD("process_fit", "max_width", "max_height"), &DtBackend::process_fit);
@@ -410,6 +411,7 @@ bool DtBackend::load_image(String path) {
   vibrance_module = nullptr;
   tonecurve_module = nullptr;
   channelmixer_rgb_module = nullptr;
+  clipping_module = nullptr;
   native_width = 0;
   native_height = 0;
   return true;
@@ -700,6 +702,55 @@ float DtBackend::get_white_balance_temperature() {
   // as-shot value from default_params.
   dt_iop_channelmixer_rgb_params_t *dp = (dt_iop_channelmixer_rgb_params_t *)channelmixer_rgb_module->default_params;
   return dp->temperature;
+}
+
+// Section F, same pattern as set_exposure()/set_tonecurve(): locate the
+// clipping module ("crop & rotate") once, clamp the four crop edges to the
+// module's own commit_params() ranges (cx/cy to 0..0.9, |cw|/|ch| to
+// 0.1..1.0; clipping.c:1325-1328), write them into the live params blob,
+// enable the module, and record a headless history item. (left, top) is one
+// corner of the crop box and (right, bottom) the opposite corner, all as
+// normalized 0..1 fractions of the whole image -- see the struct redeclaration
+// comment in dt_backend.h for the left/top/right/bottom (NOT x/y/w/h)
+// semantics. Passing the full frame (0, 0, 1, 1) disables the module instead,
+// so a cleared crop costs nothing in the pipe. angle and all keystone/ratio
+// fields are left exactly as the module's introspection defaults left them.
+void DtBackend::set_crop(float left, float top, float right, float bottom) {
+  if(!image_loaded) {
+    UtilityFunctions::printerr("DtBackend::set_crop: no image loaded");
+    return;
+  }
+
+  // Mirror commit_params' clamps (clipping.c:1325-1328).
+  if(left < 0.0f) left = 0.0f;
+  if(left > 0.9f) left = 0.9f;
+  if(top < 0.0f) top = 0.0f;
+  if(top > 0.9f) top = 0.9f;
+  if(right < 0.1f) right = 0.1f;
+  if(right > 1.0f) right = 1.0f;
+  if(bottom < 0.1f) bottom = 0.1f;
+  if(bottom > 1.0f) bottom = 1.0f;
+
+  if(!clipping_module) {
+    clipping_module = dt_iop_get_module_from_list(dev.iop, "clipping");
+    if(!clipping_module) {
+      UtilityFunctions::printerr("DtBackend::set_crop: could not find \"clipping\" module in dev.iop");
+      return;
+    }
+  }
+
+  dt_iop_clipping_params_t *p = (dt_iop_clipping_params_t *)clipping_module->params;
+  p->cx = left;
+  p->cy = top;
+  p->cw = right;
+  p->ch = bottom;
+
+  // Full frame == no crop: disable the module entirely (its own process()
+  // fast path would degenerate to a copy anyway). Any tighter box re-enables.
+  const bool no_crop = (left <= 0.0f && top <= 0.0f && right >= 1.0f && bottom >= 1.0f);
+  clipping_module->enabled = no_crop ? FALSE : TRUE;
+
+  dt_dev_add_history_item_ext(&dev, clipping_module, TRUE, TRUE);
 }
 
 // Shared re-sync + native-dimension refresh, used by both process_fit() and
@@ -1008,6 +1059,7 @@ void DtBackend::cleanup() {
     vibrance_module = nullptr;
     tonecurve_module = nullptr;
     channelmixer_rgb_module = nullptr;
+    clipping_module = nullptr;
     }
 
   if(initialized) {
@@ -1042,6 +1094,7 @@ void DtBackend::unload_image() {
   vibrance_module = nullptr;
   tonecurve_module = nullptr;
   channelmixer_rgb_module = nullptr;
+  clipping_module = nullptr;
 
   processed_width = 0;
   processed_height = 0;

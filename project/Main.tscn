@@ -81,6 +81,18 @@ theme_type_variation = &"Muted"
 text = "Fit"
 horizontal_alignment = 2
 
+[node name="CropSep" type="VSeparator" parent="Root/TopBar/TopBarRow"]
+layout_mode = 2
+
+[node name="CropButton" type="Button" parent="Root/TopBar/TopBarRow"]
+custom_minimum_size = Vector2(0, 0)
+layout_mode = 2
+size_flags_vertical = 4
+toggle_mode = true
+disabled = true
+tooltip_text = "Crop"
+text = "⛶ Crop"
+
 [node name="MiddleHBox" type="HBoxContainer" parent="Root" unique_id=1029653399]
 layout_mode = 2
 size_flags_vertical = 3
