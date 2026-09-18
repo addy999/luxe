@@ -440,8 +440,36 @@ private:
 
   dt_imgid_t imgid = NO_IMGID;
   dt_develop_t dev;
+  // Full pipe: DT_DEV_PIXELPIPE_FULL, fed the full-res demosaiced buffer
+  // (DT_MIPMAP_FULL). The existing "final quality" render path (render_view()).
   dt_dev_pixelpipe_t pipe;
   dt_mipmap_buffer_t mipmap_buf;
+  // Fast preview pipe: DT_DEV_PIXELPIPE_PREVIEW via dt_dev_pixelpipe_init_preview().
+  // Hybrid (docs/PERF-IMPROVEMENT.md "Display-sized preview mip"): it is fed the
+  // downscaled DT_MIPMAP_F float mip (knob 1's input, which is fast because
+  // demosaic runs at the mip's resolution, not native), but that mip is now
+  // generated at the display's physical pixel resolution instead of darktable's
+  // fixed 1440x900/1920x1200 (see init()). render_preview()'s `scale` is a
+  // fraction of that mip's dimensions. Both pipes share `dev` and therefore the
+  // same module params/history; each has its own node list and cache.
+  dt_dev_pixelpipe_t preview_pipe;
+  // The DT_MIPMAP_F buffer backing the preview pipe's input. Held open (locked)
+  // for the preview pipe's lifetime, exactly like mipmap_buf for the full pipe.
+  dt_mipmap_buffer_t preview_mipmap_buf;
+  bool preview_pipe_ready = false;
+  // Cached preview-pipe processed dimensions (scale=1.0), filled by
+  // refresh_preview_dimensions(). These are the mip's dimensions, which this
+  // build sizes to the display's physical pixels, so they are smaller than the
+  // full pipe's native_width/native_height (except on a display as large as the
+  // image). Kept separate because they are the preview ROI math's authoritative
+  // native size.
+  int preview_native_width = 0;
+  int preview_native_height = 0;
+
+  // Physical display dimensions passed to init(). Used to size darktable's
+  // DT_MIPMAP_F preview mip (see init()); 0,0 keeps darktable's fixed default.
+  int display_width_ = 0;
+  int display_height_ = 0;
 
   // Cached module pointer for repeated set_exposure() calls (see
   // DARKTABLE_API_NOTES.md section F) so we don't re-search dev.iop.
@@ -506,10 +534,31 @@ private:
   // flips a still-disabled piece, which the full history replay settles.
   void note_pipe_change(dt_iop_module_t *module);
 
-  // Shared helper: re-syncs the pipe and refreshes native_width/native_height.
-  // Called by both process_fit() and render_view() so there is exactly one
-  // place that calls dt_dev_pixelpipe_get_dimensions().
+  // Applies any pending change (synch_top for a single changed module, synch_all
+  // for a multi-module batch or an enabled-state flip) to BOTH the full pipe and
+  // the preview pipe, then clears the pending flags. Both pipes must be told about
+  // a change or one of them silently serves stale pixels on its next render, so
+  // the dispatch lives here rather than inside either render entry point.
+  void dispatch_pipe_changes();
+
+  // Shared helper: dispatches pending changes then refreshes
+  // native_width/native_height from the FULL pipe. Called by process_fit() and
+  // render_view() so there is exactly one place that reads the full pipe's
+  // dimensions.
   bool refresh_native_dimensions();
+
+  // Same, for the preview pipe: dispatches pending changes then refreshes
+  // preview_native_width/preview_native_height. Returns false if no preview pipe
+  // is available (dt_dev_pixelpipe_init_preview() failed in load_image()).
+  bool refresh_preview_dimensions();
+
+  // The one ROI-process-read implementation, shared by render_view() and
+  // render_preview() so the two paths cannot drift. `p` is the pipe to run,
+  // native_w/native_h its scale=1.0 processed dimensions. Implements darktable's
+  // own darkroom scale/ROI math (develop.c:874-890); see render_view()'s comment.
+  PackedByteArray render_pipe_roi(dt_dev_pixelpipe_t *p, int native_w, int native_h,
+                                  int viewport_w, int viewport_h, double scale,
+                                  double center_x, double center_y);
 
   // Computes darktable's --datadir/--moduledir at runtime instead of relying
   // on compile-time-baked absolute paths (see PORTABILITY_PLAN.md section 3).
@@ -528,7 +577,13 @@ public:
   DtBackend();
   ~DtBackend();
 
-  bool init();
+  // display_width/display_height are the physical (device) pixel dimensions of
+  // the screen the app is on, or 0,0 when unknown/headless. init() writes them
+  // into darktable's mipmap cache as the DT_MIPMAP_F max dimensions (after
+  // dt_init(), before any mip is requested), so the preview pipe's input mip is
+  // generated at the display's resolution rather than darktable's fixed
+  // 1440x900/1920x1200. 0,0 leaves darktable's fixed default untouched.
+  bool init(int display_width = 0, int display_height = 0);
   bool load_image(String path);
   void set_exposure(float ev);
   void set_contrast(float value);
@@ -577,6 +632,18 @@ public:
   // this that picks scale = fit-scale and center = (0,0).
   PackedByteArray render_view(int viewport_w, int viewport_h, double scale,
                               double center_x, double center_y);
+  // Fast interactive render through the separate preview pipe (see preview_pipe
+  // above), same viewport/scale/center contract as render_view() EXCEPT that
+  // `scale` is a fraction of the preview mip's dimensions (the mip is sized to
+  // the display's physical pixels by init()), not of the image's native size.
+  // `scale` is passed straight through as the pipe's roi_out scale, so it scales
+  // the intermediate module work and cache lines, not just the final buffer.
+  // There is no cap/clamp: the mip itself is the ceiling (scale 1.0 = the whole
+  // display-resolution mip). The resulting buffer dims are reported via
+  // get_width()/get_height(). Falls back to render_view() if the preview pipe
+  // could not be created, so a caller can always use this for live edits.
+  PackedByteArray render_preview(int viewport_w, int viewport_h, double scale,
+                                 double center_x, double center_y);
   bool export_image(String path);
   int get_width();
   int get_height();

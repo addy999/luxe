@@ -16,13 +16,15 @@ extern "C" {
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <vector>
 
 #include <dlfcn.h>
 
 using namespace godot;
 
 void DtBackend::_bind_methods() {
-  ClassDB::bind_method(D_METHOD("init"), &DtBackend::init);
+  ClassDB::bind_method(D_METHOD("init", "display_width", "display_height"), &DtBackend::init,
+                       DEFVAL(0), DEFVAL(0));
   ClassDB::bind_method(D_METHOD("load_image", "path"), &DtBackend::load_image);
   ClassDB::bind_method(D_METHOD("set_exposure", "ev"), &DtBackend::set_exposure);
   ClassDB::bind_method(D_METHOD("set_contrast", "value"), &DtBackend::set_contrast);
@@ -36,6 +38,7 @@ void DtBackend::_bind_methods() {
   ClassDB::bind_method(D_METHOD("get_white_balance_temperature"), &DtBackend::get_white_balance_temperature);
   ClassDB::bind_method(D_METHOD("process_fit", "max_width", "max_height"), &DtBackend::process_fit);
   ClassDB::bind_method(D_METHOD("render_view", "viewport_w", "viewport_h", "scale", "center_x", "center_y"), &DtBackend::render_view);
+  ClassDB::bind_method(D_METHOD("render_preview", "viewport_w", "viewport_h", "scale", "center_x", "center_y"), &DtBackend::render_preview);
   ClassDB::bind_method(D_METHOD("export_image", "path"), &DtBackend::export_image);
   ClassDB::bind_method(D_METHOD("get_width"), &DtBackend::get_width);
   ClassDB::bind_method(D_METHOD("get_height"), &DtBackend::get_height);
@@ -90,6 +93,68 @@ bool datadir_looks_valid(const std::string &datadir) {
 }
 
 } // namespace
+
+// Display-sized preview mip (docs/PERF-IMPROVEMENT.md "Display-sized preview
+// mip"): darktable sizes the DT_MIPMAP_F float preview mip once, inside
+// dt_mipmap_cache_init() (source/src/common/mipmap_cache.c:744-746), from the
+// `highres_preview_mip` conf flag: 1440x900 or 1920x1200. That is below a HiDPI
+// display's device pixel count, so the preview reads soft. dt_mipmap_cache_init()
+// runs inside dt_init(), so a --conf injection from here would be too late and a
+// conf set before dt_init() is impossible (the conf does not exist yet).
+//
+// The supported override is to write the cache's public size fields directly,
+// AFTER dt_init() and BEFORE any DT_MIPMAP_F buffer is requested. Feasibility,
+// traced through mipmap_cache.c:
+//   * `max_width[DT_MIPMAP_F]`/`max_height[DT_MIPMAP_F]` are read at cache-entry
+//     *allocation* time, in _mipmap_cache_allocate_dynamic(), to seed the
+//     descriptor's width/height (:508-509). Entries are allocated lazily on the
+//     first get() of that mip, not at init, so a write before our first
+//     DT_MIPMAP_F get sticks.
+//   * `buffer_size[DT_MIPMAP_F]` is also read at allocation time (:487), to size
+//     the entry's allocation. It must be updated in lockstep with the max fields
+//     or the buffer would be too small for the generated mip. The payload is
+//     4 channels * sizeof(float) = 16 bytes/pixel (init()'s formula at :799-801),
+//     and the header size is derived from darktable's own init-time numbers
+//     rather than redeclaring the (private-to-mipmap_cache.c) descriptor struct:
+//     header = old buffer_size - 16 * old_w * old_h. That self-adjusts if
+//     upstream changes the descriptor.
+//   * Generation itself (_init_f, :1360+) derives the real output dims from the
+//     descriptor's width/height, so it follows the fields.
+//   * The DT_MIPMAP_F mip is NOT disk-cached: the disk read/write paths are
+//     gated on `mip <= DT_MIPMAP_LDR_MAX` (= DT_MIPMAP_10, :527), and
+//     DT_MIPMAP_F is above that. So there is no stale-size disk cache to
+//     invalidate; the mip is regenerated in memory every process.
+// Called with the display's physical pixels. The mip is capped at HALF that
+// size (aspect-fit into width/2 x height/2), so on the 3024x1964 panel the mip
+// is generated at half display resolution (~1512x982 for the 6048x4024
+// fixture) rather than the full panel. Darktable still aspect-fits the image
+// into these bounds, so the real output is min(half-display, image).
+static void set_preview_mip_size(const int width, const int height) {
+  if(!darktable.mipmap_cache || width <= 0 || height <= 0) return;
+
+  const int mip_width = width / 2;
+  const int mip_height = height / 2;
+  if(mip_width <= 0 || mip_height <= 0) return;
+
+  dt_mipmap_cache_t *cache = darktable.mipmap_cache;
+  const size_t old_pixels = (size_t)cache->max_width[DT_MIPMAP_F]
+                                * (size_t)cache->max_height[DT_MIPMAP_F];
+  const size_t payload = 4 * sizeof(float) * (size_t)mip_width * (size_t)mip_height;
+
+  // Header = existing buffer_size minus its payload; guard against an
+  // unexpectedly small/zero buffer_size by falling back to a safe fixed pad.
+  size_t header = sizeof(size_t) * 4; // 32 bytes: a safe lower bound
+  if(cache->buffer_size[DT_MIPMAP_F] > 4 * sizeof(float) * old_pixels)
+    header = cache->buffer_size[DT_MIPMAP_F] - 4 * sizeof(float) * old_pixels;
+
+  cache->max_width[DT_MIPMAP_F] = (uint32_t)mip_width;
+  cache->max_height[DT_MIPMAP_F] = (uint32_t)mip_height;
+  cache->buffer_size[DT_MIPMAP_F] = header + payload;
+
+  UtilityFunctions::print("DtBackend::set_preview_mip_size: DT_MIPMAP_F mip set to ",
+                          mip_width, "x", mip_height, " (", (int64_t)((header + payload) >> 20),
+                          " MB buffer)");
+}
 
 // Computes --datadir/--moduledir at runtime (see PORTABILITY_PLAN.md section
 // 3.5 for the full rationale). Tried in order, cheapest/most-dev-friendly
@@ -206,6 +271,8 @@ DtBackend::DtBackend() {
   std::memset(&dev, 0, sizeof(dev));
   std::memset(&pipe, 0, sizeof(pipe));
   std::memset(&mipmap_buf, 0, sizeof(mipmap_buf));
+  std::memset(&preview_pipe, 0, sizeof(preview_pipe));
+  std::memset(&preview_mipmap_buf, 0, sizeof(preview_mipmap_buf));
 }
 
 DtBackend::~DtBackend() {
@@ -217,7 +284,7 @@ DtBackend::~DtBackend() {
 // synthetic argv before calling dt_init (main.c:482-492) so it never
 // touches the user's real config/db -- we mirror that here rather than
 // forwarding Godot's own argv.
-bool DtBackend::init() {
+bool DtBackend::init(int display_width, int display_height) {
   if(initialized) {
     UtilityFunctions::print("DtBackend::init: already initialized");
     return true;
@@ -274,17 +341,22 @@ bool DtBackend::init() {
   char arg7[] = "--moduledir";
   char arg9[] = "--configdir";
   char arg11[] = "--cachedir";
+
+  display_width_ = display_width;
+  display_height_ = display_height;
+
   // argv entries are char*, not const char*, so the gchar* pointers from
   // g_build_filename()/g_strdup() plug in directly -- but they MUST stay
   // alive until after dt_init() returns (freed below), since dt_init() reads
   // argv synchronously during this call.
-  char *argv[] = { arg0, arg1, arg2, arg3, arg4, arg5, datadir, arg7, moduledir,
-                    arg9, configdir, arg11, cachedir, nullptr };
-  int argc = 13;
+  std::vector<char *> argv_vec = { arg0, arg1, arg2, arg3, arg4, arg5, datadir, arg7, moduledir,
+                                   arg9, configdir, arg11, cachedir };
+  argv_vec.push_back(nullptr);
+  int argc = (int)argv_vec.size() - 1;
 
   // init_gui = FALSE (headless), load_data = TRUE (custom presets, matches
   // darktable-cli's default), L = NULL (no Lua state).
-  const int rc = dt_init(argc, argv, FALSE, TRUE, NULL);
+  const int rc = dt_init(argc, argv_vec.data(), FALSE, TRUE, NULL);
   g_free(configdir);
   g_free(cachedir);
   g_free(datadir);
@@ -304,6 +376,22 @@ bool DtBackend::init() {
   // fresh dev that dt_imageio_export_with_flags() loads for export would look
   // for a nonexistent XMP and drop every edit. See export_image().
   darktable.prefer_library_history = TRUE;
+
+  // --- display size: size the DT_MIPMAP_F preview mip to half the display --
+  // The preview pipe reads DT_MIPMAP_F (see load_image()); by default darktable
+  // generates that mip at a fixed 1440x900/1920x1200, below a HiDPI display's
+  // device pixel count. set_preview_mip_size() caps it at half the display's
+  // physical pixels here, after dt_init() (so darktable.mipmap_cache exists) and
+  // before any image / mip is requested. Main.gd passes physical (device) pixels;
+  // 0,0 (unknown/headless) leaves darktable's fixed default in place. See
+  // set_preview_mip_size()'s comment for why a direct field write is the
+  // supported mechanism.
+  if(display_width > 0 && display_height > 0) {
+    set_preview_mip_size(display_width, display_height);
+  } else {
+    UtilityFunctions::print("DtBackend::init: no display size given; "
+                            "DT_MIPMAP_F preview mip keeps darktable's default (1440x900 / 1920x1200)");
+  }
 
   initialized = true;
   return true;
@@ -402,13 +490,67 @@ bool DtBackend::load_image(String path) {
   dt_dev_pixelpipe_create_nodes(&pipe, &dev);
   dt_dev_pixelpipe_synch_all(&pipe, &dev);
 
-  // the synch_all above committed every piece from defaults/history, so the
-  // pipe is fully synced and has no pending change to dispatch (see the
-  // dispatch members in dt_backend.h)
+  // --- Fix #5: separate fast preview pipe, fed the display-sized DT_MIPMAP_F --
+  // dt_dev_pixelpipe_init_preview() (pixelpipe_hb.c:251-257) makes a PREVIEW-type
+  // pipe with its own cache; the GUI feeds its preview pipe the downscaled
+  // DT_MIPMAP_F mip (develop.c:705-723, develop_jobs.c:25). This build does the
+  // same, but the mip was regenerated at the display's physical resolution by
+  // init() -> set_preview_mip_size(), so it is both fast (demosaic runs at the
+  // mip's resolution, not native) and sharp (at the display's real pixel count).
+  //
+  // This mip is fetched once and held open (preview_mipmap_buf) for the preview
+  // pipe's lifetime, exactly like mipmap_buf backs the full pipe.
+  dt_mipmap_cache_get(&preview_mipmap_buf, imgid, DT_MIPMAP_F, DT_MIPMAP_BLOCKING, 'r');
+  if(preview_mipmap_buf.buf && preview_mipmap_buf.width && preview_mipmap_buf.height
+     && dt_dev_pixelpipe_init_preview(&preview_pipe)) {
+    // DT_DEV_PIXELPIPE_FAST is darktable's "non-final quality" marker. It is
+    // effectively a no-op headless: _dev_pixelpipe_process_rec()
+    // (pixelpipe_hb.c:2030-2041) re-derives it on every recursion from the
+    // *focused GUI module* (dt_dev_gui_module() -> darktable.develop->gui_module,
+    // NULL here) and clears it on the first pass. The real fast paths come from
+    // dt_pipe_is_preview() (type == PREVIEW), which demosaic, denoiseprofile, and
+    // friends already honor. Set anyway to match the GUI, and in case that
+    // derivation changes upstream.
+    preview_pipe.type = (dt_dev_pixelpipe_type_t)(preview_pipe.type | DT_DEV_PIXELPIPE_FAST);
+    dt_dev_pixelpipe_set_input(&preview_pipe, &dev, (float *)preview_mipmap_buf.buf,
+                               preview_mipmap_buf.width, preview_mipmap_buf.height,
+                               preview_mipmap_buf.iscale);
+    dt_dev_pixelpipe_set_icc(&preview_pipe, DT_COLORSPACE_DISPLAY, NULL, DT_INTENT_LAST);
+    dt_dev_pixelpipe_create_nodes(&preview_pipe, &dev);
+    dt_dev_pixelpipe_synch_all(&preview_pipe, &dev);
+    preview_pipe_ready = true;
+    UtilityFunctions::print("DtBackend::load_image: preview pipe using DT_MIPMAP_F ",
+                            preview_mipmap_buf.width, "x", preview_mipmap_buf.height);
+  } else {
+    UtilityFunctions::printerr("DtBackend::load_image: preview pipe unavailable "
+                               "(DT_MIPMAP_F buffer or dt_dev_pixelpipe_init_preview() failed); "
+                               "live edits fall back to the full pipe");
+    if(preview_mipmap_buf.buf) {
+      dt_mipmap_cache_release(&preview_mipmap_buf);
+      std::memset(&preview_mipmap_buf, 0, sizeof(preview_mipmap_buf));
+    }
+  }
+
+  // both pipes committed their pieces from defaults/history above, so neither
+  // has a pending change to dispatch (see the dispatch members in dt_backend.h)
   pipe_needs_full_synch = false;
   pipe_change_pending = false;
   pipe_change_multi = false;
   pipe_change_module = nullptr;
+
+  // Cache both pipes' native (scale=1.0) dimensions now, before any render. The
+  // UI needs the full pipe's native dims for its display-zoom math even when the
+  // first render is a fast preview render (which refreshes only the preview dims).
+  dt_dev_pixelpipe_get_dimensions(&pipe, &dev, pipe.iwidth, pipe.iheight,
+                                  &pipe.processed_width, &pipe.processed_height);
+  native_width = pipe.processed_width;
+  native_height = pipe.processed_height;
+  preview_native_width = 0;
+  preview_native_height = 0;
+  if(preview_pipe_ready) {
+    dt_dev_pixelpipe_get_dimensions(&preview_pipe, &dev, preview_pipe.iwidth, preview_pipe.iheight,
+                                    &preview_native_width, &preview_native_height);
+  }
 
   pipe_ready = true;
   image_loaded = true;
@@ -420,8 +562,6 @@ bool DtBackend::load_image(String path) {
   tonecurve_module = nullptr;
   channelmixer_rgb_module = nullptr;
   clipping_module = nullptr;
-  native_width = 0;
-  native_height = 0;
   return true;
 }
 
@@ -798,39 +938,57 @@ void DtBackend::note_pipe_change(dt_iop_module_t *module) {
   }
 }
 
-// Shared re-sync + native-dimension refresh, used by both process_fit() and
-// render_view() so there is exactly one call site for
-// dt_dev_pixelpipe_get_dimensions(). Note: that call is scale-independent --
-// it always reports the pipe's native (scale=1.0) processed_width/
-// processed_height regardless of what scale process() is later called with
-// (imageio.c:1251-1253 calls it once, before picking any scale) -- so caching
-// native_width/native_height here is safe to reuse across repeated renders.
-//
-// The blanket dt_dev_pixelpipe_synch_all() that used to run here reset every
-// piece hash and replayed the whole history on every render, discarding the
-// pixelpipe cache and making per-render cost grow with history length. An
-// ordinary single-module edit now goes through darktable's own incremental
-// dispatch instead: dt_dev_pixelpipe_synch_top() re-commits only the top
-// history item (the module the setter just touched), so every upstream cache
+// Applies any pending change to both pipes. See the note above on
+// note_pipe_change(): the blanket dt_dev_pixelpipe_synch_all() that used to run
+// before every render reset every piece hash and replayed the whole history,
+// discarding the pixelpipe cache and making per-render cost grow with history
+// length. An ordinary single-module edit now goes through darktable's own
+// incremental dispatch instead: dt_dev_pixelpipe_synch_top() re-commits only the
+// top history item (the module the setter just touched), so every upstream cache
 // line survives and only the changed node and its derivatives reprocess. A
-// multi-module batch (or a module whose enabled state flips) still falls back
-// to a full replay, which is the only correct choice there.
+// multi-module batch (or a module whose enabled state flips) still falls back to
+// a full replay, which is the only correct choice there.
+//
+// Both pipes need the same change applied: they have separate node lists and
+// caches, so syncing only the pipe about to render would leave the other serving
+// stale pixels on its next run. synch_top/synch_all are per-pipe and read only
+// dev->history, so calling them once per pipe is safe.
+void DtBackend::dispatch_pipe_changes() {
+  if(!(pipe_needs_full_synch || pipe_change_multi || pipe_change_pending))
+    return;
+
+  const bool full_synch = pipe_needs_full_synch || pipe_change_multi;
+
+  auto apply = [&](dt_dev_pixelpipe_t *p) {
+    if(full_synch)
+      dt_dev_pixelpipe_synch_all(p, &dev);
+    else
+      dt_dev_pixelpipe_synch_top(p, &dev);
+  };
+
+  apply(&pipe);
+  if(preview_pipe_ready)
+    apply(&preview_pipe);
+
+  pipe_needs_full_synch = false;
+  pipe_change_pending = false;
+  pipe_change_multi = false;
+  pipe_change_module = nullptr;
+}
+
+// Dispatches pending changes then refreshes the FULL pipe's native dims. Note:
+// dt_dev_pixelpipe_get_dimensions() is scale-independent -- it always reports the
+// pipe's native (scale=1.0) processed_width/processed_height regardless of what
+// scale process() is later called with (imageio.c:1251-1253 calls it once, before
+// picking any scale) -- so caching native_width/native_height here is safe to
+// reuse across repeated renders.
 bool DtBackend::refresh_native_dimensions() {
   if(!image_loaded || !pipe_ready) {
     UtilityFunctions::printerr("DtBackend::refresh_native_dimensions: no image loaded / pipe not ready");
     return false;
   }
 
-  if(pipe_needs_full_synch || pipe_change_multi) {
-    dt_dev_pixelpipe_synch_all(&pipe, &dev);
-  } else if(pipe_change_pending) {
-    dt_dev_pixelpipe_synch_top(&pipe, &dev);
-  }
-
-  pipe_needs_full_synch = false;
-  pipe_change_pending = false;
-  pipe_change_multi = false;
-  pipe_change_module = nullptr;
+  dispatch_pipe_changes();
 
   dt_dev_pixelpipe_get_dimensions(&pipe, &dev, pipe.iwidth, pipe.iheight,
                                    &pipe.processed_width, &pipe.processed_height);
@@ -845,7 +1003,29 @@ bool DtBackend::refresh_native_dimensions() {
   return true;
 }
 
-// General ROI render: implements darktable's own darkroom scale/ROI math,
+// Same as refresh_native_dimensions() but for the preview pipe. The dispatch it
+// triggers is shared, so a render_preview() followed by a render_view() in the
+// same cycle only re-syncs each pipe once (the second dispatch sees no pending
+// change and returns immediately).
+bool DtBackend::refresh_preview_dimensions() {
+  if(!image_loaded || !preview_pipe_ready) {
+    return false;
+  }
+
+  dispatch_pipe_changes();
+
+  dt_dev_pixelpipe_get_dimensions(&preview_pipe, &dev, preview_pipe.iwidth, preview_pipe.iheight,
+                                  &preview_native_width, &preview_native_height);
+
+  if(preview_native_width <= 0 || preview_native_height <= 0) {
+    UtilityFunctions::printerr("DtBackend::refresh_preview_dimensions: invalid preview dimensions");
+    return false;
+  }
+  return true;
+}
+
+// The one ROI-process-read implementation behind render_view() and
+// render_preview(): darktable's own darkroom scale/ROI math,
 // source/src/develop/develop.c:874-890, verbatim:
 //   scale = zoom_scale * ppd;                 // ppd (HiDPI) fixed at 1.0 here
 //   pipe_width  = scale * pipe->processed_width;
@@ -855,31 +1035,27 @@ bool DtBackend::refresh_native_dimensions() {
 //   x  = CLAMP(pipe_width  * (.5 + zoom_x) - wd/2, 0, pipe_width  - wd);
 //   y  = CLAMP(pipe_height * (.5 + zoom_y) - ht/2, 0, pipe_height - ht);
 //   dt_dev_pixelpipe_process(pipe, dev, x, y, wd, ht, scale, devid);
-// center_x/center_y here are develop.c's zoom_x/zoom_y, range [-0.5, 0.5],
-// (0,0) = centered. When scale <= fit-scale, pipe_w/pipe_h <= viewport, so
-// wd=pipe_w, x=0 (whole image renders, matches process_fit()'s old
-// trivial-case behavior). When scale > fit-scale (e.g. 100% on a large
+// center_x/center_y are develop.c's zoom_x/zoom_y, range [-0.5, 0.5], (0,0) =
+// centered. When scale <= fit-scale, pipe_w/pipe_h <= viewport, so wd=pipe_w,
+// x=0 (whole image renders). When scale > fit-scale (e.g. 100% on a large
 // image), only a viewport-sized ROI renders, positioned by center_x/center_y.
-PackedByteArray DtBackend::render_view(int viewport_w, int viewport_h, double scale,
-                                       double center_x, double center_y) {
+PackedByteArray DtBackend::render_pipe_roi(dt_dev_pixelpipe_t *p, int native_w, int native_h,
+                                           int viewport_w, int viewport_h, double scale,
+                                           double center_x, double center_y) {
   PackedByteArray out;
 
-  if(!refresh_native_dimensions()) {
-    return out;
-  }
-
   if(viewport_w <= 0 || viewport_h <= 0) {
-    UtilityFunctions::printerr("DtBackend::render_view: invalid viewport_w/viewport_h");
+    UtilityFunctions::printerr("DtBackend::render_pipe_roi: invalid viewport_w/viewport_h");
     return out;
   }
   if(scale <= 0.0) {
-    UtilityFunctions::printerr("DtBackend::render_view: invalid scale");
+    UtilityFunctions::printerr("DtBackend::render_pipe_roi: invalid scale");
     return out;
   }
 
   // pipe_w/pipe_h = scale * native dims (develop.c:875-876).
-  const int pipe_w = std::max(1, (int)std::lround(scale * native_width));
-  const int pipe_h = std::max(1, (int)std::lround(scale * native_height));
+  const int pipe_w = std::max(1, (int)std::lround(scale * native_w));
+  const int pipe_h = std::max(1, (int)std::lround(scale * native_h));
 
   // wd/ht = MIN(viewport, pipe_dim) (develop.c:877-878): never render more
   // than either the viewport or the full scaled image, whichever is smaller.
@@ -899,25 +1075,25 @@ PackedByteArray DtBackend::render_view(int viewport_w, int viewport_h, double sc
 
   // 8-bit/gamma display path (as process_fit() used), not the float
   // _no_gamma() path -- simplest for a PoC preview.
-  dt_dev_pixelpipe_process(&pipe, &dev, x, y, wd, ht, (float)scale, DT_DEVICE_NONE);
+  dt_dev_pixelpipe_process(p, &dev, x, y, wd, ht, (float)scale, DT_DEVICE_NONE);
 
   // Lock backbuf_mutex around the read, per DARKTABLE_API_NOTES.md sections
   // G/I. dtpthread.h (checked directly: source/src/common/dtpthread.h)
   // declares exactly dt_pthread_mutex_lock()/dt_pthread_mutex_unlock() (both
   // release and _DEBUG builds), so no deviation from the requested names was
   // needed here.
-  dt_pthread_mutex_lock(&pipe.backbuf_mutex);
+  dt_pthread_mutex_lock(&p->backbuf_mutex);
 
-  uint8_t *backbuf = pipe.backbuf;
+  uint8_t *backbuf = p->backbuf;
   if(!backbuf) {
-    dt_pthread_mutex_unlock(&pipe.backbuf_mutex);
-    UtilityFunctions::printerr("DtBackend::render_view: pipe.backbuf is NULL (no valid output buffer)");
+    dt_pthread_mutex_unlock(&p->backbuf_mutex);
+    UtilityFunctions::printerr("DtBackend::render_pipe_roi: pipe.backbuf is NULL (no valid output buffer)");
     return out;
   }
 
   // Size the copy/swap loop to wd * ht (the ROI just rendered), NOT
-  // native_width/native_height or pipe_w/pipe_h -- pipe.backbuf only holds
-  // wd * ht pixels' worth of valid data after the process() call above.
+  // native_w/native_h or pipe_w/pipe_h -- pipe.backbuf only holds wd * ht
+  // pixels' worth of valid data after the process() call above.
   const int64_t pixel_count = (int64_t)wd * (int64_t)ht;
   const int64_t byte_count = pixel_count * 4;
 
@@ -949,7 +1125,7 @@ PackedByteArray DtBackend::render_view(int viewport_w, int viewport_h, double sc
     dst_px[3] = 0xFF;      // force opaque alpha
   }
 
-  dt_pthread_mutex_unlock(&pipe.backbuf_mutex);
+  dt_pthread_mutex_unlock(&p->backbuf_mutex);
 
   // get_width()/get_height() report the actual *rendered* (ROI) dims, not
   // the native sensor dims, so Main.gd builds its Image at the right size.
@@ -957,6 +1133,36 @@ PackedByteArray DtBackend::render_view(int viewport_w, int viewport_h, double sc
   processed_height = ht;
 
   return out;
+}
+
+// Final-quality render on the full pipe (see render_pipe_roi() for the math).
+PackedByteArray DtBackend::render_view(int viewport_w, int viewport_h, double scale,
+                                       double center_x, double center_y) {
+  if(!refresh_native_dimensions())
+    return PackedByteArray();
+
+  return render_pipe_roi(&pipe, native_width, native_height,
+                         viewport_w, viewport_h, scale, center_x, center_y);
+}
+
+// Fast interactive render on the preview pipe. `scale` is a fraction of the
+// preview mip's dimensions (the mip is sized to the display's physical pixels by
+// init(); its dims are preview_native_width/height). There is no cap/clamp: the
+// mip is itself the ceiling, and scale 1.0 renders the whole mip. `scale` is
+// handed to dt_dev_pixelpipe_process() as the pipe's roi_out scale (see
+// render_pipe_roi()), which darktable propagates into every module's input ROI
+// via modify_roi_in (pixelpipe_hb.c:2263), so intermediate work and cache lines
+// shrink with it, not just the final output. The actual rendered size is
+// reported back through get_width()/get_height() (render_pipe_roi() sets them to
+// the rendered ROI). If the preview pipe is unavailable this transparently falls
+// back to the full pipe, so callers can always route live edits here.
+PackedByteArray DtBackend::render_preview(int viewport_w, int viewport_h, double scale,
+                                          double center_x, double center_y) {
+  if(!refresh_preview_dimensions())
+    return render_view(viewport_w, viewport_h, scale, center_x, center_y);
+
+  return render_pipe_roi(&preview_pipe, preview_native_width, preview_native_height,
+                         viewport_w, viewport_h, scale, center_x, center_y);
 }
 
 // process_fit() is now a thin wrapper around render_view(): compute the "fit"
@@ -1120,11 +1326,19 @@ void DtBackend::cleanup() {
     dt_dev_pixelpipe_cleanup(&pipe);
     pipe_ready = false;
   }
+  if(preview_pipe_ready) {
+    dt_dev_pixelpipe_cleanup(&preview_pipe);
+    preview_pipe_ready = false;
+  }
 
   if(image_loaded) {
     dt_dev_cleanup(&dev);
     dt_mipmap_cache_release(&mipmap_buf);
     std::memset(&mipmap_buf, 0, sizeof(mipmap_buf));
+    if(preview_mipmap_buf.buf) {
+      dt_mipmap_cache_release(&preview_mipmap_buf);
+      std::memset(&preview_mipmap_buf, 0, sizeof(preview_mipmap_buf));
+    }
     image_loaded = false;
     imgid = NO_IMGID;
     exposure_module = nullptr;
@@ -1156,10 +1370,18 @@ void DtBackend::unload_image() {
     dt_dev_pixelpipe_cleanup(&pipe);
     pipe_ready = false;
   }
+  if(preview_pipe_ready) {
+    dt_dev_pixelpipe_cleanup(&preview_pipe);
+    preview_pipe_ready = false;
+  }
 
   dt_dev_cleanup(&dev);
   dt_mipmap_cache_release(&mipmap_buf);
   std::memset(&mipmap_buf, 0, sizeof(mipmap_buf));
+  if(preview_mipmap_buf.buf) {
+    dt_mipmap_cache_release(&preview_mipmap_buf);
+    std::memset(&preview_mipmap_buf, 0, sizeof(preview_mipmap_buf));
+  }
   image_loaded = false;
   imgid = NO_IMGID;
   exposure_module = nullptr;
@@ -1175,6 +1397,8 @@ void DtBackend::unload_image() {
   processed_height = 0;
   native_width = 0;
   native_height = 0;
+  preview_native_width = 0;
+  preview_native_height = 0;
   raw_width = 0;
   raw_height = 0;
 

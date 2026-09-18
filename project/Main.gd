@@ -5,13 +5,22 @@ extends Control
 # independent view knobs, deliberately decoupled:
 #
 #   1. EDIT RESOLUTION (backend / pixelpipe) — _edit_scale, the EditRes dropdown.
-#      The scale darktable actually processes the *whole* image at: 100/75/50/
-#      25% of native. This is the proxy/speed knob. Changing it re-runs the
-#      pipe. Implemented by calling render_view() with an oversized viewport so
-#      the ROI clamp (develop.c:874-890) collapses to the whole image at
-#      _edit_scale: render_view(BIG, BIG, scale, 0, 0) returns the entire image
-#      scaled by `scale`, allocating only scale*native pixels (see dt_backend.cpp
-#      render_view: it copies wd*ht = the clipped ROI, not the viewport).
+#      Two backend pipes sit behind this, chosen by _final_quality() (see
+#      dt_backend.cpp's preview_pipe):
+#        - 100% ("final quality"): render_view() on the full pipe, fed the
+#          full-res DT_MIPMAP_FULL buffer, whole image at native scale.
+#        - 75/50/25% ("fast"): render_preview() on a separate PREVIEW pipe,
+#          fed darktable's downscaled DT_MIPMAP_F float mip. The backend sizes
+#          that mip to the display's physical pixel resolution (see init()), so
+#          _edit_scale is a fraction of the display-resolution mip: 0.75 is
+#          ~3/4 screen pixels, 0.5 ~half, 0.25 ~quarter. darktable propagates
+#          the effective scale into every module's ROI, so both the output and
+#          the intermediate work shrink with it. This mirrors darktable's own
+#          darkroom, which keeps a preview pipe for interaction and the full
+#          pipe for the final render.
+#      Both calls pass an oversized viewport so the ROI clamp (develop.c:874-890)
+#      collapses to the whole image: render_*(BIG, BIG, scale, 0, 0) allocates
+#      only scale*pipe_native pixels (it copies wd*ht = the clipped ROI).
 #
 #   2. DISPLAY ZOOM (frontend / Godot only) — _display_zoom, the DisplayZoom
 #      dropdown. How large that already-rendered buffer is drawn on screen:
@@ -19,12 +28,13 @@ extends Control
 #      ScrollContainer; it does NOT re-run the pipe, so it is instant and
 #      panning is just scrolling. Display zoom % is relative to *native*
 #      pixels (100% display = 1 native px per screen px), so it stays meaningful
-#      regardless of edit resolution.
+#      regardless of which pipe produced the buffer.
 #
-# Consequence (surfaced in the resolution label): if edit resolution is 50% and
-# display zoom is 100%, you are viewing a half-res buffer upscaled 2x — soft,
-# not true detail. True 1:1 detail requires BOTH edit resolution and display
-# zoom at 100%. export_image() is untouched and always renders full-resolution.
+# Consequence (surfaced in the resolution label): in fast mode the buffer is
+# scale * the display-resolution mip, so displaying it at 100% stretches it up
+# unless EditRes is at 100%. True 1:1 detail requires edit resolution 100% and
+# display zoom 100%.
+# export_image() is untouched and always renders full-resolution.
 
 @onready var scroll_container: ScrollContainer = $Root/MiddleHBox/Scroll
 @onready var texture_rect: TextureRect = $Root/MiddleHBox/Scroll/Center/TextureRect
@@ -193,8 +203,10 @@ var _export_path: String = ""
 var _source_basename: String = "export"
 
 # --- Knob 1: edit resolution (backend render scale) ---------------------------
-# Fraction of native the pixelpipe processes the whole image at. Item ids on
-# EditResOptionButton index into this array.
+# Fraction of the display-resolution preview mip the preview pipe processes the
+# whole image at. 100% uses the full pipe; anything lower uses the preview pipe
+# (fed the DT_MIPMAP_F mip). Item ids on EditResOptionButton index into this
+# array.
 const _EDIT_MODES: Array = [
 	{"id": 0, "label": "100%", "scale": 1.00},
 	{"id": 1, "label": "75%", "scale": 0.75},
@@ -235,7 +247,7 @@ func _pick_default_edit_mode_id(raw_w: int, raw_h: int) -> int:
 # large number costs nothing; it just disables cropping/panning at the backend.
 const _WHOLE_IMAGE_VIEWPORT: int = 1000000
 
-# --- Knob 2: display zoom (frontend TextureRect scale) ------------------------
+# --- Display zoom (frontend TextureRect scale) --------------------------------
 # On-screen size relative to *native* pixels. Driven by the top-bar ZoomSlider
 # (a continuous percentage) plus the FitButton toggle. The slider itself cannot
 # encode "Fit", so the -1.0 sentinel lives only in _display_zoom below and is
@@ -324,10 +336,29 @@ func _ready() -> void:
 	_finish_ready()
 
 
+# Physical (device) pixel size of the screen the window is on, passed into
+# backend.init(). The backend uses it to size the DT_MIPMAP_F preview mip, so
+# the fast preview pipe runs at the display's real pixel count. Kept passing
+# physical pixels rather than logical points deliberately: on a HiDPI display
+# the compositor upscales the window's
+# logical content by the DPI factor, so a device-pixel-accurate number is the
+# meaningful one if a future revision makes the ceiling display-aware again.
+# Godot's screen_get_size() is in pixels per the docs and screen_get_scale() is
+# 2.0 on Retina macOS. Returns 0,0 if the platform reports nothing useful.
+func _display_pixel_size() -> Vector2i:
+	var screen: int = DisplayServer.window_get_current_screen()
+	var screen_size: Vector2i = DisplayServer.screen_get_size(screen)
+	if screen_size.x <= 0 or screen_size.y <= 0:
+		return Vector2i.ZERO
+	var dpi_scale: float = maxf(1.0, DisplayServer.screen_get_scale(screen))
+	return Vector2i(roundi(screen_size.x * dpi_scale), roundi(screen_size.y * dpi_scale))
+
+
 func _init_backend() -> bool:
 	_configure_dt_backend_env()
 	backend = DtBackend.new()
-	var ok: bool = backend.init()
+	var display_size: Vector2i = _display_pixel_size()
+	var ok: bool = backend.init(display_size.x, display_size.y)
 	if not ok:
 		status_label.text = "Error: DtBackend.init() failed"
 		open_button.disabled = true
@@ -759,19 +790,35 @@ func _start_process() -> void:
 	export_button.disabled = true
 	_apply_params_to_backend()
 
-	# Snapshot _edit_scale on the main thread and hand the plain value into the
-	# worker task. render_view() with an oversized viewport renders the whole
+	# Snapshot _edit_scale and the pipe choice on the main thread and hand the
+	# plain values into the worker task. An oversized viewport renders the whole
 	# image at this scale (no viewport cap, no crop) — the display zoom is a
 	# frontend-only concern applied after the buffer comes back.
 	var edit_scale: float = _edit_scale
-	_current_task_id = WorkerThreadPool.add_task(_process_task.bind(edit_scale))
+	var final_quality: bool = _final_quality()
+	_current_task_id = WorkerThreadPool.add_task(_process_task.bind(edit_scale, final_quality))
 
 
-func _process_task(edit_scale: float) -> void:
+# True when the current edit resolution asks for the full-quality pipe. 100%
+# means "final" (render_view() on the full pipe); anything lower is the fast
+# interactive path (render_preview() on the preview pipe).
+func _final_quality() -> bool:
+	return _edit_scale >= 0.999
+
+
+func _process_task(edit_scale: float, final_quality: bool) -> void:
 	# Runs on a worker thread. Only touch the backend and plain data here — no
 	# Godot rendering/scene-tree APIs (main-thread only).
-	var bytes: PackedByteArray = backend.render_view(
-		_WHOLE_IMAGE_VIEWPORT, _WHOLE_IMAGE_VIEWPORT, edit_scale, 0.0, 0.0)
+	var bytes: PackedByteArray
+	if final_quality:
+		bytes = backend.render_view(
+			_WHOLE_IMAGE_VIEWPORT, _WHOLE_IMAGE_VIEWPORT, edit_scale, 0.0, 0.0)
+	else:
+		# Fast path: separate preview pipe, fed the display-resolution DT_MIPMAP_F
+		# mip. edit_scale is a fraction of that mip's dimensions; it scales
+		# intermediate module work too, not just the output.
+		bytes = backend.render_preview(
+			_WHOLE_IMAGE_VIEWPORT, _WHOLE_IMAGE_VIEWPORT, edit_scale, 0.0, 0.0)
 	var width: int = backend.get_width()
 	var height: int = backend.get_height()
 	call_deferred("_on_process_done", bytes, width, height)
@@ -944,7 +991,12 @@ func _update_resolution_label(buf_w: int, buf_h: int) -> void:
 		resolution_label.text = "No image loaded"
 		return
 
-	var edit_pct: int = roundi(_edit_scale * 100.0)
+	# Effective buffer scale derived from the actual buffer, not the requested
+	# _edit_scale: in fast mode the buffer is a fraction of the display-resolution
+	# mip, so buf_w/native_w is the honest ratio.
+	var buffer_scale: float = float(buf_w) / float(native_w)
+	var edit_pct: int = roundi(buffer_scale * 100.0)
+	var mode: String = "final" if _final_quality() else "fast"
 
 	# Effective display zoom: in Fit it is derived from the actual pane size, so
 	# it reflects what is really on screen, not a requested number.
@@ -958,19 +1010,19 @@ func _update_resolution_label(buf_w: int, buf_h: int) -> void:
 	var screen_h: int = roundi(disp_zoom * float(native_h))
 	var disp_label: String = "Fit" if _display_zoom < 0.0 else "%d%%" % roundi(disp_zoom * 100.0)
 
-	# Sharpness: the buffer holds edit_scale*native pixels; drawing it at
+	# Sharpness: the buffer holds buffer_scale*native pixels; drawing it at
 	# disp_zoom*native on screen means each buffer pixel is stretched by
-	# disp_zoom/edit_scale. > 1 => upscaled (soft); == 1 with both at 100% => true
-	# 1:1 native detail.
-	var buffer_upscale: float = disp_zoom / _edit_scale
+	# disp_zoom/buffer_scale. > 1 => upscaled (soft); == 1 with both at 100% =>
+	# true 1:1 native detail.
+	var buffer_upscale: float = disp_zoom / buffer_scale
 	var quality: String = ""
 	if buffer_upscale > 1.001:
-		quality = "  [upscaled %.1fx — soft]" % buffer_upscale
-	elif disp_zoom >= 0.999 and _edit_scale >= 0.999:
+		quality = "  [upscaled %.1fx - soft]" % buffer_upscale
+	elif disp_zoom >= 0.999 and buffer_scale >= 0.999:
 		quality = "  [1:1 native pixels]"
 
-	resolution_label.text = "Native %dx%d  |  Editing @ %d%% (buffer %dx%d)  |  Display %s → %dx%d on screen%s" % [
-		native_w, native_h, edit_pct, buf_w, buf_h, disp_label, screen_w, screen_h, quality]
+	resolution_label.text = "Native %dx%d  |  Editing @ %d%% (%s, buffer %dx%d)  |  Display %s -> %dx%d on screen%s" % [
+		native_w, native_h, edit_pct, mode, buf_w, buf_h, disp_label, screen_w, screen_h, quality]
 
 
 func _on_texture_rect_gui_input(event: InputEvent) -> void:
