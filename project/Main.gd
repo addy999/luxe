@@ -122,6 +122,10 @@ var _params: Dictionary = {
 	"highlights": -50.0,
 	"shadows": 50.0,
 	"saturation": 25.0,
+	# Desaturation amount 0..1 driving the monochrome module's blend opacity
+	# (see _on_saturation_slider_value_changed below) -- the saturation slider's
+	# below-neutral range. 0.0 = full color (neutral).
+	"desaturation": 0.0,
 	"vibrance": 25.0,
 	# Tone curve L-channel control points, owned by ToneCurveEditor -- see
 	# _on_tone_curve_changed() below. This default (identity, 2 nodes) matches
@@ -552,6 +556,7 @@ func _on_file_dialog_file_selected(path: String) -> void:
 	saturation_slider.value = 0.0
 	saturation_value_label.text = "%.2f" % 0.0
 	_params["saturation"] = _map_offset_to_module("saturation", 0.0)
+	_params["desaturation"] = 0.0
 	vibrance_slider.value = 0.0
 	vibrance_value_label.text = "%.2f" % 0.0
 	_params["vibrance"] = _map_offset_to_module("vibrance", 0.0)
@@ -607,7 +612,19 @@ func _on_shadows_slider_value_changed(value: float) -> void:
 
 func _on_saturation_slider_value_changed(value: float) -> void:
 	saturation_value_label.text = "%.2f" % value
-	_params["saturation"] = _map_offset_to_module("saturation", value)
+	# The slider's one axis drives TWO backend modules, split at neutral:
+	# velvia can only BOOST saturation (its $MIN 0.0 is neutral, so its slider
+	# floor can't desaturate -- that was the "min doesn't make it B&W" bug).
+	# Above neutral (offset > 0): velvia strength via the normal range map, and
+	# monochrome fully off. At or below neutral: velvia pinned to its neutral
+	# default 25.0, while monochrome fades in via blend opacity (0..1), so the
+	# slider's floor is a true full-strength B&W.
+	if value > 0.0:
+		_params["saturation"] = _map_offset_to_module("saturation", value)
+		_params["desaturation"] = 0.0
+	else:
+		_params["saturation"] = _map_offset_to_module("saturation", 0.0)
+		_params["desaturation"] = -value / 50.0
 	_request_render()
 
 
@@ -802,6 +819,8 @@ func _apply_params_to_backend() -> void:
 		backend.set_shadows(_params["shadows"])
 	if _params_differ("saturation"):
 		backend.set_saturation(_params["saturation"])
+	if _params_differ("desaturation"):
+		backend.set_desaturation(_params["desaturation"])
 	if _params_differ("vibrance"):
 		backend.set_vibrance(_params["vibrance"])
 	if _params_differ("tonecurve"):

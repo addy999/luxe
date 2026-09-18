@@ -31,6 +31,7 @@ void DtBackend::_bind_methods() {
   ClassDB::bind_method(D_METHOD("set_shadows", "value"), &DtBackend::set_shadows);
   ClassDB::bind_method(D_METHOD("set_highlights", "value"), &DtBackend::set_highlights);
   ClassDB::bind_method(D_METHOD("set_saturation", "value"), &DtBackend::set_saturation);
+  ClassDB::bind_method(D_METHOD("set_desaturation", "amount"), &DtBackend::set_desaturation);
   ClassDB::bind_method(D_METHOD("set_vibrance", "value"), &DtBackend::set_vibrance);
   ClassDB::bind_method(D_METHOD("set_tonecurve", "points"), &DtBackend::set_tonecurve);
   ClassDB::bind_method(D_METHOD("set_crop", "left", "top", "right", "bottom"), &DtBackend::set_crop);
@@ -558,6 +559,7 @@ bool DtBackend::load_image(String path) {
   colorbalance_module = nullptr;
   shadhi_module = nullptr;
   velvia_module = nullptr;
+  monochrome_module = nullptr;
   vibrance_module = nullptr;
   tonecurve_module = nullptr;
   channelmixer_rgb_module = nullptr;
@@ -709,6 +711,60 @@ void DtBackend::set_saturation(float value) {
 
   dt_dev_add_history_item_ext(&dev, velvia_module, TRUE, TRUE);
   note_pipe_change(velvia_module);
+}
+
+// The saturation slider's below-neutral half. velvia (above) can only BOOST
+// saturation (its $MIN is 0.0 = neutral), so dragging the slider below neutral
+// needs a different mechanism: this setter drives the "monochrome" module's
+// blend parameters instead of any of its own fields. The module's params blob
+// is left at its introspection defaults (a=0, b=0, size=2, highlights=0 --
+// already a plain neutral grayscale conversion), while the blend params get a
+// uniform-mask mode (DEVELOP_MASK_ENABLED, "uniformly" = no mask, just the
+// opacity slider darktable's GUI exposes on every module) with opacity =
+// amount * 100%. dt_dev_add_history_item_ext() snapshots module->blend_params
+// into the history item (develop.c ~1390) and _dev_pixelpipe_synch() commits
+// them back through dt_iop_commit_params() (pixelpipe_hb.c ~660), so opacity
+// changes replay exactly like params changes across both pipes.
+//
+// amount == 0.0 (the neutral point) DISABLES the module outright, same policy
+// as set_crop()'s full-frame case: a disabled piece costs nothing in the pipe,
+// whereas an enabled-but-0%-opacity piece still pays monochrome's process()
+// and blend every render.
+void DtBackend::set_desaturation(float amount) {
+  if(!image_loaded) {
+    UtilityFunctions::printerr("DtBackend::set_desaturation: no image loaded");
+    return;
+  }
+
+  if(amount < 0.0f) amount = 0.0f;
+  if(amount > 1.0f) amount = 1.0f;
+
+  if(!monochrome_module) {
+    monochrome_module = dt_iop_get_module_from_list(dev.iop, "monochrome");
+    if(!monochrome_module) {
+      UtilityFunctions::printerr("DtBackend::set_desaturation: could not find \"monochrome\" module in dev.iop");
+      return;
+    }
+  }
+
+  // Params blob untouched: its defaults are already a neutral grayscale
+  // conversion. Only the blend decides how much of it lands on the image.
+  dt_develop_blend_params_t *bp =
+      (dt_develop_blend_params_t *)monochrome_module->blend_params;
+  if(amount <= 0.0f) {
+    monochrome_module->enabled = FALSE;
+    // Reset to the module's own defaults so a later re-enable starts from a
+    // clean blend state, not a stale fractional opacity. DEVELOP_BLEND_CS_
+    // RGB_DISPLAY is monochrome's own blend color space (monochrome.c:155).
+    dt_develop_blend_init_blend_parameters(bp, DEVELOP_BLEND_CS_RGB_DISPLAY);
+  } else {
+    bp->mask_mode = DEVELOP_MASK_ENABLED; // uniform: no mask, just opacity
+    bp->opacity = amount * 100.0f;
+    monochrome_module->enabled = TRUE;
+  }
+
+  dt_dev_add_history_item_ext(&dev, monochrome_module, monochrome_module->enabled, TRUE);
+  note_pipe_change(monochrome_module);
 }
 
 // Section F, same pattern as set_exposure(): locate the vibrance module once,
@@ -1345,6 +1401,7 @@ void DtBackend::cleanup() {
     colorbalance_module = nullptr;
     shadhi_module = nullptr;
     velvia_module = nullptr;
+  monochrome_module = nullptr;
     vibrance_module = nullptr;
     tonecurve_module = nullptr;
     channelmixer_rgb_module = nullptr;
@@ -1388,6 +1445,7 @@ void DtBackend::unload_image() {
   colorbalance_module = nullptr;
   shadhi_module = nullptr;
   velvia_module = nullptr;
+  monochrome_module = nullptr;
   vibrance_module = nullptr;
   tonecurve_module = nullptr;
   channelmixer_rgb_module = nullptr;

@@ -26,6 +26,7 @@ extern "C" {
 #include "common/film.h"
 #include "common/image.h"
 #include "common/mipmap_cache.h"
+#include "develop/blend.h" // dt_develop_blend_params_t + DEVELOP_MASK_* (blend params for uniform-opacity blending; also included by pixelpipe_hb.c in the nogui build, so it is safe headless)
 #include "develop/develop.h"
 #include "develop/imageop.h"
 #include "develop/pixelpipe_hb.h"
@@ -136,12 +137,9 @@ typedef struct dt_iop_colorbalancergb_params_t
 // declared in source/src/common/gaussian.h; redeclared here for the same
 // reason. If shadhi.c's struct or introspection version changes upstream,
 // update this block.
-typedef enum dt_gaussian_order_t
-{
-  DT_IOP_GAUSSIAN_ZERO = 0,
-  DT_IOP_GAUSSIAN_ONE = 1,
-  DT_IOP_GAUSSIAN_TWO = 2
-} dt_gaussian_order_t;
+// dt_gaussian_order_t used to be redeclared here (shadhi.c keeps it private);
+// blend.h (needed for monochrome's blend-opacity driving) pulls in
+// common/gaussian.h which defines it for real, so the redeclaration is gone.
 
 typedef enum dt_iop_shadhi_algo_t
 {
@@ -178,6 +176,26 @@ typedef struct dt_iop_velvia_params_t
   float strength;
   float bias;
 } dt_iop_velvia_params_t;
+
+// dt_iop_monochrome_params_t is likewise private to source/src/iop/monochrome.c,
+// so it is redeclared here to match that file exactly (source/src/iop/
+// monochrome.c:49-55, DT_MODULE_INTROSPECTION version 2). This backend never
+// writes any of these fields -- the module's introspection defaults (a=0, b=0,
+// size=2, highlights=0) sitting in the live params blob are already a plain
+// neutral grayscale conversion, which is all the saturation slider's
+// below-neutral range needs. What it DOES drive is the module's blend
+// parameters (dt_develop_blend_params_t, source/src/develop/blend.h:180-225):
+// uniform-mask mode (DEVELOP_MASK_ENABLED) with a fractional `opacity`
+// (0..100), so the slider can fade between full color and full B&W. If
+// monochrome.c's struct or introspection version changes upstream, update
+// this block.
+typedef struct dt_iop_monochrome_params_t
+{
+  float a;
+  float b;
+  float size;
+  float highlights;
+} dt_iop_monochrome_params_t;
 
 // dt_iop_vibrance_params_t is likewise private to source/src/iop/vibrance.c,
 // so it's redeclared here to match that file exactly (source/src/iop/
@@ -477,6 +495,9 @@ private:
   dt_iop_module_t *colorbalance_module = nullptr;
   dt_iop_module_t *shadhi_module = nullptr;
   dt_iop_module_t *velvia_module = nullptr;
+  // monochrome backs the saturation slider's BELOW-neutral range only -- see
+  // set_saturation() in dt_backend.cpp for how the two modules split the range.
+  dt_iop_module_t *monochrome_module = nullptr;
   dt_iop_module_t *vibrance_module = nullptr;
   dt_iop_module_t *tonecurve_module = nullptr;
   // White balance now targets channelmixerrgb ("color calibration"), not
@@ -590,6 +611,14 @@ public:
   void set_shadows(float value);
   void set_highlights(float value);
   void set_saturation(float value);
+  // The saturation axis's below-neutral half. `amount` is the desaturation
+  // amount in 0..1: 0 disables monochrome entirely (full color, the neutral
+  // point), 1 enables it at full opacity (full B&W), and values between enable
+  // it with a uniform-blend opacity of amount*100% so the image fades
+  // continuously between the two. Implemented on the "monochrome" module via
+  // its blend parameters rather than any of its own fields -- see the note on
+  // dt_iop_monochrome_params_t above.
+  void set_desaturation(float amount);
   void set_vibrance(float value);
   // White balance via channelmixerrgb's chromatic adaptation -- see the NOTE
   // on white balance above dt_iop_channelmixer_rgb_params_t. Sets illuminant
