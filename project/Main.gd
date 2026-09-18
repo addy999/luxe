@@ -160,6 +160,34 @@ var _processing: bool = false
 # requests coalesced into this flag.
 var _render_queued: bool = false
 var _current_task_id: int = -1
+
+# --- Live-render EWMA gate -----------------------------------------------------
+# Time-based throttle modeled on darktable's own UI gate: a new pipe run is only
+# started if the previous one started at least half the averaged runtime ago
+# (develop.c:294-298, _inside_pipe_ui_frame). The average is an EWMA over 8 runs,
+# the same recurrence as _dev_average_delay_update() (develop.c:628-633,
+# DT_DEV_AVERAGE_DELAY_COUNT = 8).
+#
+# Cheap renders keep the average small, so the gate stays open and feedback is
+# near-instant. Expensive renders widen it, collapsing a drag's burst of ticks
+# into the fewest frames that still keep the preview current. This is adaptive,
+# never a fixed debounce: a slow render widens the window, a fast one closes it.
+#
+# A request that arrives while the gate is shut is not dropped. It arms a one-shot
+# timer for exactly the remaining sliver of the window, and that trailing render
+# re-snapshots _params, so the final slider value is always rendered.
+#
+# Note the gate is deliberately conservative: because we never abort an in-flight
+# render (unlike darktable, which stops the pipe mid-run), a render that takes its
+# own runtime to finish always clears the half-average window on completion, so a
+# saturated back-to-back drag is unaffected. The gate only sheds frames when a
+# render finishes well under half the recent average, i.e. when there is variance
+# worth smoothing.
+const _RENDER_AVG_COUNT: int = 8
+var _render_avg_usec: float = 0.0        # EWMA of render start-to-start latency.
+var _last_render_start_usec: int = 0     # Start time of the most recent render (0 = none).
+var _render_start_usec: int = 0          # Start time of the in-flight render, for the EWMA.
+var _gate_timer: Timer = null            # One-shot trailing render when the gate is shut.
 var _exporting: bool = false
 var _export_path: String = ""
 var _source_basename: String = "export"
@@ -276,6 +304,13 @@ func _configure_dt_backend_env() -> void:
 
 
 func _ready() -> void:
+	# One-shot timer for the EWMA render gate's trailing render. Created once and
+	# reused; never allocated per tick. See the gate block above.
+	_gate_timer = Timer.new()
+	_gate_timer.one_shot = true
+	_gate_timer.timeout.connect(_on_render_gate_timeout)
+	add_child(_gate_timer)
+
 	# Build the per-slider/per-module reset icon buttons first so they exist even
 	# on the backend-failure path below (where they get disabled alongside the
 	# sliders they'd otherwise reset).
@@ -416,6 +451,11 @@ func _on_file_dialog_file_selected(path: String) -> void:
 	# to push every param fresh (the "first render after load is a full sync"
 	# case); the per-param resets below then just seed _params.
 	_applied_params.clear()
+
+	# Cancel any render/throttle state inherited from the previous image: a
+	# pending trailing render belongs to the old image, and the EWMA restarts so
+	# the new image's first render is never delayed by the old image's timing.
+	_reset_render_gate()
 
 	# Default the export filename to "<source>_edited.jpg".
 	_source_basename = path.get_file().get_basename()
@@ -590,6 +630,63 @@ func _request_render() -> void:
 	if _processing:
 		_render_queued = true
 		return
+	if not _render_gate_open():
+		_arm_render_gate_timer()
+		return
+	_start_process()
+
+
+# True once at least half the averaged render latency has passed since the last
+# render started. Mirrors darktable's patience window (develop.c:296-297). A pipe
+# that has never run is always open, so the first render is never delayed.
+func _render_gate_open() -> bool:
+	if _last_render_start_usec == 0:
+		return true
+	var elapsed_usec: int = Time.get_ticks_usec() - _last_render_start_usec
+	return float(elapsed_usec) >= _render_avg_usec * 0.5
+
+
+# True while a trailing render is counting down to the gate opening.
+func _render_gate_pending() -> bool:
+	return _gate_timer != null and not _gate_timer.is_stopped()
+
+
+# Arm the one-shot trailing render for exactly the remaining sliver of the gate
+# window. If a timer is already armed, leave it: it points at the same absolute
+# deadline, so re-arming on every tick would turn the adaptive gate into a fixed
+# debounce that delays the trailing render indefinitely.
+func _arm_render_gate_timer() -> void:
+	if _render_gate_pending():
+		return
+	var remaining_usec: float = _render_avg_usec * 0.5 \
+		- float(Time.get_ticks_usec() - _last_render_start_usec)
+	if remaining_usec <= 1000.0:
+		# Gate is effectively open; skip the timer round-trip.
+		_start_process()
+		return
+	_gate_timer.start(remaining_usec / 1000000.0)
+
+
+# Drop all gate state. Called on image load: the old image's latency history and
+# any in-flight trailing render are meaningless for the new one. Safe to call
+# while a render is in flight: _on_process_done() measures that render's own
+# start time, so the EWMA update is not corrupted by this reset.
+func _reset_render_gate() -> void:
+	if _gate_timer != null:
+		_gate_timer.stop()
+	_render_queued = false
+	_render_avg_usec = 0.0
+	_last_render_start_usec = 0
+
+
+func _on_render_gate_timeout() -> void:
+	if backend == null or not _image_loaded or _exporting:
+		return
+	if _processing:
+		# A render slipped in while we waited; fold this into the queued follow-up
+		# so the latest value still renders when that one completes.
+		_render_queued = true
+		return
 	_start_process()
 
 
@@ -651,6 +748,12 @@ func _start_process() -> void:
 
 	_processing = true
 	_render_queued = false
+	# Cancel any trailing render still counting down: this render supersedes it
+	# (same re-snapshotted _params), so letting it fire would be a wasted run.
+	if _gate_timer != null:
+		_gate_timer.stop()
+	_render_start_usec = Time.get_ticks_usec()
+	_last_render_start_usec = _render_start_usec
 	# Block export while a preview render is in flight: both run darktable's pipe
 	# over shared process-wide state, so they must not overlap.
 	export_button.disabled = true
@@ -675,6 +778,14 @@ func _process_task(edit_scale: float) -> void:
 
 
 func _on_process_done(bytes: PackedByteArray, width: int, height: int) -> void:
+	# Update the render-latency EWMA before deciding whether to start a follow-up.
+	# Uses the in-flight render's own start time (not _last_render_start_usec, which
+	# an image load may have reset to 0 while this render was in flight). Same
+	# recurrence as darktable's _dev_average_delay_update() (develop.c:628-633).
+	var elapsed_usec: int = Time.get_ticks_usec() - _render_start_usec
+	_render_avg_usec += float(elapsed_usec) / _RENDER_AVG_COUNT \
+		- _render_avg_usec / _RENDER_AVG_COUNT
+
 	if width > 0 and height > 0 and bytes.size() >= width * height * 4:
 		var img: Image = Image.create_from_data(width, height, false, Image.FORMAT_RGBA8, bytes)
 		# ImageTexture.update() is the fast in-place path but requires a matching
@@ -702,8 +813,12 @@ func _on_process_done(bytes: PackedByteArray, width: int, height: int) -> void:
 
 	if _render_queued and _image_loaded and not _exporting:
 		# Changes landed mid-render; render once more with the latest _params.
+		# Routed through _request_render() so the same EWMA gate applies to the
+		# follow-up: a burst of ticks collapses into fewer frames instead of always
+		# running back-to-back. A deferred follow-up keeps export disabled until it
+		# actually starts.
 		_render_queued = false
-		_start_process()
+		_request_render()
 	elif _image_loaded and not _exporting:
 		# Pipe is idle again -> exporting is safe.
 		export_button.disabled = false
@@ -1056,8 +1171,11 @@ func _on_crop_overlay_canceled() -> void:
 
 func _on_export_button_pressed() -> void:
 	# Also block while the crop overlay is open: it has temporarily lifted the
-	# crop from the pipe, so an export now would export the uncropped frame.
-	if not _image_loaded or _exporting or _processing or _crop_overlay != null:
+	# crop from the pipe, so an export now would export the uncropped frame. And
+	# while a trailing render is armed: that render would otherwise start
+	# underneath the export's full-res pipe run.
+	if not _image_loaded or _exporting or _processing \
+			or _render_gate_pending() or _crop_overlay != null:
 		return
 	export_dialog.current_file = "%s_edited.jpg" % _source_basename
 	export_dialog.popup_centered()
