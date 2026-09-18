@@ -7,11 +7,8 @@
     <path d="M 0 -46 A 46 46 0 0 1 39.8 -23" fill="none" stroke="#66b3ea" stroke-width="6" stroke-linecap="round"/>
   </g>
 
-  <text x="480" y="330" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
-        font-size="72" font-weight="300" letter-spacing="6" fill="#f0f0f0"
-        text-anchor="middle">LUXE</text>
-
-  <text x="480" y="368" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
-        font-size="16" font-weight="400" letter-spacing="3" fill="#7a7a7a"
-        text-anchor="middle">RAW PHOTO EDITOR</text>
+  <!-- Text is intentionally omitted: Godot's ThorVG-based SVG importer does not
+       render <text> elements (that's why the circle-only splash). Main.gd's
+       splash overlay draws the LUXE wordmark and subtitle as Labels instead,
+       scaled to match this layout. -->
 </svg>

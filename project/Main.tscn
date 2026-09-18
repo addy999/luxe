@@ -115,6 +115,28 @@ size_flags_vertical = 0
 expand_mode = 1
 stretch_mode = 5
 
+[node name="EmptyState" type="CenterContainer" parent="Root/MiddleHBox" unique_id=610000001]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+mouse_filter = 2
+
+[node name="EmptyVBox" type="VBoxContainer" parent="Root/MiddleHBox/EmptyState" unique_id=610000002]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="EmptyHintLabel" type="Label" parent="Root/MiddleHBox/EmptyState/EmptyVBox" unique_id=610000003]
+layout_mode = 2
+theme_type_variation = &"Muted"
+text = "Drop a photo in to start editing"
+horizontal_alignment = 1
+
+[node name="EmptyOpenButton" type="Button" parent="Root/MiddleHBox/EmptyState/EmptyVBox" unique_id=610000004]
+custom_minimum_size = Vector2(180, 0)
+layout_mode = 2
+size_flags_horizontal = 4
+text = "Open Image…"
+
 [node name="RightPanel" type="PanelContainer" parent="Root/MiddleHBox" unique_id=517760332]
 custom_minimum_size = Vector2(500, 0)
 layout_mode = 2
@@ -358,6 +380,7 @@ filters = PackedStringArray("*.jpg,*.jpeg ; JPEG", "*.png ; PNG", "*.tif,*.tiff 
 use_native_dialog = true
 
 [connection signal="pressed" from="Root/TopBar/TopBarRow/OpenButton" to="." method="_on_open_button_pressed"]
+[connection signal="pressed" from="Root/MiddleHBox/EmptyState/EmptyVBox/EmptyOpenButton" to="." method="_on_open_button_pressed"]
 [connection signal="pressed" from="Root/TopBar/TopBarRow/ExportButton" to="." method="_on_export_button_pressed"]
 [connection signal="pressed" from="Root/TopBar/TopBarRow/ThemeButton" to="." method="_on_theme_button_pressed"]
 [connection signal="toggled" from="Root/TopBar/TopBarRow/FitButton" to="." method="_on_fit_button_toggled"]
