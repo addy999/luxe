@@ -480,6 +480,32 @@ private:
   int raw_width = 0;
   int raw_height = 0;
 
+  // --- Incremental change dispatch ------------------------------------------
+  // Every setter ends with dt_dev_add_history_item_ext(..., no_image=TRUE)
+  // because darktable skips building the GUI pipes when gui_attached is FALSE
+  // (develop.c:101-116, guarded by dev->gui_attached) yet the !no_image branch
+  // unconditionally ORs DT_DEV_PIPE_*_CHANGED onto dev->full.pipe/preview_pipe
+  // (develop.c:1404-1410, 1432-1437) -- NULL here, so dropping no_image would
+  // crash. That branch is also the only place the GUI's change dispatch comes
+  // from, so this bridge tracks the change itself against its standalone
+  // `pipe`.
+  //
+  // One changed module maps exactly onto darktable's DT_DEV_PIPE_TOP_CHANGED /
+  // dt_dev_pixelpipe_synch_top(): add_history_item_ext() leaves the module it
+  // was called for as the top history item, and synch_top re-commits only that
+  // item, so every upstream cache line survives. Two or more changed modules
+  // (Main.gd pushes all params on load, and coalesced slider moves can arrive
+  // together) cannot be expressed as TOP_CHANGED -- synch_top would commit only
+  // the last one -- so that falls back to a full dt_dev_pixelpipe_synch_all().
+  bool pipe_change_pending = false;
+  bool pipe_change_multi = false;
+  bool pipe_needs_full_synch = false;
+  dt_iop_module_t *pipe_change_module = nullptr;
+
+  // Records `module` as changed and raises pipe_needs_full_synch if enabling it
+  // flips a still-disabled piece, which the full history replay settles.
+  void note_pipe_change(dt_iop_module_t *module);
+
   // Shared helper: re-syncs the pipe and refreshes native_width/native_height.
   // Called by both process_fit() and render_view() so there is exactly one
   // place that calls dt_dev_pixelpipe_get_dimensions().

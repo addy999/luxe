@@ -402,6 +402,14 @@ bool DtBackend::load_image(String path) {
   dt_dev_pixelpipe_create_nodes(&pipe, &dev);
   dt_dev_pixelpipe_synch_all(&pipe, &dev);
 
+  // the synch_all above committed every piece from defaults/history, so the
+  // pipe is fully synced and has no pending change to dispatch (see the
+  // dispatch members in dt_backend.h)
+  pipe_needs_full_synch = false;
+  pipe_change_pending = false;
+  pipe_change_multi = false;
+  pipe_change_module = nullptr;
+
   pipe_ready = true;
   image_loaded = true;
   exposure_module = nullptr;
@@ -443,6 +451,7 @@ void DtBackend::set_exposure(float ev) {
   exposure_module->enabled = TRUE;
 
   dt_dev_add_history_item_ext(&dev, exposure_module, TRUE, TRUE);
+  note_pipe_change(exposure_module);
 }
 
 // Section F, same pattern as set_exposure(): locate the colorbalancergb ("color
@@ -475,6 +484,7 @@ void DtBackend::set_contrast(float value) {
   colorbalance_module->enabled = TRUE;
 
   dt_dev_add_history_item_ext(&dev, colorbalance_module, TRUE, TRUE);
+  note_pipe_change(colorbalance_module);
 }
 
 // Section F, same pattern as set_exposure()/set_contrast(): locate the shadhi
@@ -505,6 +515,7 @@ void DtBackend::set_shadows(float value) {
   shadhi_module->enabled = TRUE;
 
   dt_dev_add_history_item_ext(&dev, shadhi_module, TRUE, TRUE);
+  note_pipe_change(shadhi_module);
 }
 
 void DtBackend::set_highlights(float value) {
@@ -529,6 +540,7 @@ void DtBackend::set_highlights(float value) {
   shadhi_module->enabled = TRUE;
 
   dt_dev_add_history_item_ext(&dev, shadhi_module, TRUE, TRUE);
+  note_pipe_change(shadhi_module);
 }
 
 // Section F, same pattern as set_exposure(): locate the velvia ("saturation
@@ -556,6 +568,7 @@ void DtBackend::set_saturation(float value) {
   velvia_module->enabled = TRUE;
 
   dt_dev_add_history_item_ext(&dev, velvia_module, TRUE, TRUE);
+  note_pipe_change(velvia_module);
 }
 
 // Section F, same pattern as set_exposure(): locate the vibrance module once,
@@ -583,6 +596,7 @@ void DtBackend::set_vibrance(float value) {
   vibrance_module->enabled = TRUE;
 
   dt_dev_add_history_item_ext(&dev, vibrance_module, TRUE, TRUE);
+  note_pipe_change(vibrance_module);
 }
 
 // Drives the tonecurve module's L-channel spline. Unlike every scalar setter
@@ -634,6 +648,7 @@ void DtBackend::set_tonecurve(PackedVector2Array points) {
   tonecurve_module->enabled = TRUE;
 
   dt_dev_add_history_item_ext(&dev, tonecurve_module, TRUE, TRUE);
+  note_pipe_change(tonecurve_module);
 }
 
 // White balance via channelmixerrgb's chromatic adaptation. See the NOTE on
@@ -671,6 +686,7 @@ void DtBackend::set_white_balance_temperature(float kelvin) {
   channelmixer_rgb_module->enabled = TRUE;
 
   dt_dev_add_history_item_ext(&dev, channelmixer_rgb_module, TRUE, TRUE);
+  note_pipe_change(channelmixer_rgb_module);
 }
 
 // Read-only: returns channelmixerrgb's current `temperature` without
@@ -751,6 +767,35 @@ void DtBackend::set_crop(float left, float top, float right, float bottom) {
   clipping_module->enabled = no_crop ? FALSE : TRUE;
 
   dt_dev_add_history_item_ext(&dev, clipping_module, TRUE, TRUE);
+  note_pipe_change(clipping_module);
+}
+
+// Records `module` as changed since the last pipe synch. See the note on the
+// dispatch members in dt_backend.h for why this bridge cannot lean on
+// darktable's own change signalling (dev->full.pipe/preview_pipe are NULL
+// headless). `module->enabled` was already set to TRUE by the setter before
+// this runs, so comparing it against the piece's committed enabled flag tells
+// us whether this is the module's first activation; that is the one case a
+// TOP_CHANGED re-commit is on its own too narrow for, so fall back to a full
+// replay. Every module owns a piece after create_nodes() whether enabled or
+// not, so the piece lookup always succeeds for a module in dev.iop.
+void DtBackend::note_pipe_change(dt_iop_module_t *module) {
+  // two distinct modules before one render cannot be expressed as TOP_CHANGED:
+  // synch_top only re-commits the last history item, silently skipping the
+  // earlier one, which is exactly the stale-pixel failure this must avoid.
+  if(pipe_change_pending && pipe_change_module != module)
+    pipe_change_multi = true;
+
+  pipe_change_pending = true;
+  pipe_change_module = module;
+
+  for(GList *nodes = pipe.nodes; nodes; nodes = g_list_next(nodes)) {
+    dt_dev_pixelpipe_iop_t *piece = (dt_dev_pixelpipe_iop_t *)nodes->data;
+    if(piece->module == module && piece->enabled != module->enabled) {
+      pipe_needs_full_synch = true;
+      break;
+    }
+  }
 }
 
 // Shared re-sync + native-dimension refresh, used by both process_fit() and
@@ -760,13 +805,32 @@ void DtBackend::set_crop(float left, float top, float right, float bottom) {
 // processed_height regardless of what scale process() is later called with
 // (imageio.c:1251-1253 calls it once, before picking any scale) -- so caching
 // native_width/native_height here is safe to reuse across repeated renders.
+//
+// The blanket dt_dev_pixelpipe_synch_all() that used to run here reset every
+// piece hash and replayed the whole history on every render, discarding the
+// pixelpipe cache and making per-render cost grow with history length. An
+// ordinary single-module edit now goes through darktable's own incremental
+// dispatch instead: dt_dev_pixelpipe_synch_top() re-commits only the top
+// history item (the module the setter just touched), so every upstream cache
+// line survives and only the changed node and its derivatives reprocess. A
+// multi-module batch (or a module whose enabled state flips) still falls back
+// to a full replay, which is the only correct choice there.
 bool DtBackend::refresh_native_dimensions() {
   if(!image_loaded || !pipe_ready) {
     UtilityFunctions::printerr("DtBackend::refresh_native_dimensions: no image loaded / pipe not ready");
     return false;
   }
 
-  dt_dev_pixelpipe_synch_all(&pipe, &dev);
+  if(pipe_needs_full_synch || pipe_change_multi) {
+    dt_dev_pixelpipe_synch_all(&pipe, &dev);
+  } else if(pipe_change_pending) {
+    dt_dev_pixelpipe_synch_top(&pipe, &dev);
+  }
+
+  pipe_needs_full_synch = false;
+  pipe_change_pending = false;
+  pipe_change_multi = false;
+  pipe_change_module = nullptr;
 
   dt_dev_pixelpipe_get_dimensions(&pipe, &dev, pipe.iwidth, pipe.iheight,
                                    &pipe.processed_width, &pipe.processed_height);
@@ -1102,4 +1166,10 @@ void DtBackend::unload_image() {
   native_height = 0;
   raw_width = 0;
   raw_height = 0;
+
+  // drop any dispatch state left over from the torn-down pipe
+  pipe_needs_full_synch = false;
+  pipe_change_pending = false;
+  pipe_change_multi = false;
+  pipe_change_module = nullptr;
 }
