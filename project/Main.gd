@@ -63,7 +63,6 @@ extends Control
 @onready var open_button: Button = $Root/TopBar/TopBarRow/OpenButton
 @onready var export_button: Button = $Root/TopBar/TopBarRow/ExportButton
 @onready var theme_button: Button = $Root/TopBar/TopBarRow/ThemeButton
-@onready var status_label: Label = $Root/BottomBar/BottomRow/StatusLabel
 @onready var resolution_label: Label = $Root/BottomBar/BottomRow/ResolutionLabel
 # Display-zoom controls live in the top bar now: a continuous slider (native-
 # relative %) plus a toggle for the Fit sentinel. See _display_zoom below.
@@ -360,7 +359,6 @@ func _init_backend() -> bool:
 	var display_size: Vector2i = _display_pixel_size()
 	var ok: bool = backend.init(display_size.x, display_size.y)
 	if not ok:
-		status_label.text = "Error: DtBackend.init() failed"
 		open_button.disabled = true
 		exposure_slider.editable = false
 		contrast_slider.editable = false
@@ -376,7 +374,6 @@ func _init_backend() -> bool:
 
 
 func _finish_ready() -> void:
-	status_label.text = "Ready — open an image to begin"
 	exposure_value_label.text = "%.2f" % exposure_slider.value
 	contrast_value_label.text = "%.2f" % contrast_slider.value
 	highlights_value_label.text = "%.2f" % highlights_slider.value
@@ -464,10 +461,8 @@ func _on_file_dialog_file_selected(path: String) -> void:
 	if backend == null:
 		return
 
-	status_label.text = "Loading %s ..." % path.get_file()
 	var ok: bool = backend.load_image(path)
 	if not ok:
-		status_label.text = "Error: failed to load %s" % path.get_file()
 		_image_loaded = false
 		_update_empty_state()
 		export_button.disabled = true
@@ -475,7 +470,6 @@ func _on_file_dialog_file_selected(path: String) -> void:
 
 	_image_loaded = true
 	_update_empty_state()
-	status_label.text = "Loaded %s" % path.get_file()
 
 	# load_image() resets the backend's modules, so nothing from the previous
 	# image is still applied. Drop the applied snapshot to force the next render
@@ -850,11 +844,8 @@ func _on_process_done(bytes: PackedByteArray, width: int, height: int) -> void:
 				_crop_overlay.sync_to_texture()
 		else:
 			image_texture.update(img)
-		status_label.text = "Preview updated"
 		_apply_display_layout()
 		_update_resolution_label(width, height)
-	else:
-		status_label.text = "Error: empty/invalid frame from backend"
 
 	_processing = false
 
@@ -1021,8 +1012,8 @@ func _update_resolution_label(buf_w: int, buf_h: int) -> void:
 	elif disp_zoom >= 0.999 and buffer_scale >= 0.999:
 		quality = "  [1:1 native pixels]"
 
-	resolution_label.text = "Native %dx%d  |  Editing @ %d%% (%s, buffer %dx%d)  |  Display %s -> %dx%d on screen%s" % [
-		native_w, native_h, edit_pct, mode, buf_w, buf_h, disp_label, screen_w, screen_h, quality]
+	resolution_label.text = "Native %dx%d  |  Editing @ %dx%d |  Display %s" % [
+		native_w, native_h, buf_w, buf_h, disp_label]
 
 
 func _on_texture_rect_gui_input(event: InputEvent) -> void:
@@ -1205,12 +1196,6 @@ func _on_crop_overlay_applied(rect: Rect2) -> void:
 	crop_button.set_pressed_no_signal(false)
 	_params["crop"] = rect
 	_request_render()
-	if rect == Rect2(0, 0, 1, 1):
-		status_label.text = "Crop cleared"
-	else:
-		status_label.text = "Crop applied (%d%%, %d%%) - (%d%%, %d%%)" % [
-			roundi(rect.position.x * 100), roundi(rect.position.y * 100),
-			roundi(rect.end.x * 100), roundi(rect.end.y * 100)]
 
 
 func _on_crop_overlay_canceled() -> void:
@@ -1248,7 +1233,6 @@ func _on_export_dialog_file_selected(path: String) -> void:
 	saturation_slider.editable = false
 	vibrance_slider.editable = false
 	white_balance_slider.editable = false
-	status_label.text = "Exporting %s ..." % path.get_file()
 
 	# Run the (full-res, high-quality) export off the main thread so the UI
 	# doesn't freeze; it writes the file directly via darktable's export engine.
@@ -1271,10 +1255,8 @@ func _on_export_done(ok: bool, path: String) -> void:
 	vibrance_slider.editable = true
 	white_balance_slider.editable = true
 	export_button.disabled = not _image_loaded
-	if ok:
-		status_label.text = "Exported %s" % path.get_file()
-	else:
-		status_label.text = "Error: export failed for %s" % path.get_file()
+	if not ok:
+		push_error("Export failed for %s" % path.get_file())
 
 
 func _notification(what: int) -> void:
