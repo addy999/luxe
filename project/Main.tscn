@@ -143,31 +143,36 @@ layout_mode = 2
 size_flags_horizontal = 0
 theme_type_variation = &"SidePanel"
 
-[node name="PanelMargin" type="MarginContainer" parent="Root/MiddleHBox/RightPanel" unique_id=1981949271]
+[node name="PanelScroll" type="ScrollContainer" parent="Root/MiddleHBox/RightPanel" unique_id=620000001]
 layout_mode = 2
+horizontal_scroll_mode = 0
+
+[node name="PanelMargin" type="MarginContainer" parent="Root/MiddleHBox/RightPanel/PanelScroll" unique_id=1981949271]
+layout_mode = 2
+size_flags_horizontal = 3
 theme_override_constants/margin_left = 16
 theme_override_constants/margin_top = 16
 theme_override_constants/margin_right = 16
 theme_override_constants/margin_bottom = 16
 
-[node name="PanelVBox" type="VBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelMargin" unique_id=48744576]
+[node name="PanelVBox" type="VBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin" unique_id=48744576]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="ToneHeader" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=574143432]
+[node name="ToneHeader" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=574143432]
 layout_mode = 2
 theme_type_variation = &"GroupHeader"
 text = "TONE"
 
-[node name="ExposureLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=1952354207]
+[node name="ExposureLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=1952354207]
 layout_mode = 2
 text = "Exposure (EV)"
 
-[node name="ExposureRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=1073181792]
+[node name="ExposureRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=1073181792]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="ExposureSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ExposureRow" unique_id=171897813]
+[node name="ExposureSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ExposureRow" unique_id=171897813]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
@@ -175,21 +180,21 @@ min_value = -3.0
 max_value = 3.0
 step = 0.05
 
-[node name="ExposureValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ExposureRow" unique_id=1655579900]
+[node name="ExposureValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ExposureRow" unique_id=1655579900]
 custom_minimum_size = Vector2(52, 0)
 layout_mode = 2
 text = "0.00"
 horizontal_alignment = 2
 
-[node name="ContrastLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=230824698]
+[node name="ContrastLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=230824698]
 layout_mode = 2
 text = "Contrast"
 
-[node name="ContrastRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=2008684927]
+[node name="ContrastRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=2008684927]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="ContrastSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ContrastRow" unique_id=59812742]
+[node name="ContrastSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ContrastRow" unique_id=59812742]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
@@ -197,121 +202,121 @@ min_value = -1.0
 max_value = 1.0
 step = 0.05
 
-[node name="ContrastValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ContrastRow" unique_id=156350740]
+[node name="ContrastValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ContrastRow" unique_id=156350740]
 custom_minimum_size = Vector2(52, 0)
 layout_mode = 2
 text = "0.00"
 horizontal_alignment = 2
 
-[node name="HighlightsLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=513530142]
+[node name="HighlightsLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=513530142]
 layout_mode = 2
 text = "Highlights"
 
-[node name="HighlightsRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=928981621]
+[node name="HighlightsRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=928981621]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="HighlightsSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/HighlightsRow" unique_id=1446716013]
+[node name="HighlightsSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/HighlightsRow" unique_id=1446716013]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
 min_value = -100.0
 value = -50.0
 
-[node name="HighlightsValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/HighlightsRow" unique_id=1816801513]
+[node name="HighlightsValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/HighlightsRow" unique_id=1816801513]
 custom_minimum_size = Vector2(52, 0)
 layout_mode = 2
 text = "-50.00"
 horizontal_alignment = 2
 
-[node name="ShadowsLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=1714141369]
+[node name="ShadowsLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=1714141369]
 layout_mode = 2
 text = "Shadows"
 
-[node name="ShadowsRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=1566182188]
+[node name="ShadowsRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=1566182188]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="ShadowsSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ShadowsRow" unique_id=1301681316]
+[node name="ShadowsSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ShadowsRow" unique_id=1301681316]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
 min_value = -100.0
 value = 50.0
 
-[node name="ShadowsValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ShadowsRow" unique_id=104392978]
+[node name="ShadowsValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ShadowsRow" unique_id=104392978]
 custom_minimum_size = Vector2(52, 0)
 layout_mode = 2
 text = "50.00"
 horizontal_alignment = 2
 
-[node name="ToneCurveLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=1464777149]
+[node name="ToneCurveLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=1464777149]
 layout_mode = 2
 text = "Tone Curve"
 
-[node name="ToneCurveEditor" type="Control" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=366149802]
+[node name="ToneCurveEditor" type="Control" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=366149802]
 custom_minimum_size = Vector2(0, 180)
 layout_mode = 2
 size_flags_horizontal = 3
 script = ExtResource("3_tonecurve")
 
-[node name="HSep" type="HSeparator" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=824791273]
+[node name="HSep" type="HSeparator" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=824791273]
 layout_mode = 2
 
-[node name="ColorHeader" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=832506801]
+[node name="ColorHeader" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=832506801]
 layout_mode = 2
 theme_type_variation = &"GroupHeader"
 text = "COLOR"
 
-[node name="SaturationLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=1860080990]
+[node name="SaturationLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=1860080990]
 layout_mode = 2
 text = "Saturation"
 
-[node name="SaturationRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=473260124]
+[node name="SaturationRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=473260124]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="SaturationSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/SaturationRow" unique_id=530170095]
+[node name="SaturationSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/SaturationRow" unique_id=530170095]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
 value = 25.0
 
-[node name="SaturationValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/SaturationRow" unique_id=1109392230]
+[node name="SaturationValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/SaturationRow" unique_id=1109392230]
 custom_minimum_size = Vector2(52, 0)
 layout_mode = 2
 text = "25.00"
 horizontal_alignment = 2
 
-[node name="VibranceLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=794094281]
+[node name="VibranceLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=794094281]
 layout_mode = 2
 text = "Vibrance"
 
-[node name="VibranceRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=244330596]
+[node name="VibranceRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=244330596]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="VibranceSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/VibranceRow" unique_id=2077643910]
+[node name="VibranceSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/VibranceRow" unique_id=2077643910]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
 value = 25.0
 
-[node name="VibranceValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/VibranceRow" unique_id=1665096158]
+[node name="VibranceValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/VibranceRow" unique_id=1665096158]
 custom_minimum_size = Vector2(52, 0)
 layout_mode = 2
 text = "25.00"
 horizontal_alignment = 2
 
-[node name="WhiteBalanceLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=519775704]
+[node name="WhiteBalanceLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=519775704]
 layout_mode = 2
 text = "White Balance (K)"
 
-[node name="WhiteBalanceRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=1348136188]
+[node name="WhiteBalanceRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=1348136188]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="WhiteBalanceSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WhiteBalanceRow" unique_id=1428931396]
+[node name="WhiteBalanceSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/WhiteBalanceRow" unique_id=1428931396]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
@@ -320,22 +325,22 @@ max_value = 25000.0
 step = 50.0
 value = 6517.0
 
-[node name="WhiteBalanceValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WhiteBalanceRow" unique_id=224940577]
+[node name="WhiteBalanceValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/WhiteBalanceRow" unique_id=224940577]
 custom_minimum_size = Vector2(52, 0)
 layout_mode = 2
 text = "6500K"
 horizontal_alignment = 2
 
-[node name="ViewHeader" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=1316704465]
+[node name="ViewHeader" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=1316704465]
 layout_mode = 2
 theme_type_variation = &"GroupHeader"
 text = "VIEW"
 
-[node name="EditResLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=8641992]
+[node name="EditResLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=8641992]
 layout_mode = 2
 text = "Edit resolution"
 
-[node name="EditResOptionButton" type="OptionButton" parent="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox" unique_id=876332709]
+[node name="EditResOptionButton" type="OptionButton" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=876332709]
 layout_mode = 2
 size_flags_horizontal = 3
 
@@ -385,14 +390,14 @@ use_native_dialog = true
 [connection signal="pressed" from="Root/TopBar/TopBarRow/ThemeButton" to="." method="_on_theme_button_pressed"]
 [connection signal="toggled" from="Root/TopBar/TopBarRow/FitButton" to="." method="_on_fit_button_toggled"]
 [connection signal="value_changed" from="Root/TopBar/TopBarRow/ZoomSlider" to="." method="_on_zoom_slider_value_changed"]
-[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ExposureRow/ExposureSlider" to="." method="_on_exposure_slider_value_changed"]
-[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ContrastRow/ContrastSlider" to="." method="_on_contrast_slider_value_changed"]
-[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/HighlightsRow/HighlightsSlider" to="." method="_on_highlights_slider_value_changed"]
-[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ShadowsRow/ShadowsSlider" to="." method="_on_shadows_slider_value_changed"]
-[connection signal="curve_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ToneCurveEditor" to="." method="_on_tone_curve_changed"]
-[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/SaturationRow/SaturationSlider" to="." method="_on_saturation_slider_value_changed"]
-[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/VibranceRow/VibranceSlider" to="." method="_on_vibrance_slider_value_changed"]
-[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WhiteBalanceRow/WhiteBalanceSlider" to="." method="_on_white_balance_slider_value_changed"]
-[connection signal="item_selected" from="Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/EditResOptionButton" to="." method="_on_edit_res_option_button_item_selected"]
+[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ExposureRow/ExposureSlider" to="." method="_on_exposure_slider_value_changed"]
+[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ContrastRow/ContrastSlider" to="." method="_on_contrast_slider_value_changed"]
+[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/HighlightsRow/HighlightsSlider" to="." method="_on_highlights_slider_value_changed"]
+[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ShadowsRow/ShadowsSlider" to="." method="_on_shadows_slider_value_changed"]
+[connection signal="curve_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ToneCurveEditor" to="." method="_on_tone_curve_changed"]
+[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/SaturationRow/SaturationSlider" to="." method="_on_saturation_slider_value_changed"]
+[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/VibranceRow/VibranceSlider" to="." method="_on_vibrance_slider_value_changed"]
+[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/WhiteBalanceRow/WhiteBalanceSlider" to="." method="_on_white_balance_slider_value_changed"]
+[connection signal="item_selected" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditResOptionButton" to="." method="_on_edit_res_option_button_item_selected"]
 [connection signal="file_selected" from="FileDialog" to="." method="_on_file_dialog_file_selected"]
 [connection signal="file_selected" from="ExportDialog" to="." method="_on_export_dialog_file_selected"]

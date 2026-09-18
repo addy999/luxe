@@ -34,22 +34,22 @@ extends Control
 # whenever the pane goes back to no-image. mouse_filter is IGNORE (set in the
 # scene) so it never blocks anything underneath.
 @onready var empty_state: CenterContainer = $Root/MiddleHBox/EmptyState
-@onready var exposure_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ExposureRow/ExposureSlider
-@onready var exposure_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ExposureRow/ExposureValueLabel
-@onready var contrast_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ContrastRow/ContrastSlider
-@onready var contrast_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ContrastRow/ContrastValueLabel
-@onready var highlights_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/HighlightsRow/HighlightsSlider
-@onready var highlights_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/HighlightsRow/HighlightsValueLabel
-@onready var shadows_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ShadowsRow/ShadowsSlider
-@onready var shadows_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ShadowsRow/ShadowsValueLabel
-@onready var saturation_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/SaturationRow/SaturationSlider
-@onready var saturation_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/SaturationRow/SaturationValueLabel
-@onready var vibrance_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/VibranceRow/VibranceSlider
-@onready var vibrance_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/VibranceRow/VibranceValueLabel
-@onready var tone_curve_editor: ToneCurveEditor = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ToneCurveEditor
-@onready var white_balance_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WhiteBalanceRow/WhiteBalanceSlider
-@onready var white_balance_value_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/WhiteBalanceRow/WhiteBalanceValueLabel
-@onready var edit_res_option: OptionButton = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/EditResOptionButton
+@onready var exposure_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ExposureRow/ExposureSlider
+@onready var exposure_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ExposureRow/ExposureValueLabel
+@onready var contrast_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ContrastRow/ContrastSlider
+@onready var contrast_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ContrastRow/ContrastValueLabel
+@onready var highlights_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/HighlightsRow/HighlightsSlider
+@onready var highlights_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/HighlightsRow/HighlightsValueLabel
+@onready var shadows_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ShadowsRow/ShadowsSlider
+@onready var shadows_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ShadowsRow/ShadowsValueLabel
+@onready var saturation_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/SaturationRow/SaturationSlider
+@onready var saturation_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/SaturationRow/SaturationValueLabel
+@onready var vibrance_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/VibranceRow/VibranceSlider
+@onready var vibrance_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/VibranceRow/VibranceValueLabel
+@onready var tone_curve_editor: ToneCurveEditor = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ToneCurveEditor
+@onready var white_balance_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/WhiteBalanceRow/WhiteBalanceSlider
+@onready var white_balance_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/WhiteBalanceRow/WhiteBalanceValueLabel
+@onready var edit_res_option: OptionButton = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditResOptionButton
 @onready var open_button: Button = $Root/TopBar/TopBarRow/OpenButton
 @onready var export_button: Button = $Root/TopBar/TopBarRow/ExportButton
 @onready var theme_button: Button = $Root/TopBar/TopBarRow/ThemeButton
@@ -644,7 +644,7 @@ func _setup_reset_buttons() -> void:
 
 	# Tone curve: its "Tone Curve" label is a bare Label above the editor, so wrap
 	# label + reset button in a row and drop it in at the label's old slot.
-	var tone_label: Label = $Root/MiddleHBox/RightPanel/PanelMargin/PanelVBox/ToneCurveLabel
+	var tone_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ToneCurveLabel
 	var vbox: Node = tone_label.get_parent()
 	var slot: int = tone_label.get_index()
 	var tone_header := HBoxContainer.new()
