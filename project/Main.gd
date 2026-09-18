@@ -139,6 +139,48 @@ var _params: Dictionary = {
 	"crop": Rect2(0, 0, 1, 1),
 }
 
+# --- Slider offsets vs. module defaults ----------------------------------------
+# Four darktable modules have non-zero DEFAULTS (shadowsandhighlights: shadows
+# +50 / highlights -50, both in -100..100; velvia "strength" 25 in 0..100;
+# vibrance "amount" 25 in 0..100 -- see the introspection notes in
+# dt_backend.h). A fresh darktable load applies those values, so they are the
+# visual "neutral" -- resetting a slider to 0.0 in module units would visibly
+# lift highlights and crush shadows. The UI therefore centers the thumb on
+# neutral: each slider reads an OFFSET in -50..+50 (0 = as darktable loads the
+# image), mapped onto the module's FULL range via _map_offset_to_module().
+#
+# The map is piecewise linear THROUGH the default, not a plain min->max ramp:
+# a straight ramp would put offset 0 at the range midpoint (50 for velvia/
+# vibrance, not their 25 default), changing what a fresh image looks like.
+# Instead the left half of the track spans min->default and the right half
+# spans default->max, so 0 maps exactly to the default AND both extremes of
+# the module's range stay reachable. The cost is non-uniform sensitivity
+# (uneven module units per slider step on each side) -- the deliberate
+# trade-off for full-range coverage with a centered neutral.
+# Only these four keys map through the table; exposure/contrast default to 0
+# and their ranges are symmetric, so their sliders already are offsets.
+
+const _MODULE_RANGES: Dictionary = {
+	# key: [module_min, module_default, module_max]
+	"highlights": [-100.0, -50.0, 100.0],
+	"shadows": [-100.0, 50.0, 100.0],
+	"saturation": [0.0, 25.0, 100.0],
+	"vibrance": [0.0, 25.0, 100.0],
+}
+
+
+# Offset (-50..+50) -> absolute module value, piecewise linear through the
+# default: offset -50 -> module min, 0 -> module default, +50 -> module max.
+func _map_offset_to_module(key: String, offset: float) -> float:
+	var range_vals: Array = _MODULE_RANGES[key]
+	var lo: float = range_vals[0]
+	var dflt: float = range_vals[1]
+	var hi: float = range_vals[2]
+	if offset <= 0.0:
+		return lo + (offset + 50.0) / 50.0 * (dflt - lo)
+	return dflt + offset / 50.0 * (hi - dflt)
+
+
 # Last values actually pushed to the backend, keyed like _params. A key missing
 # here (or one whose _params value differs) is stale and gets pushed by
 # _apply_params_to_backend(). Emptied on image load to force a full sync, since
@@ -498,18 +540,21 @@ func _on_file_dialog_file_selected(path: String) -> void:
 	contrast_slider.value = 0.0
 	contrast_value_label.text = "%.2f" % 0.0
 	_params["contrast"] = 0.0
-	highlights_slider.value = -50.0
-	highlights_value_label.text = "%.2f" % -50.0
-	_params["highlights"] = -50.0
-	shadows_slider.value = 50.0
-	shadows_value_label.text = "%.2f" % 50.0
-	_params["shadows"] = 50.0
-	saturation_slider.value = 25.0
-	saturation_value_label.text = "%.2f" % 25.0
-	_params["saturation"] = 25.0
-	vibrance_slider.value = 25.0
-	vibrance_value_label.text = "%.2f" % 25.0
-	_params["vibrance"] = 25.0
+	# Offset sliders (see _MODULE_RANGES): all four reset to a centered thumb
+	# (offset 0), with _params seeded to the module default so the first render
+	# is exactly what darktable itself would show on a fresh load.
+	highlights_slider.value = 0.0
+	highlights_value_label.text = "%.2f" % 0.0
+	_params["highlights"] = _map_offset_to_module("highlights", 0.0)
+	shadows_slider.value = 0.0
+	shadows_value_label.text = "%.2f" % 0.0
+	_params["shadows"] = _map_offset_to_module("shadows", 0.0)
+	saturation_slider.value = 0.0
+	saturation_value_label.text = "%.2f" % 0.0
+	_params["saturation"] = _map_offset_to_module("saturation", 0.0)
+	vibrance_slider.value = 0.0
+	vibrance_value_label.text = "%.2f" % 0.0
+	_params["vibrance"] = _map_offset_to_module("vibrance", 0.0)
 	tone_curve_editor.reset_to_default()
 	# White balance has no fixed default -- read this image's real as-shot
 	# temperature back from the backend (channelmixerrgb's reload_defaults()
@@ -550,25 +595,25 @@ func _on_contrast_slider_value_changed(value: float) -> void:
 
 func _on_highlights_slider_value_changed(value: float) -> void:
 	highlights_value_label.text = "%.2f" % value
-	_params["highlights"] = value
+	_params["highlights"] = _map_offset_to_module("highlights", value)
 	_request_render()
 
 
 func _on_shadows_slider_value_changed(value: float) -> void:
 	shadows_value_label.text = "%.2f" % value
-	_params["shadows"] = value
+	_params["shadows"] = _map_offset_to_module("shadows", value)
 	_request_render()
 
 
 func _on_saturation_slider_value_changed(value: float) -> void:
 	saturation_value_label.text = "%.2f" % value
-	_params["saturation"] = value
+	_params["saturation"] = _map_offset_to_module("saturation", value)
 	_request_render()
 
 
 func _on_vibrance_slider_value_changed(value: float) -> void:
 	vibrance_value_label.text = "%.2f" % value
-	_params["vibrance"] = value
+	_params["vibrance"] = _map_offset_to_module("vibrance", value)
 	_request_render()
 
 
@@ -617,10 +662,12 @@ func _add_slider_reset(slider: HSlider, default_value: float) -> void:
 func _setup_reset_buttons() -> void:
 	_add_slider_reset(exposure_slider, 0.0)
 	_add_slider_reset(contrast_slider, 0.0)
-	_add_slider_reset(highlights_slider, -50.0)
-	_add_slider_reset(shadows_slider, 50.0)
-	_add_slider_reset(saturation_slider, 25.0)
-	_add_slider_reset(vibrance_slider, 25.0)
+	# Offset sliders reset to a centered thumb (0 = module default); the
+	# value_changed handler adds the default back for _params.
+	_add_slider_reset(highlights_slider, 0.0)
+	_add_slider_reset(shadows_slider, 0.0)
+	_add_slider_reset(saturation_slider, 0.0)
+	_add_slider_reset(vibrance_slider, 0.0)
 
 	# White balance resets to the image's as-shot CCT, not a fixed constant --
 	# the lambda reads _wb_default_temperature live so it tracks the loaded image.
