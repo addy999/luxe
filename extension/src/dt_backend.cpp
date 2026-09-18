@@ -30,6 +30,8 @@ void DtBackend::_bind_methods() {
   ClassDB::bind_method(D_METHOD("set_contrast", "value"), &DtBackend::set_contrast);
   ClassDB::bind_method(D_METHOD("set_shadows", "value"), &DtBackend::set_shadows);
   ClassDB::bind_method(D_METHOD("set_highlights", "value"), &DtBackend::set_highlights);
+  ClassDB::bind_method(D_METHOD("set_blacks", "value"), &DtBackend::set_blacks);
+  ClassDB::bind_method(D_METHOD("set_whites", "value"), &DtBackend::set_whites);
   ClassDB::bind_method(D_METHOD("set_saturation", "value"), &DtBackend::set_saturation);
   ClassDB::bind_method(D_METHOD("set_desaturation", "amount"), &DtBackend::set_desaturation);
   ClassDB::bind_method(D_METHOD("set_vibrance", "value"), &DtBackend::set_vibrance);
@@ -558,6 +560,7 @@ bool DtBackend::load_image(String path) {
   exposure_module = nullptr;
   colorbalance_module = nullptr;
   shadhi_module = nullptr;
+  toneequal_module = nullptr;
   velvia_module = nullptr;
   monochrome_module = nullptr;
   vibrance_module = nullptr;
@@ -683,6 +686,100 @@ void DtBackend::set_highlights(float value) {
 
   dt_dev_add_history_item_ext(&dev, shadhi_module, TRUE, TRUE);
   note_pipe_change(shadhi_module);
+}
+
+// Blacks/Whites: same Section F pattern, driving toneequal ("tone
+// equalizer") band gains rather than endpoint points. The UI passes a
+// two-sided -1..1 (0 = neutral). Blacks maps to the FULL ±2 EV band gain
+// (at ±1 EV it felt weaker than the shadhi-backed Shadows slider; ±2 EV
+// matches its punch), Whites stays at ±1 EV (the module allows ±2 EV per
+// band, but full range proved too extreme on the whites side). Band
+// mapping: Blacks -> `blacks` (the -5 EV
+// band), Whites -> `whites` (the -1 EV band), toneequal.c:176/180. SIGN
+// INVERSION on Blacks: a positive toneequal gain LIFTS its band, but
+// Lightroom's positive Blacks DEEPENS blacks, so set_blacks writes -value
+// (UI +1 -> module gain -1 EV -> darker shadows; UI -1 -> +1 EV -> lifted,
+// washed-out blacks). Whites passes straight through (+1 -> brighter whites).
+// Mask machinery is pinned to the "simple tone curve" preset
+// (toneequal.c:480-491) with details = DT_TONEEQ_NONE so the module is a
+// plain global tone curve: no guided filter, no ROI padding, no detail
+// preservation side effects. Both setters disable toneequal at neutral so
+// it costs nothing in the pipe, mirroring set_crop()'s full-frame case.
+void DtBackend::set_blacks(float value) {
+  if(!image_loaded) {
+    UtilityFunctions::printerr("DtBackend::set_blacks: no image loaded");
+    return;
+  }
+
+  if(value < -1.0f) value = -1.0f;
+  if(value > 1.0f) value = 1.0f;
+
+  if(!toneequal_module) {
+    toneequal_module = dt_iop_get_module_from_list(dev.iop, "toneequal");
+    if(!toneequal_module) {
+      UtilityFunctions::printerr("DtBackend::set_blacks: could not find \"toneequal\" module in dev.iop");
+      return;
+    }
+  }
+
+  dt_iop_toneequalizer_params_t *p = (dt_iop_toneequalizer_params_t *)toneequal_module->params;
+  // Pin the mask machinery to the "simple tone curve" preset state so a
+  // fresh params blob is always in a known state.
+  p->details = DT_TONEEQ_NONE;
+  p->method = 4; // DT_TONEEQ_NORM_2 (RGB euclidean norm)
+  p->iterations = 1;
+  p->blending = 5.0f;
+  p->smoothing = 1.414213562f;
+  p->feathering = 1.0f;
+  p->quantization = 0.0f;
+  p->contrast_boost = 0.0f;
+  p->exposure_boost = 0.0f;
+
+  // Sign-inverted, full ±2 EV: see the comment above.
+  // UI -1..1 -> module gain +2..-2 EV.
+  p->blacks = -value * 2.0f;
+
+  toneequal_module->enabled = (value != 0.0f) ? TRUE : FALSE;
+  dt_dev_add_history_item_ext(&dev, toneequal_module, TRUE, TRUE);
+  note_pipe_change(toneequal_module);
+}
+
+void DtBackend::set_whites(float value) {
+  if(!image_loaded) {
+    UtilityFunctions::printerr("DtBackend::set_whites: no image loaded");
+    return;
+  }
+
+  if(value < -1.0f) value = -1.0f;
+  if(value > 1.0f) value = 1.0f;
+
+  if(!toneequal_module) {
+    toneequal_module = dt_iop_get_module_from_list(dev.iop, "toneequal");
+    if(!toneequal_module) {
+      UtilityFunctions::printerr("DtBackend::set_whites: could not find \"toneequal\" module in dev.iop");
+      return;
+    }
+  }
+
+  dt_iop_toneequalizer_params_t *p = (dt_iop_toneequalizer_params_t *)toneequal_module->params;
+  // Same preset pinning as set_blacks (whichever setter runs first puts the
+  // blob in a known state; the other re-asserts it).
+  p->details = DT_TONEEQ_NONE;
+  p->method = 4; // DT_TONEEQ_NORM_2 (RGB euclidean norm)
+  p->iterations = 1;
+  p->blending = 5.0f;
+  p->smoothing = 1.414213562f;
+  p->feathering = 1.0f;
+  p->quantization = 0.0f;
+  p->contrast_boost = 0.0f;
+  p->exposure_boost = 0.0f;
+
+  // Straight through: UI +1 -> +1 EV on the whites band (brighter whites).
+  p->whites = value;
+
+  toneequal_module->enabled = (value != 0.0f) ? TRUE : FALSE;
+  dt_dev_add_history_item_ext(&dev, toneequal_module, TRUE, TRUE);
+  note_pipe_change(toneequal_module);
 }
 
 // Section F, same pattern as set_exposure(): locate the velvia ("saturation
@@ -1400,6 +1497,7 @@ void DtBackend::cleanup() {
     exposure_module = nullptr;
     colorbalance_module = nullptr;
     shadhi_module = nullptr;
+    toneequal_module = nullptr;
     velvia_module = nullptr;
   monochrome_module = nullptr;
     vibrance_module = nullptr;
@@ -1444,6 +1542,7 @@ void DtBackend::unload_image() {
   exposure_module = nullptr;
   colorbalance_module = nullptr;
   shadhi_module = nullptr;
+  toneequal_module = nullptr;
   velvia_module = nullptr;
   monochrome_module = nullptr;
   vibrance_module = nullptr;

@@ -163,6 +163,65 @@ typedef struct dt_iop_shadhi_params_t
   dt_iop_shadhi_algo_t shadhi_algo;
 } dt_iop_shadhi_params_t;
 
+// dt_iop_toneequalizer_params_t is likewise private to
+// source/src/iop/toneequal.c, so it's redeclared here to match that file
+// exactly (source/src/iop/toneequal.c:171-193, DT_MODULE_INTROSPECTION
+// version 2). This module backs the app's "Blacks"/"Whites" sliders, which
+// need TWO-SIDED control (Lightroom semantics: positive Whites brightens,
+// positive Blacks deepens). It replaced rgblevels, whose black/white POINT
+// fields are hard-bounded to 0..1 (RGBLEVELS_MIN/MAX, rgblevels.c:36-38) and
+// at neutral already sit AT those extremes, so there was no field to write
+// for "expand the range" -- Whites could only compress the white point down,
+// which read as broken in the UI. toneequal exposes nine 1-EV-band gain
+// fields, all two-sided (-2..+2 EV, default 0, zero coupling); we drive
+// `whites` (the -1 EV band, toneequal.c:180) and `blacks` (the -5 EV band,
+// toneequal.c:176). NOTE THE SIGN: a positive EV gain LIFTS its band, but
+// Lightroom's positive Blacks DEEPENS blacks, so the Blacks setter writes
+// -value (sign-inverted); Whites writes +value straight through. The UI range
+// is -1..1; Blacks maps to the FULL ±2 EV band gain (at ±1 EV it felt weaker
+// than the shadhi-backed Shadows slider), Whites to ±1 EV. Mask machinery
+// is pinned to the
+// module's "simple tone curve" preset values (toneequal.c:480-491): details =
+// DT_TONEEQ_NONE (no guided filter -- global tone curve, cheap and free of
+// side effects), method = DT_TONEEQ_NORM_2 (dt_iop_luminance_mask_method_t,
+// source/src/common/luminance_mask.h:39-49, 4-byte enum, RGB euclidean norm =
+// 4), iterations = 1, all boost fields 0. blending/feathering/quantization/
+// smoothing are ignored by DT_TONEEQ_NONE but set to preset defaults anyway
+// so the params blob always matches a known state. Every field is 4 bytes, so
+// the layout is padding-free. If toneequal.c's struct or introspection
+// version changes upstream, update this block.
+
+typedef enum dt_iop_toneequalizer_filter_t
+{
+  DT_TONEEQ_NONE = 0,
+  DT_TONEEQ_AVG_GUIDED,
+  DT_TONEEQ_GUIDED,
+  DT_TONEEQ_AVG_EIGF,
+  DT_TONEEQ_EIGF
+} dt_iop_toneequalizer_filter_t;
+
+typedef struct dt_iop_toneequalizer_params_t
+{
+  float noise;              // $MIN: -2.0 $MAX: 2.0 $DEFAULT: 0.0 ("blacks")
+  float ultra_deep_blacks;  // $MIN: -2.0 $MAX: 2.0 $DEFAULT: 0.0 ("deep shadows")
+  float deep_blacks;        // $MIN: -2.0 $MAX: 2.0 $DEFAULT: 0.0 ("shadows")
+  float blacks;             // $MIN: -2.0 $MAX: 2.0 $DEFAULT: 0.0 ("light shadows")
+  float shadows;            // $MIN: -2.0 $MAX: 2.0 $DEFAULT: 0.0 ("mid-tones")
+  float midtones;           // $MIN: -2.0 $MAX: 2.0 $DEFAULT: 0.0 ("dark highlights")
+  float highlights;         // $MIN: -2.0 $MAX: 2.0 $DEFAULT: 0.0 ("highlights")
+  float whites;             // $MIN: -2.0 $MAX: 2.0 $DEFAULT: 0.0 ("whites")
+  float speculars;          // $MIN: -2.0 $MAX: 2.0 $DEFAULT: 0.0 ("speculars")
+  float blending;           // $MIN: 0.01 $MAX: 100.0 $DEFAULT: 5.0
+  float smoothing;          // $DEFAULT: sqrt(2)
+  float feathering;         // $MIN: 0.01 $MAX: 10000.0 $DEFAULT: 1.0
+  float quantization;       // $MIN: 0.0 $MAX: 2.0 $DEFAULT: 0.0
+  float contrast_boost;     // $MIN: -16.0 $MAX: 16.0 $DEFAULT: 0.0
+  float exposure_boost;     // $MIN: -16.0 $MAX: 16.0 $DEFAULT: 0.0
+  dt_iop_toneequalizer_filter_t details; // $DEFAULT: DT_TONEEQ_EIGF (we pin NONE)
+  int method;               // dt_iop_luminance_mask_method_t, $DEFAULT: DT_TONEEQ_NORM_2 (4)
+  int iterations;           // $MIN: 1 $MAX: 20 $DEFAULT: 1
+} dt_iop_toneequalizer_params_t;
+
 // dt_iop_velvia_params_t is likewise private to source/src/iop/velvia.c, so
 // it's redeclared here to match that file exactly (source/src/iop/velvia.c:
 // 40-44, DT_MODULE_INTROSPECTION version 2). We only drive `strength` ($MIN:
@@ -494,6 +553,9 @@ private:
   dt_iop_module_t *exposure_module = nullptr;
   dt_iop_module_t *colorbalance_module = nullptr;
   dt_iop_module_t *shadhi_module = nullptr;
+  // toneequal ("tone equalizer") backs the Blacks/Whites sliders -- see the
+  // dt_iop_toneequalizer_params_t redeclaration above.
+  dt_iop_module_t *toneequal_module = nullptr;
   dt_iop_module_t *velvia_module = nullptr;
   // monochrome backs the saturation slider's BELOW-neutral range only -- see
   // set_saturation() in dt_backend.cpp for how the two modules split the range.
@@ -610,6 +672,16 @@ public:
   void set_contrast(float value);
   void set_shadows(float value);
   void set_highlights(float value);
+  // Blacks/Whites: Lightroom-style two-sided sliders driven via toneequal's
+  // 1-EV-band gains (see the dt_iop_toneequalizer_params_t redeclaration
+  // above). This replaced the earlier rgblevels wiring, whose 0..1-bounded
+  // endpoints could only move one way, so Whites-up had nothing to push and
+  // the slider read as broken. Both setters take -1..1 and write ±1 EV into
+  // their band. Sign note: positive Blacks in Lightroom DEEPENS blacks, but a
+  // positive toneequal gain LIFTS its band, so set_blacks writes -value.
+  // Neutral (0) disables toneequal so it costs nothing in the pipe.
+  void set_blacks(float value);
+  void set_whites(float value);
   void set_saturation(float value);
   // The saturation axis's below-neutral half. `amount` is the desaturation
   // amount in 0..1: 0 disables monochrome entirely (full color, the neutral

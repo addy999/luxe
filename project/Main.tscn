@@ -250,6 +250,50 @@ layout_mode = 2
 text = "0.00"
 horizontal_alignment = 2
 
+[node name="BlacksLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=281190547]
+layout_mode = 2
+text = "Blacks"
+
+[node name="BlacksRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=510829436]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="BlacksSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/BlacksRow" unique_id=733128590]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 4
+min_value = -1.0
+max_value = 1.0
+step = 0.01
+
+[node name="BlacksValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/BlacksRow" unique_id=912573481]
+custom_minimum_size = Vector2(52, 0)
+layout_mode = 2
+text = "0.00"
+horizontal_alignment = 2
+
+[node name="WhitesLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=610952028]
+layout_mode = 2
+text = "Whites"
+
+[node name="WhitesRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=443807592]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="WhitesSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/WhitesRow" unique_id=906548217]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 4
+min_value = -1.0
+max_value = 1.0
+step = 0.01
+
+[node name="WhitesValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/WhitesRow" unique_id=159772406]
+custom_minimum_size = Vector2(52, 0)
+layout_mode = 2
+text = "0.00"
+horizontal_alignment = 2
+
 [node name="ToneCurveLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=1464777149]
 layout_mode = 2
 text = "Tone Curve"
@@ -390,6 +434,8 @@ use_native_dialog = true
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ContrastRow/ContrastSlider" to="." method="_on_contrast_slider_value_changed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/HighlightsRow/HighlightsSlider" to="." method="_on_highlights_slider_value_changed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ShadowsRow/ShadowsSlider" to="." method="_on_shadows_slider_value_changed"]
+[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/BlacksRow/BlacksSlider" to="." method="_on_blacks_slider_value_changed"]
+[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/WhitesRow/WhitesSlider" to="." method="_on_whites_slider_value_changed"]
 [connection signal="curve_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ToneCurveEditor" to="." method="_on_tone_curve_changed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/SaturationRow/SaturationSlider" to="." method="_on_saturation_slider_value_changed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/VibranceRow/VibranceSlider" to="." method="_on_vibrance_slider_value_changed"]

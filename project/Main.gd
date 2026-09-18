@@ -52,6 +52,10 @@ extends Control
 @onready var highlights_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/HighlightsRow/HighlightsValueLabel
 @onready var shadows_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ShadowsRow/ShadowsSlider
 @onready var shadows_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ShadowsRow/ShadowsValueLabel
+@onready var blacks_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/BlacksRow/BlacksSlider
+@onready var blacks_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/BlacksRow/BlacksValueLabel
+@onready var whites_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/WhitesRow/WhitesSlider
+@onready var whites_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/WhitesRow/WhitesValueLabel
 @onready var saturation_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/SaturationRow/SaturationSlider
 @onready var saturation_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/SaturationRow/SaturationValueLabel
 @onready var vibrance_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/VibranceRow/VibranceSlider
@@ -121,6 +125,15 @@ var _params: Dictionary = {
 	"contrast": 0.0,
 	"highlights": -50.0,
 	"shadows": 50.0,
+	# Blacks/Whites: two-sided -1..1 strengths driving toneequal's 1-EV band
+	# gains (see dt_backend.h's dt_iop_toneequalizer_params_t note). Blacks
+	# writes the -5 EV band sign-inverted (Lightroom's positive Blacks deepens
+	# blacks; a positive toneequal gain lifts its band), Whites writes the
+	# -1 EV band straight through. Unlike the _MODULE_RANGES keys these are
+	# already in the backend's expected units, so the callbacks write the
+	# slider value straight through -- the band math lives in the C++ setter.
+	"blacks": 0.0,
+	"whites": 0.0,
 	"saturation": 25.0,
 	# Desaturation amount 0..1 driving the monochrome module's blend opacity
 	# (see _on_saturation_slider_value_changed below) -- the saturation slider's
@@ -410,6 +423,8 @@ func _init_backend() -> bool:
 		contrast_slider.editable = false
 		highlights_slider.editable = false
 		shadows_slider.editable = false
+		blacks_slider.editable = false
+		whites_slider.editable = false
 		saturation_slider.editable = false
 		vibrance_slider.editable = false
 		white_balance_slider.editable = false
@@ -424,6 +439,8 @@ func _finish_ready() -> void:
 	contrast_value_label.text = "%.2f" % contrast_slider.value
 	highlights_value_label.text = "%.2f" % highlights_slider.value
 	shadows_value_label.text = "%.2f" % shadows_slider.value
+	blacks_value_label.text = "%.2f" % blacks_slider.value
+	whites_value_label.text = "%.2f" % whites_slider.value
 	saturation_value_label.text = "%.2f" % saturation_slider.value
 	vibrance_value_label.text = "%.2f" % vibrance_slider.value
 	white_balance_value_label.text = "%dK" % roundi(white_balance_slider.value)
@@ -553,6 +570,12 @@ func _on_file_dialog_file_selected(path: String) -> void:
 	shadows_slider.value = 0.0
 	shadows_value_label.text = "%.2f" % 0.0
 	_params["shadows"] = _map_offset_to_module("shadows", 0.0)
+	blacks_slider.value = 0.0
+	blacks_value_label.text = "%.2f" % 0.0
+	_params["blacks"] = 0.0
+	whites_slider.value = 0.0
+	whites_value_label.text = "%.2f" % 0.0
+	_params["whites"] = 0.0
 	saturation_slider.value = 0.0
 	saturation_value_label.text = "%.2f" % 0.0
 	_params["saturation"] = _map_offset_to_module("saturation", 0.0)
@@ -607,6 +630,22 @@ func _on_highlights_slider_value_changed(value: float) -> void:
 func _on_shadows_slider_value_changed(value: float) -> void:
 	shadows_value_label.text = "%.2f" % value
 	_params["shadows"] = _map_offset_to_module("shadows", value)
+	_request_render()
+
+
+func _on_blacks_slider_value_changed(value: float) -> void:
+	# The slider is drag-inverted per request: dragging LEFT (negative) is
+	# "more black" (deeper shadows), dragging RIGHT is "less black" (lifted).
+	# The backend's set_blacks() is the opposite sign, so negate here and keep
+	# the label showing the raw slider position.
+	blacks_value_label.text = "%.2f" % value
+	_params["blacks"] = -value
+	_request_render()
+
+
+func _on_whites_slider_value_changed(value: float) -> void:
+	whites_value_label.text = "%.2f" % value
+	_params["whites"] = value
 	_request_render()
 
 
@@ -683,6 +722,8 @@ func _setup_reset_buttons() -> void:
 	# value_changed handler adds the default back for _params.
 	_add_slider_reset(highlights_slider, 0.0)
 	_add_slider_reset(shadows_slider, 0.0)
+	_add_slider_reset(blacks_slider, 0.0)
+	_add_slider_reset(whites_slider, 0.0)
 	_add_slider_reset(saturation_slider, 0.0)
 	_add_slider_reset(vibrance_slider, 0.0)
 
@@ -817,6 +858,10 @@ func _apply_params_to_backend() -> void:
 		backend.set_highlights(_params["highlights"])
 	if _params_differ("shadows"):
 		backend.set_shadows(_params["shadows"])
+	if _params_differ("blacks"):
+		backend.set_blacks(_params["blacks"])
+	if _params_differ("whites"):
+		backend.set_whites(_params["whites"])
 	if _params_differ("saturation"):
 		backend.set_saturation(_params["saturation"])
 	if _params_differ("desaturation"):
@@ -1296,6 +1341,8 @@ func _on_export_dialog_file_selected(path: String) -> void:
 	contrast_slider.editable = false
 	highlights_slider.editable = false
 	shadows_slider.editable = false
+	blacks_slider.editable = false
+	whites_slider.editable = false
 	saturation_slider.editable = false
 	vibrance_slider.editable = false
 	white_balance_slider.editable = false
@@ -1317,6 +1364,8 @@ func _on_export_done(ok: bool, path: String) -> void:
 	contrast_slider.editable = true
 	highlights_slider.editable = true
 	shadows_slider.editable = true
+	blacks_slider.editable = true
+	whites_slider.editable = true
 	saturation_slider.editable = true
 	vibrance_slider.editable = true
 	white_balance_slider.editable = true
