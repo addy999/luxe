@@ -1,0 +1,58 @@
+#!/bin/bash
+# Pre-commit hook: rebuild the Godot GDExtension when its sources changed,
+# so a commit never contains code that doesn't match the built framework.
+#
+# Runs `scons arch=arm64` in extension/ only when a staged file touches
+# extension/src, extension/SConstruct, or extension/dt_link_flags.json.
+# Skips entirely (exit 0) if the extension dir is missing.
+#
+# Skip for a WIP commit with:  git commit --no-verify
+
+set -uo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+EXT_DIR="$ROOT/extension"
+FRAMEWORK="$ROOT/project/bin/libdt_backend.macos.template_debug.framework"
+
+[ -d "$EXT_DIR" ] || exit 0
+
+# Only rebuild if staged changes touch the extension's build inputs.
+STAGED_EXT=$(git diff --cached --name-only --diff-filter=ACMR -- 'extension/src' 'extension/SConstruct' 'extension/dt_link_flags.json')
+if [ -z "$STAGED_EXT" ]; then
+  exit 0
+fi
+
+# Already fresh? (newest staged source older than the built binary)
+NEWEST_SRC_MTIME=0
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  m=$(stat -f %m "$f" 2>/dev/null || echo 0)
+  [ "$m" -gt "$NEWEST_SRC_MTIME" ] && NEWEST_SRC_MTIME=$m
+done <<< "$STAGED_EXT"
+
+if [ -x "$FRAMEWORK/libdt_backend.macos.template_debug" ]; then
+  BIN_MTIME=$(stat -f %m "$FRAMEWORK/libdt_backend.macos.template_debug" 2>/dev/null || echo 0)
+  if [ "$BIN_MTIME" -ge "$NEWEST_SRC_MTIME" ]; then
+    exit 0
+  fi
+fi
+
+echo "pre-commit: extension sources changed, rebuilding GDExtension (this can take a minute)..."
+echo "pre-commit: changed: $STAGED_EXT"
+
+if ! (cd "$EXT_DIR" && scons arch=arm64 -j"$(sysctl -n hw.ncpu)"); then
+  echo ""
+  echo "pre-commit: scons build FAILED. Commit aborted."
+  echo "pre-commit: fix the build, or bypass with: git commit --no-verify"
+  exit 1
+fi
+
+if [ ! -x "$FRAMEWORK/libdt_backend.macos.template_debug" ]; then
+  echo "pre-commit: scons reported success but the framework binary is missing at"
+  echo "pre-commit:   $FRAMEWORK"
+  echo "pre-commit: commit aborted."
+  exit 1
+fi
+
+echo "pre-commit: GDExtension rebuilt OK."
+exit 0
