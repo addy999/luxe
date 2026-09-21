@@ -136,14 +136,10 @@ var _params: Dictionary = {
 	# slider value straight through -- the band math lives in the C++ setter.
 	"blacks": 0.0,
 	"whites": 0.0,
-	# Dehaze: UI units -1..1 (0 neutral). _apply_params_to_backend() scales
-	# this by 0.5 before it reaches the backend's set_dehaze(), because the
-	# module's raw upper half (strength >~0.5) is where the dark-channel A0
-	# estimate fails on window-lit interiors (teal cast, crushed shadows).
-	# 0.0 is an exact no-op in the module's process() and disables it (see
-	# set_dehaze in dt_backend.cpp); the module's introspection default 0.2
-	# is NOT this app's fresh-image value (hazeremoval is not auto-enabled on
-	# a fresh darktable image).
+	# Dehaze: UI units -1..1 (0 neutral), written straight through to
+	# backend.set_dehaze(). NOT the darktable hazeremoval module: the backend
+	# runs its own hue-safe dark-channel dehaze as a post-pipe stage (see
+	# set_dehaze in dt_backend.cpp) -- no darktable module changes hue here.
 	"dehaze": 0.0,
 	"saturation": 25.0,
 	# Desaturation amount 0..1 driving the monochrome module's blend opacity
@@ -885,9 +881,7 @@ func _apply_params_to_backend() -> void:
 	if _params_differ("whites"):
 		backend.set_whites(_params["whites"])
 	if _params_differ("dehaze"):
-		# Soft cap: UI -1..1 -> module strength -0.5..+0.5 (see the _params
-		# comment above for why the raw upper half is unusable).
-		backend.set_dehaze(_params["dehaze"] * 0.5)
+		backend.set_dehaze(_params["dehaze"])
 	if _params_differ("saturation"):
 		backend.set_saturation(_params["saturation"])
 	if _params_differ("desaturation"):

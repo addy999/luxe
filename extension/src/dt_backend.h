@@ -266,26 +266,6 @@ typedef struct dt_iop_vibrance_params_t
   float amount;
 } dt_iop_vibrance_params_t;
 
-// dt_iop_hazeremoval_params_t is likewise private to
-// source/src/iop/hazeremoval.c, so it's redeclared here to match that file
-// exactly (source/src/iop/hazeremoval.c:60-70, DT_MODULE_INTROSPECTION
-// version 3). We only drive `strength` ($MIN: -1.0 $MAX: 1.0 $DEFAULT: 0.2),
-// the "Dehaze" slider; the other three fields are left at introspection
-// defaults. The whole struct is reproduced verbatim -- field order/types are
-// load-bearing (opaque void* params blob indexed by offset). Every field is
-// 4 bytes (float or gboolean), so the layout is padding-free. The module
-// implements no commit_params() (hazeremoval.c:72-74: "params and data are
-// equal"), so process() reads the `strength` written here directly. If
-// hazeremoval.c's struct or introspection version changes upstream, update
-// this block.
-typedef struct dt_iop_hazeremoval_params_t
-{
-  float strength;
-  float distance;
-  gboolean compatibility_mode;
-  gboolean adaptive;
-} dt_iop_hazeremoval_params_t;
-
 // NOTE on white balance (see docs/DARKTABLE_API_NOTES.md section F,
 // channelmixerrgb subsection, and the migration writeup this comment
 // summarizes): earlier revisions of this backend drove `temperature.c`'s
@@ -587,9 +567,6 @@ private:
   // dt_iop_channelmixer_rgb_params_t.
   dt_iop_module_t *channelmixer_rgb_module = nullptr;
   dt_iop_module_t *clipping_module = nullptr;
-  // hazeremoval ("haze removal") backs the Dehaze slider -- see the
-  // dt_iop_hazeremoval_params_t redeclaration above.
-  dt_iop_module_t *hazeremoval_module = nullptr;
 
   int processed_width = 0;
   int processed_height = 0;
@@ -714,7 +691,36 @@ public:
   // its blend parameters rather than any of its own fields -- see the note on
   // dt_iop_monochrome_params_t above.
   void set_desaturation(float amount);
+  // Dehaze is NOT the darktable "hazeremoval" module: that module estimates a
+  // per-channel ambient light A0 from the haziest pixels with no chroma
+  // constraint, so on scenes whose haziest region is tinted (green window
+  // blinds, warm sky) it multiplies each channel by a different 1/t and casts
+  // the whole frame teal or pink. Nothing downstream of it can undo that
+  // (casts from a per-pixel 1/t are spatial, not global). Instead set_dehaze
+  // stores the slider value and _apply_dehaze() runs OUR dark-channel-prior
+  // dehaze as a post-pipe stage on the rendered buffer. Hue-safe by
+  // construction: A0 is forced achromatic (single scalar) and every pixel
+  // gets out = (in - A)/t + A with the SAME scalar t per pixel applied to all
+  // three channels, so channel RATIOS (hue) are preserved at every strength,
+  // on any scene. value is -1..1 (0 = neutral, exact passthrough).
   void set_dehaze(float value);
+  // Run the dehaze stage over an RGBA8 gamma-encoded buffer in place.
+  // dehaze_value == 0 leaves the buffer untouched. Shared by render_pipe_roi
+  // (preview/view) and export_image so exports match what the user sees.
+  void _apply_dehaze(uint8_t *rgba8, int width, int height) const;
+  // Dark-channel-prior estimate of the achromatic ambient light A (0..1) for
+  // one RGBA8 buffer, and caching of it per image. Not exposed to GDScript.
+  float _estimate_dehaze_ambient(const uint8_t *rgba8, int width, int height) const;
+  // Slider value (-1..1, 0 = neutral) stored by set_dehaze and consumed by
+  // _apply_dehaze at render time. Not a module param: no darktable module is
+  // involved (see the set_dehaze comment).
+  float dehaze_value = 0.0f;
+  // Cached achromatic ambient A (linear luma 0..1), measured on the first
+  // non-neutral dehaze render of the current pipe state; 0 = not yet
+  // measured. Invalidated by note_pipe_change on any other module's edit,
+  // and by export_image's full-res re-estimate. mutable because _apply_dehaze
+  // is const and estimates it lazily.
+  mutable float _dehaze_ambient = 0.0f;
   void set_vibrance(float value);
   // White balance via channelmixerrgb's chromatic adaptation -- see the NOTE
   // on white balance above dt_iop_channelmixer_rgb_params_t. Sets illuminant

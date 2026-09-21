@@ -1,11 +1,12 @@
 extends SceneTree
 
 # Dehaze verification: load the fixture RAW, render the neutral frame, then
-# drive the "hazeremoval" module's `strength` (see dt_backend.h's
-# dt_iop_hazeremoval_params_t note and set_dehaze in dt_backend.cpp).
-# set_dehaze(1.0) removes haze (typically RAISES contrast, moves the mean),
-# set_dehaze(-1.0) ADDS haze (pulls pixels toward the ambient color A0).
-# strength == 0 is an exact no-op and disables the module. Asserts:
+# exercise the backend's OWN hue-safe dehaze post-stage (see set_dehaze and
+# _apply_dehaze in dt_backend.cpp; no darktable module is involved).
+# set_dehaze(1.0) removes haze, set_dehaze(-1.0) adds it. Hue safety is the
+# core property: for each pixel the per-channel RANK ORDER of channel values
+# (which determines hue) must be unchanged -- the stage applies the same
+# scalar affine map to all three channels. Asserts:
 #   1) dehaze=1.0 visibly changes the frame vs. neutral
 #   2) dehaze=-1.0 differs from the +1.0 frame (negative direction wired)
 #   3) dehaze=0 restores the neutral frame (mean within tolerance)
@@ -27,6 +28,55 @@ func _mean_luma(data: PackedByteArray, w: int, h: int) -> float:
 	if n == 0:
 		return -1.0
 	return sum / n
+
+
+# Compare the channel ranking (which channel is largest/middle/smallest) for
+# sampled pixels between two same-size frames. The dehaze map out =
+# (in - A)/t + A with scalar t preserves strict orderings; ties (within a
+# small epsilon) are treated as wildcard.
+func _channel_orders_preserved(a: PackedByteArray, b: PackedByteArray, w: int, h: int) -> bool:
+	var n: int = w * h
+	if a.size() < n * 4 or b.size() < n * 4:
+		return false
+	for k in range(0, n, 997):
+		var ar: float = a[k * 4]
+		var ag: float = a[k * 4 + 1]
+		var ab: float = a[k * 4 + 2]
+		var br: float = b[k * 4]
+		var bg: float = b[k * 4 + 1]
+		var bb: float = b[k * 4 + 2]
+		# channel with max value must agree when the neutral pixel's max
+		# channel is strictly dominant (>= 8/255 above the runner-up), same
+		# for min. Near-neutral pixels (all channels within 8) are skipped.
+		var avals: Array = [ar, ag, ab]
+		var bvals: Array = [br, bg, bb]
+		var amax: float = max(ar, max(ag, ab))
+		var amin: float = min(ar, min(ag, ab))
+		if amax - amin <= 8.0:
+			continue
+		var amaxc: int = 0
+		for c in 3:
+			if avals[c] == amax:
+				amaxc = c
+		var aminc: int = 0
+		for c in 3:
+			if avals[c] == amin:
+				aminc = c
+		var bmax: float = max(br, max(bg, bb))
+		var bmin: float = min(br, min(bg, bb))
+		var bmaxc: int = 0
+		for c in 3:
+			if bvals[c] == bmax:
+				bmaxc = c
+		var bminc: int = 0
+		for c in 3:
+			if bvals[c] == bmin:
+				bminc = c
+		if bvals[amaxc] < bmax - 4.0:
+			return false
+		if bvals[aminc] > bmin + 4.0:
+			return false
+	return true
 
 
 func _die(msg: String) -> void:
@@ -79,6 +129,16 @@ func _initialize() -> void:
 	var reset: PackedByteArray = backend.render_view(1000000, 1000000, 0.5, 0.0, 0.0)
 	var reset_luma: float = _mean_luma(reset, nw, nh)
 	print("DEHAZE_SMOKE: reset frame, mean luma %.3f" % reset_luma)
+
+	# Hue-preservation probe: sample pixels and assert the channel order
+	# (R>=G>=B or permutations) is identical between neutral and dehazed
+	# frames. A hue rotation or cast would flip some pair.
+	if not _channel_orders_preserved(neutral, dehazed, nw, nh):
+		_die("dehaze=1.0 changed pixel hue (channel order flipped)")
+		return
+	if not _channel_orders_preserved(neutral, hazed, nw, nh):
+		_die("dehaze=-1.0 changed pixel hue (channel order flipped)")
+		return
 
 	if absf(dehazed_luma - neutral_luma) < 1.0:
 		_die("dehaze=1.0 did not change the frame (luma %.3f vs neutral %.3f)" % [dehazed_luma, neutral_luma])

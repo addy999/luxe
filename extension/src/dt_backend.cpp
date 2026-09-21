@@ -5,6 +5,7 @@
 #include "dt_backend.h"
 
 #include <godot_cpp/classes/os.hpp>
+#include <godot_cpp/classes/image.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
@@ -22,12 +23,30 @@ extern "C" {
 
 using namespace godot;
 
-// Dehaze color-compensation constants, paired with colorbalancergb's global
-// offset (see set_dehaze). Chroma per unit of module strength; hues in the
-// module's degree ring (0 = warm/pink, 180 = teal).
-static constexpr float DEHAZE_CORRECTION_CHROMA = 0.005f;
-static constexpr float DEHAZE_CORRECTION_WARM_HUE = 0.0f;
-static constexpr float DEHAZE_CORRECTION_COOL_HUE = 180.0f;
+// sRGB <-> linear lookup tables for the dehaze post-stage (_apply_dehaze).
+// Decode is exact per 8-bit sRGB value; encode is a 4096-entry linear-in
+// table indexed by the top 12 bits of the linear float (saturating beyond
+// 1.0), which is well within 8-bit rounding error.
+namespace dt_dehaze_lut {
+static float _dt_srgb_to_linear[256];
+static uint8_t _dt_linear_to_srgb[4096];
+static const bool _init = []() {
+  for(int v = 0; v < 256; v++) {
+    const float c = v / 255.0f;
+    _dt_srgb_to_linear[v] = (c <= 0.04045f) ? c / 12.92f
+                                            : powf((c + 0.055f) / 1.055f, 2.4f);
+  }
+  for(int i = 0; i < 4096; i++) {
+    const float l = i / 4095.0f;
+    const float s = (l <= 0.0031308f) ? l * 12.92f
+                                      : 1.055f * powf(l, 1.0f / 2.4f) - 0.055f;
+    int v = (int)std::lrint(s * 255.0f);
+    _dt_linear_to_srgb[i] = (uint8_t)std::clamp(v, 0, 255);
+  }
+  return true;
+}();
+} // namespace dt_dehaze_lut
+using namespace dt_dehaze_lut;
 
 void DtBackend::_bind_methods() {
   ClassDB::bind_method(D_METHOD("init", "display_width", "display_height"), &DtBackend::init,
@@ -575,7 +594,8 @@ bool DtBackend::load_image(String path) {
   tonecurve_module = nullptr;
   channelmixer_rgb_module = nullptr;
   clipping_module = nullptr;
-  hazeremoval_module = nullptr;
+  _dehaze_ambient = 0.0f;
+  dehaze_value = 0.0f;
   return true;
 }
 
@@ -901,76 +921,138 @@ void DtBackend::set_vibrance(float value) {
   note_pipe_change(vibrance_module);
 }
 
-// Dehaze: drives the "hazeremoval" module's `strength` ($MIN -1.0 $MAX 1.0),
-// same pattern as set_exposure(). Positive removes haze, negative adds it
-// (raises the transition map above 1.0, pulling pixels toward the ambient
-// color A0).
+// Dehaze is OUR OWN post-pipe stage, not the darktable "hazeremoval" module.
+// That module estimates a per-channel ambient light A0 from the haziest pixels
+// with no chroma constraint, so on scenes whose haziest region is tinted (green
+// window blinds, warm sky) it divides each channel by a different factor and
+// casts the whole frame teal or pink; the cast is spatial (it varies with the
+// per-pixel transmission t), so no global correction can undo it. Ours instead:
 //
-// strength == 0.0 (this app's neutral) is an EXACT no-op in the module's
-// process(): _transition_map() (hazeremoval.c:351) yields 1 - m*0 = 1.0
-// everywhere, the box/guided-filtered map stays constant 1.0, and
-// t = MAX(1.0, t_min) = 1.0, so res = (in - A0)/t + A0 == in. At exactly 0
-// we DISABLE the module (same policy as set_desaturation/set_crop) so the
-// neutral point skips the ambient-light + guided-filter cost entirely.
+//   1. Estimate a SINGLE achromatic ambient light A from the image's dark
+//      channel prior (classic He et al., but with A forced to gray).
+//   2. Per pixel, t = 1 - strength * min_c(pixel_c / A), clamped.
+//   3. out = (in - A)/t + A -- the SAME scalar t for all three channels.
 //
-// Note 0.2 is only the module's introspection $DEFAULT: hazeremoval is not
-// auto-enabled by darktable on a fresh image, so 0.2 is NOT this app's
-// fresh-image value -- the slider starts at 0.0.
+// Because t is a scalar per pixel (not per channel), channel ratios survive
+// exactly: hue is mathematically preserved at every strength, on any scene.
+// The slider value is -1..1 with 0 = neutral; positive removes haze, negative
+// adds it. Applied in display (gamma-encoded) space on the 8-bit backbuf;
+// the affine map commutes with the monotone gamma, so hue preservation holds
+// there too.
+//
+// value == 0 is an exact passthrough (the stage is skipped entirely, so the
+// neutral point costs nothing).
 void DtBackend::set_dehaze(float value) {
   if(!image_loaded) {
     UtilityFunctions::printerr("DtBackend::set_dehaze: no image loaded");
     return;
   }
-
   if(value < -1.0f) value = -1.0f;
   if(value > 1.0f) value = 1.0f;
-
-  if(!hazeremoval_module) {
-    hazeremoval_module = dt_iop_get_module_from_list(dev.iop, "hazeremoval");
-    if(!hazeremoval_module) {
-      UtilityFunctions::printerr("DtBackend::set_dehaze: could not find \"hazeremoval\" module in dev.iop");
-      return;
-    }
-  }
-
-  dt_iop_hazeremoval_params_t *p = (dt_iop_hazeremoval_params_t *)hazeremoval_module->params;
-  p->strength = value;
-  hazeremoval_module->enabled = (value == 0.0f) ? FALSE : TRUE;
-
-  dt_dev_add_history_item_ext(&dev, hazeremoval_module, hazeremoval_module->enabled, TRUE);
-  note_pipe_change(hazeremoval_module);
-
-  // Companion color compensation, paired with "colorbalancergb" (the module
-  // set_contrast() already drives -- we only touch its global-offset fields,
-  // never contrast/grey_fulcrum, and never DISABLE it here because contrast
-  // may need it). Both ends of the strength range carry a scene-independent
-  // global cast: positive strength removes warm ambient light, which reads
-  // teal/blue; negative strength pulls pixels toward the warm ambient color
-  // A0, which reads pink. Counter it with an additive global offset in the
-  // opposite hue, chroma scaled with |strength| so neutral (0) stays exactly
-  // neutral (global_C = 0 is the module's default).
-  if(!colorbalance_module) {
-    colorbalance_module = dt_iop_get_module_from_list(dev.iop, "colorbalancergb");
-    if(!colorbalance_module) {
-      UtilityFunctions::printerr("DtBackend::set_dehaze: could not find \"colorbalancergb\" module in dev.iop");
-      return;
-    }
-  }
-
-  dt_iop_colorbalancergb_params_t *cp = (dt_iop_colorbalancergb_params_t *)colorbalance_module->params;
-  if(value == 0.0f) {
-    cp->global_C = 0.0f;
-  } else {
-    cp->global_C = fabsf(value) * DEHAZE_CORRECTION_CHROMA;
-    // 0 deg is the warm/pink direction in colorbalancergb's hue ring, 180 deg
-    // the teal direction (empirically confirmed on window-lit interiors).
-    cp->global_H = (value > 0.0f) ? DEHAZE_CORRECTION_WARM_HUE : DEHAZE_CORRECTION_COOL_HUE;
-    colorbalance_module->enabled = TRUE;
-  }
-
-  dt_dev_add_history_item_ext(&dev, colorbalance_module, TRUE, TRUE);
-  note_pipe_change(colorbalance_module);
+  dehaze_value = value;
+  // A depends on the current render (other modules' output), so any change
+  // elsewhere in the pipe invalidates it; re-estimated lazily on the next
+  // non-neutral render. A change of dehaze strength itself does NOT
+  // invalidate: the ambient estimate is strength-independent by design (the
+  // min-channel ranking of haze opacity barely moves with strength).
+  if(value == 0.0f) _dehaze_ambient = 0.0f;
 }
+
+// Run the dehaze stage over an RGBA8 gamma-encoded buffer in place. Skipped
+// entirely at strength 0. _dehaze_ambient/_estimate are const-cached via
+// mutable members (see dt_backend.h).
+void DtBackend::_apply_dehaze(uint8_t *rgba8, int width, int height) const {
+  if(dehaze_value == 0.0f) return;
+  if(!rgba8 || width <= 0 || height <= 0) return;
+
+  // Lazy per-image ambient estimate: measure on the first non-neutral render,
+  // reuse after. note_pipe_change() resets _dehaze_ambient to 0 whenever any
+  // other module changes, so we always re-estimate against the current render.
+  if(_dehaze_ambient <= 0.0f) {
+    _dehaze_ambient = _estimate_dehaze_ambient(rgba8, width, height);
+    if(_dehaze_ambient <= 0.0f) return; // degenerate (pure black) frame
+  }
+  const float A = _dehaze_ambient;
+
+  // Strength mapping: the UI's -1..1 maps to haze-removal amount -0.5..+0.5.
+  // The raw dark-channel formulation saturates well before 1.0 (t would hit
+  // its floor and posterize), so the soft cap is deliberate.
+  const float strength = dehaze_value * 0.5f;
+
+  const size_t n = (size_t)width * height;
+  for(size_t k = 0; k < n; k++) {
+    uint8_t *px = rgba8 + k * 4;
+    const float r = _dt_srgb_to_linear[px[0]];
+    const float g = _dt_srgb_to_linear[px[1]];
+    const float b = _dt_srgb_to_linear[px[2]];
+    // min over channels of in/A, the haze-opacity (dark channel) estimate.
+    float m = r / A;
+    const float mg = g / A;
+    const float mb = b / A;
+    if(mg < m) m = mg;
+    if(mb < m) m = mb;
+    if(m > 1.0f) m = 1.0f; // pixels brighter than A don't push t negative
+    float t = 1.0f - strength * m;
+    if(t < 1.0f / 32.0f) t = 1.0f / 32.0f; // floor: keep the map invertible
+    const float inv = 1.0f / t;
+    // out = (in - A)/t + A, same scalar t for all three channels: this is
+    // what preserves hue. A bright haze-removal pass can push channels above
+    // 1.0; the encode table saturates there.
+    const int ir = (int)(((r - A) * inv + A) * 4095.0f);
+    const int ig = (int)(((g - A) * inv + A) * 4095.0f);
+    const int ib = (int)(((b - A) * inv + A) * 4095.0f);
+    px[0] = _dt_linear_to_srgb[std::clamp(ir, 0, 4095)];
+    px[1] = _dt_linear_to_srgb[std::clamp(ig, 0, 4095)];
+    px[2] = _dt_linear_to_srgb[std::clamp(ib, 0, 4095)];
+    px[3] = 0xFF;
+  }
+}
+
+// Dark-channel-prior ambient estimate, achromatic. A = mean luma of the
+// brightest half among the most-hazy 5% of pixels (dark channel near its
+// maximum). No color assumption anywhere: only brightness ranking among hazy
+// regions, so it adapts to any scene. Returns linear-space luma in 0..1.
+float DtBackend::_estimate_dehaze_ambient(const uint8_t *rgba8, int width, int height) const {
+  const size_t n = (size_t)width * height;
+  if(n == 0) return 0.0f;
+  // Dark channel = min over R,G,B of the gamma-decoded pixel. Sample every
+  // 4th pixel for the percentile cut: the 95th percentile is stable under
+  // decimation and this halves the sort cost.
+  std::vector<float> mins;
+  mins.reserve(n / 4 + 1);
+  for(size_t k = 0; k < n; k += 4) {
+    const uint8_t *px = rgba8 + k * 4;
+    const float r = _dt_srgb_to_linear[px[0]];
+    const float g = _dt_srgb_to_linear[px[1]];
+    const float b = _dt_srgb_to_linear[px[2]];
+    float m = r < g ? r : g;
+    if(b < m) m = b;
+    mins.push_back(m);
+  }
+  const size_t pivot = (size_t)(mins.size() * 0.95f);
+  if(pivot >= mins.size()) return 0.0f;
+  std::nth_element(mins.begin(), mins.begin() + pivot, mins.end());
+  const float crit_haze = mins[pivot];
+  // Mean luma of the (full-resolution) hazy+bright pixel set, scalar so it is
+  // achromatic by construction.
+  float sum = 0.0f;
+  int64_t counted = 0;
+  for(size_t k = 0; k < n; k++) {
+    const uint8_t *px = rgba8 + k * 4;
+    const float r = _dt_srgb_to_linear[px[0]];
+    const float g = _dt_srgb_to_linear[px[1]];
+    const float b = _dt_srgb_to_linear[px[2]];
+    float m = r < g ? r : g;
+    if(b < m) m = b;
+    if(m >= crit_haze) {
+      sum += 0.2126f * r + 0.7152f * g + 0.0722f * b;
+      counted++;
+    }
+  }
+  if(counted == 0) return 0.0f;
+  return sum / (float)counted;
+}
+
 
 // Drives the tonecurve module's L-channel spline. Unlike every scalar setter
 // above, `params` here is a curve: we overwrite the whole L-channel node
@@ -1153,6 +1235,15 @@ void DtBackend::set_crop(float left, float top, float right, float bottom) {
 // replay. Every module owns a piece after create_nodes() whether enabled or
 // not, so the piece lookup always succeeds for a module in dev.iop.
 void DtBackend::note_pipe_change(dt_iop_module_t *module) {
+  // Any edit outside the dehaze pair invalidates the cached neutral-mean
+  // reference the dehaze cast corrector drives toward (see set_dehaze()):
+  // exposure/WB/contrast changes move the channel means the corrector would
+  // otherwise treat as dehaze-induced cast and counteract on the next dehaze
+  // move. Re-measured lazily on the next non-neutral set_dehaze().
+  if(module) {
+    _dehaze_ambient = 0.0f;
+  }
+
   // two distinct modules before one render cannot be expressed as TOP_CHANGED:
   // synch_top only re-commits the last history item, silently skipping the
   // earlier one, which is exactly the stale-pixel failure this must avoid.
@@ -1360,6 +1451,12 @@ PackedByteArray DtBackend::render_pipe_roi(dt_dev_pixelpipe_t *p, int native_w, 
 
   dt_pthread_mutex_unlock(&p->backbuf_mutex);
 
+  // Dehaze post-stage: runs over the decoded RGBA8 buffer, identically on
+  // preview and full pipes, so what the user sees is what set_dehaze stored.
+  // A no-op at strength 0. Outside the backbuf_mutex: it mutates the copy
+  // we just made, not the pipe.
+  _apply_dehaze(dst, wd, ht);
+
   // get_width()/get_height() report the actual *rendered* (ROI) dims, not
   // the native sensor dims, so Main.gd builds its Image at the right size.
   processed_width = wd;
@@ -1511,6 +1608,33 @@ bool DtBackend::export_image(String path) {
     return false;
   }
 
+  // The dehaze post-stage lives outside darktable's pipe, so the exported
+  // file doesn't have it yet. Apply it in place: load the exported image,
+  // run the same _apply_dehaze math (with a fresh A estimated on THIS frame
+  // at full resolution -- more accurate than reusing the preview-pipe A),
+  // and re-encode. JPEG re-encode at quality 0.92 keeps the generational
+  // loss negligible; PNG/TIFF are lossless formats so re-saving them is
+  // bit-exact modulo the dehaze itself.
+  if(dehaze_value != 0.0f) {
+    Ref<Image> img = Image::load_from_file(path);
+    if(img.is_null()) {
+      UtilityFunctions::printerr("DtBackend::export_image: dehaze post-pass could not re-open ", path);
+      return false;
+    }
+    Image *im = img.ptr();
+    im->convert(Image::FORMAT_RGBA8);
+    _dehaze_ambient = 0.0f; // force a fresh estimate on the full-res frame
+    _apply_dehaze(im->ptrw(), im->get_width(), im->get_height());
+    const Error err = path.get_extension().to_lower() == "png"
+        ? im->save_png(path)
+        : im->save_jpg(path, 0.92f);
+    _dehaze_ambient = 0.0f; // cache belongs to the preview frame again
+    if(err != OK) {
+      UtilityFunctions::printerr("DtBackend::export_image: dehaze post-pass re-encode failed (", err, ")");
+      return false;
+    }
+  }
+
   UtilityFunctions::print("DtBackend::export_image: wrote ", path);
   return true;
 }
@@ -1584,7 +1708,8 @@ void DtBackend::cleanup() {
     tonecurve_module = nullptr;
     channelmixer_rgb_module = nullptr;
     clipping_module = nullptr;
-    hazeremoval_module = nullptr;
+    _dehaze_ambient = 0.0f;
+    dehaze_value = 0.0f;
     }
 
   if(initialized) {
@@ -1630,7 +1755,8 @@ void DtBackend::unload_image() {
   tonecurve_module = nullptr;
   channelmixer_rgb_module = nullptr;
   clipping_module = nullptr;
-  hazeremoval_module = nullptr;
+  _dehaze_ambient = 0.0f;
+  dehaze_value = 0.0f;
 
   processed_width = 0;
   processed_height = 0;
