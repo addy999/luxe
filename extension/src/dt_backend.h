@@ -266,6 +266,26 @@ typedef struct dt_iop_vibrance_params_t
   float amount;
 } dt_iop_vibrance_params_t;
 
+// dt_iop_hazeremoval_params_t is likewise private to
+// source/src/iop/hazeremoval.c, so it's redeclared here to match that file
+// exactly (source/src/iop/hazeremoval.c:60-70, DT_MODULE_INTROSPECTION
+// version 3). We only drive `strength` ($MIN: -1.0 $MAX: 1.0 $DEFAULT: 0.2),
+// the "Dehaze" slider; the other three fields are left at introspection
+// defaults. The whole struct is reproduced verbatim -- field order/types are
+// load-bearing (opaque void* params blob indexed by offset). Every field is
+// 4 bytes (float or gboolean), so the layout is padding-free. The module
+// implements no commit_params() (hazeremoval.c:72-74: "params and data are
+// equal"), so process() reads the `strength` written here directly. If
+// hazeremoval.c's struct or introspection version changes upstream, update
+// this block.
+typedef struct dt_iop_hazeremoval_params_t
+{
+  float strength;
+  float distance;
+  gboolean compatibility_mode;
+  gboolean adaptive;
+} dt_iop_hazeremoval_params_t;
+
 // NOTE on white balance (see docs/DARKTABLE_API_NOTES.md section F,
 // channelmixerrgb subsection, and the migration writeup this comment
 // summarizes): earlier revisions of this backend drove `temperature.c`'s
@@ -567,6 +587,9 @@ private:
   // dt_iop_channelmixer_rgb_params_t.
   dt_iop_module_t *channelmixer_rgb_module = nullptr;
   dt_iop_module_t *clipping_module = nullptr;
+  // hazeremoval ("haze removal") backs the Dehaze slider -- see the
+  // dt_iop_hazeremoval_params_t redeclaration above.
+  dt_iop_module_t *hazeremoval_module = nullptr;
 
   int processed_width = 0;
   int processed_height = 0;
@@ -691,6 +714,7 @@ public:
   // its blend parameters rather than any of its own fields -- see the note on
   // dt_iop_monochrome_params_t above.
   void set_desaturation(float amount);
+  void set_dehaze(float value);
   void set_vibrance(float value);
   // White balance via channelmixerrgb's chromatic adaptation -- see the NOTE
   // on white balance above dt_iop_channelmixer_rgb_params_t. Sets illuminant

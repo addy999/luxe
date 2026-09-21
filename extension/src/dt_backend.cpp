@@ -34,6 +34,7 @@ void DtBackend::_bind_methods() {
   ClassDB::bind_method(D_METHOD("set_whites", "value"), &DtBackend::set_whites);
   ClassDB::bind_method(D_METHOD("set_saturation", "value"), &DtBackend::set_saturation);
   ClassDB::bind_method(D_METHOD("set_desaturation", "amount"), &DtBackend::set_desaturation);
+  ClassDB::bind_method(D_METHOD("set_dehaze", "value"), &DtBackend::set_dehaze);
   ClassDB::bind_method(D_METHOD("set_vibrance", "value"), &DtBackend::set_vibrance);
   ClassDB::bind_method(D_METHOD("set_tonecurve", "points"), &DtBackend::set_tonecurve);
   ClassDB::bind_method(D_METHOD("set_crop", "left", "top", "right", "bottom"), &DtBackend::set_crop);
@@ -567,6 +568,7 @@ bool DtBackend::load_image(String path) {
   tonecurve_module = nullptr;
   channelmixer_rgb_module = nullptr;
   clipping_module = nullptr;
+  hazeremoval_module = nullptr;
   return true;
 }
 
@@ -890,6 +892,46 @@ void DtBackend::set_vibrance(float value) {
 
   dt_dev_add_history_item_ext(&dev, vibrance_module, TRUE, TRUE);
   note_pipe_change(vibrance_module);
+}
+
+// Dehaze: drives the "hazeremoval" module's `strength` ($MIN -1.0 $MAX 1.0),
+// same pattern as set_exposure(). Positive removes haze, negative adds it
+// (raises the transition map above 1.0, pulling pixels toward the ambient
+// color A0).
+//
+// strength == 0.0 (this app's neutral) is an EXACT no-op in the module's
+// process(): _transition_map() (hazeremoval.c:351) yields 1 - m*0 = 1.0
+// everywhere, the box/guided-filtered map stays constant 1.0, and
+// t = MAX(1.0, t_min) = 1.0, so res = (in - A0)/t + A0 == in. At exactly 0
+// we DISABLE the module (same policy as set_desaturation/set_crop) so the
+// neutral point skips the ambient-light + guided-filter cost entirely.
+//
+// Note 0.2 is only the module's introspection $DEFAULT: hazeremoval is not
+// auto-enabled by darktable on a fresh image, so 0.2 is NOT this app's
+// fresh-image value -- the slider starts at 0.0.
+void DtBackend::set_dehaze(float value) {
+  if(!image_loaded) {
+    UtilityFunctions::printerr("DtBackend::set_dehaze: no image loaded");
+    return;
+  }
+
+  if(value < -1.0f) value = -1.0f;
+  if(value > 1.0f) value = 1.0f;
+
+  if(!hazeremoval_module) {
+    hazeremoval_module = dt_iop_get_module_from_list(dev.iop, "hazeremoval");
+    if(!hazeremoval_module) {
+      UtilityFunctions::printerr("DtBackend::set_dehaze: could not find \"hazeremoval\" module in dev.iop");
+      return;
+    }
+  }
+
+  dt_iop_hazeremoval_params_t *p = (dt_iop_hazeremoval_params_t *)hazeremoval_module->params;
+  p->strength = value;
+  hazeremoval_module->enabled = (value == 0.0f) ? FALSE : TRUE;
+
+  dt_dev_add_history_item_ext(&dev, hazeremoval_module, hazeremoval_module->enabled, TRUE);
+  note_pipe_change(hazeremoval_module);
 }
 
 // Drives the tonecurve module's L-channel spline. Unlike every scalar setter
@@ -1504,6 +1546,7 @@ void DtBackend::cleanup() {
     tonecurve_module = nullptr;
     channelmixer_rgb_module = nullptr;
     clipping_module = nullptr;
+    hazeremoval_module = nullptr;
     }
 
   if(initialized) {
@@ -1549,6 +1592,7 @@ void DtBackend::unload_image() {
   tonecurve_module = nullptr;
   channelmixer_rgb_module = nullptr;
   clipping_module = nullptr;
+  hazeremoval_module = nullptr;
 
   processed_width = 0;
   processed_height = 0;

@@ -56,6 +56,8 @@ extends Control
 @onready var blacks_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/BlacksRow/BlacksValueLabel
 @onready var whites_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/WhitesRow/WhitesSlider
 @onready var whites_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/WhitesRow/WhitesValueLabel
+@onready var dehaze_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/DehazeRow/DehazeSlider
+@onready var dehaze_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/DehazeRow/DehazeValueLabel
 @onready var saturation_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/SaturationRow/SaturationSlider
 @onready var saturation_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/SaturationRow/SaturationValueLabel
 @onready var vibrance_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/VibranceRow/VibranceSlider
@@ -134,6 +136,12 @@ var _params: Dictionary = {
 	# slider value straight through -- the band math lives in the C++ setter.
 	"blacks": 0.0,
 	"whites": 0.0,
+	# Dehaze: hazeremoval `strength` in raw module units (-1..1). 0.0 is an
+	# exact no-op in the module's process() and disables it (see set_dehaze in
+	# dt_backend.cpp), so unlike the _MODULE_RANGES keys the app's neutral is
+	# the module's true zero, NOT its introspection default 0.2 (hazeremoval
+	# is not auto-enabled on a fresh darktable image).
+	"dehaze": 0.0,
 	"saturation": 25.0,
 	# Desaturation amount 0..1 driving the monochrome module's blend opacity
 	# (see _on_saturation_slider_value_changed below) -- the saturation slider's
@@ -425,6 +433,7 @@ func _init_backend() -> bool:
 		shadows_slider.editable = false
 		blacks_slider.editable = false
 		whites_slider.editable = false
+		dehaze_slider.editable = false
 		saturation_slider.editable = false
 		vibrance_slider.editable = false
 		white_balance_slider.editable = false
@@ -441,6 +450,7 @@ func _finish_ready() -> void:
 	shadows_value_label.text = "%.2f" % shadows_slider.value
 	blacks_value_label.text = "%.2f" % blacks_slider.value
 	whites_value_label.text = "%.2f" % whites_slider.value
+	dehaze_value_label.text = "%.2f" % dehaze_slider.value
 	saturation_value_label.text = "%.2f" % saturation_slider.value
 	vibrance_value_label.text = "%.2f" % vibrance_slider.value
 	white_balance_value_label.text = "%dK" % roundi(white_balance_slider.value)
@@ -576,6 +586,9 @@ func _on_file_dialog_file_selected(path: String) -> void:
 	whites_slider.value = 0.0
 	whites_value_label.text = "%.2f" % 0.0
 	_params["whites"] = 0.0
+	dehaze_slider.value = 0.0
+	dehaze_value_label.text = "%.2f" % 0.0
+	_params["dehaze"] = 0.0
 	saturation_slider.value = 0.0
 	saturation_value_label.text = "%.2f" % 0.0
 	_params["saturation"] = _map_offset_to_module("saturation", 0.0)
@@ -646,6 +659,12 @@ func _on_blacks_slider_value_changed(value: float) -> void:
 func _on_whites_slider_value_changed(value: float) -> void:
 	whites_value_label.text = "%.2f" % value
 	_params["whites"] = value
+	_request_render()
+
+
+func _on_dehaze_slider_value_changed(value: float) -> void:
+	dehaze_value_label.text = "%.2f" % value
+	_params["dehaze"] = value
 	_request_render()
 
 
@@ -862,6 +881,8 @@ func _apply_params_to_backend() -> void:
 		backend.set_blacks(_params["blacks"])
 	if _params_differ("whites"):
 		backend.set_whites(_params["whites"])
+	if _params_differ("dehaze"):
+		backend.set_dehaze(_params["dehaze"])
 	if _params_differ("saturation"):
 		backend.set_saturation(_params["saturation"])
 	if _params_differ("desaturation"):
