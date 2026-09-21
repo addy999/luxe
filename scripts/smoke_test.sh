@@ -15,7 +15,7 @@
 # Usage:
 #   smoke_test.sh [RAW_FILE] [DT_BUILD_DIR] [OUT_DIR] [GODOT_BIN]
 #
-# All args optional; sensible defaults for this dev machine. RAW_FILE resolves
+# All args optional; defaults assume this repo's standard layout. RAW_FILE resolves
 # in order: arg 1, then $DT_SMOKE_RAW, then the committed fixture
 # project/tests/fixtures/smoke_test.ARW (so every run tests the same image),
 # then auto-discovery under ~/Pictures/Darktable and ~/Downloads.

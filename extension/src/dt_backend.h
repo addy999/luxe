@@ -2,14 +2,13 @@
  * DtBackend -- GDExtension shim exposing darktable's headless pixelpipe to
  * GDScript for the Godot-on-darktable PoC.
  *
- * See godot-poc/DARKTABLE_API_NOTES.md for the exact darktable API signatures
- * this class calls, cited file:line against this checkout, and
- * ~/.claude/plans/linked-baking-cherny.md for the overall spike plan.
+ * See the "The big idea: two languages, one process" section of
+ * godot-poc/README.md for the overall architecture this class implements.
  *
  * This backend holds exactly one image/session at a time (darktable's core
  * state -- darktable.image_cache, darktable.mipmap_cache, etc. -- is a
- * single process-wide global, DARKTABLE_API_NOTES.md section I), matching
- * the plan's "one image/session at a time in-process" constraint.
+ * single process-wide global), matching the architecture's "one
+ * image/session at a time in-process" constraint.
  */
 #pragma once
 
@@ -40,8 +39,8 @@ extern "C" {
 // darktable as an opaque `void *params` blob sized by `params_size`, with
 // runtime introspection doing the rest. That means this struct can't be
 // #included; it's redeclared here to match exposure.c exactly (field order
-// and types straight from DARKTABLE_API_NOTES.md section F, which cites
-// source/src/iop/exposure.c:49-75, DT_MODULE_INTROSPECTION version 7).
+// and types straight from source/src/iop/exposure.c:49-75,
+// DT_MODULE_INTROSPECTION version 7).
 // If exposure.c's params struct or introspection version ever changes,
 // this redeclaration must be updated to match.
 typedef enum dt_iop_exposure_mode_t
@@ -266,9 +265,7 @@ typedef struct dt_iop_vibrance_params_t
   float amount;
 } dt_iop_vibrance_params_t;
 
-// NOTE on white balance (see docs/DARKTABLE_API_NOTES.md section F,
-// channelmixerrgb subsection, and the migration writeup this comment
-// summarizes): earlier revisions of this backend drove `temperature.c`'s
+// NOTE on white balance: earlier revisions of this backend drove `temperature.c`'s
 // red/green/blue directly to implement white balance, matching darktable's
 // LEGACY workflow where `temperature` owns the camera-to-D65 correction. In
 // the modern scene-referred (sigmoid) workflow this checkout defaults to,
@@ -425,9 +422,9 @@ typedef struct dt_iop_channelmixer_rgb_params_t
 // tonecurve.c:81-112, DT_MODULE_INTROSPECTION version 5). Unlike every other
 // module above, the field we drive (`tonecurve[0]`, the L-channel curve) is a
 // fixed-size array of {x,y} node structs plus a live node count
-// (`tonecurve_nodes[0]`), not a single scalar -- see set_tonecurve() below and
-// docs/DARKTABLE_API_NOTES.md section F's tonecurve subsection for the spline
-// UI this backs. DT_IOP_TONECURVE_MAXNODES is 20 (tonecurve.c:48). The whole
+// (`tonecurve_nodes[0]`), not a single scalar -- see set_tonecurve() below
+// for the spline UI this backs. DT_IOP_TONECURVE_MAXNODES is 20
+// (tonecurve.c:48). The whole
 // struct (all three L/a/b channels, autoscale, preset, unbound_ab,
 // preserve_colors) must be reproduced verbatim even though we only ever touch
 // channel 0 -- field order/types are load-bearing. If tonecurve.c's struct or
@@ -522,7 +519,7 @@ private:
   dt_dev_pixelpipe_t pipe;
   dt_mipmap_buffer_t mipmap_buf;
   // Fast preview pipe: DT_DEV_PIXELPIPE_PREVIEW via dt_dev_pixelpipe_init_preview().
-  // Hybrid (docs/PERF-IMPROVEMENT.md "Display-sized preview mip"): it is fed the
+  // Hybrid (): it is fed the
   // downscaled DT_MIPMAP_F float mip (knob 1's input, which is fast because
   // demosaic runs at the mip's resolution, not native), but that mip is now
   // generated at the display's physical pixel resolution instead of darktable's
@@ -548,8 +545,8 @@ private:
   int display_width_ = 0;
   int display_height_ = 0;
 
-  // Cached module pointer for repeated set_exposure() calls (see
-  // DARKTABLE_API_NOTES.md section F) so we don't re-search dev.iop.
+  // Cached module pointer for repeated set_exposure() calls so we don't
+  // re-search dev.iop.
   dt_iop_module_t *exposure_module = nullptr;
   dt_iop_module_t *colorbalance_module = nullptr;
   dt_iop_module_t *shadhi_module = nullptr;
@@ -644,7 +641,7 @@ private:
                                   double center_x, double center_y);
 
   // Computes darktable's --datadir/--moduledir at runtime instead of relying
-  // on compile-time-baked absolute paths (see PORTABILITY_PLAN.md section 3).
+  // on compile-time-baked absolute paths.
   // Tries, in order: (1) DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR env vars,
   // (2) a location relative to Godot's own running executable (exported .app
   // bundle layout), (3) a location relative to this extension's own shared
@@ -748,8 +745,7 @@ public:
   // above). `points` is a caller-sorted list of {x,y} control points in [0,1]x[0,1]
   // (the coordinate space darktable's own curve editor uses), first point x==0,
   // last point x==1, 2..DT_BACKEND_TONECURVE_MAXNODES points. Node ordering/
-  // spacing/endpoint rules are enforced by the GDScript curve widget, not here --
-  // see godot-poc/DARKTABLE_API_NOTES.md section F's tonecurve subsection.
+  // spacing/endpoint rules are enforced by the GDScript curve widget, not here.
   void set_tonecurve(PackedVector2Array points);
   PackedByteArray process_fit(int max_width, int max_height);
   // General ROI render, the same math darktable's own darkroom uses for

@@ -1,6 +1,6 @@
 /*
- * DtBackend implementation. Every darktable call below is cited against
- * godot-poc/DARKTABLE_API_NOTES.md (section letters refer to that file).
+ * DtBackend implementation. See the architecture section of godot-poc/README.md
+ * for how these pieces fit together.
  */
 #include "dt_backend.h"
 
@@ -105,8 +105,8 @@ bool path_exists(const std::string &path) {
 // sentinel meant datadir_looks_valid() returned false for every real,
 // correctly-populated datadir this project's own bundle produces, which
 // silently defeated *both* of compute_dt_dirs()'s bundle-relative fallback
-// candidates (PORTABILITY_PLAN.md 5.3.4 root-cause fix, discovered when
-// fixing the DT_BACKEND_DATADIR-override bug: after that fix correctly
+// candidates (discovered while fixing the DT_BACKEND_DATADIR-override bug:
+// after that fix correctly
 // stopped accepting a bogus dev-tree default in an exported .app, the
 // fallback candidates below it in compute_dt_dirs() were *also* failing to
 // resolve, tracing back to this sentinel never matching anything).
@@ -124,8 +124,7 @@ bool datadir_looks_valid(const std::string &datadir) {
 
 } // namespace
 
-// Display-sized preview mip (docs/PERF-IMPROVEMENT.md "Display-sized preview
-// mip"): darktable sizes the DT_MIPMAP_F float preview mip once, inside
+// Display-sized preview mip (): darktable sizes the DT_MIPMAP_F float preview mip once, inside
 // dt_mipmap_cache_init() (source/src/common/mipmap_cache.c:744-746), from the
 // `highres_preview_mip` conf flag: 1440x900 or 1920x1200. That is below a HiDPI
 // display's device pixel count, so the preview reads soft. dt_mipmap_cache_init()
@@ -186,16 +185,14 @@ static void set_preview_mip_size(const int width, const int height) {
                           " MB buffer)");
 }
 
-// Computes --datadir/--moduledir at runtime (see PORTABILITY_PLAN.md section
-// 3.5 for the full rationale). Tried in order, cheapest/most-dev-friendly
-// first:
+// Computes --datadir/--moduledir at runtime. Tried in order,
+// cheapest/most-dev-friendly first:
 //
 //   1. DT_BACKEND_DATADIR / DT_BACKEND_MODULEDIR env vars, if BOTH are set.
 //      Pure dev convenience -- lets the inner dev loop point at
 //      source/build/share|lib/darktable without any bundle/dladdr logic.
 //   2. Bundle-relative via Godot's own running executable path
-//      (OS::get_executable_path()). Matches the exported .app layout from
-//      PORTABILITY_PLAN.md section 3.3:
+//      (OS::get_executable_path()). Matches the exported .app layout:
 //        MyApp.app/Contents/MacOS/MyApp                (executable_path)
 //        MyApp.app/Contents/Resources/darktable/share/darktable
 //        MyApp.app/Contents/Resources/darktable/lib/darktable
@@ -217,8 +214,8 @@ static void set_preview_mip_size(const int width, const int height) {
 bool DtBackend::compute_dt_dirs(std::string &datadir, std::string &moduledir) {
   // --- 1. env var override (dev convenience) --------------------------
   // Validated with the same datadir_looks_valid() sentinel check as the
-  // bundle-relative candidates below (PORTABILITY_PLAN.md 5.3.4 root-cause
-  // fix): this branch used to accept the env var unconditionally, which
+  // bundle-relative candidates below: this branch used to accept the env var
+  // unconditionally, which
   // meant a wrong-but-existing path (e.g. Main.gd's dev-tree default,
   // erroneously globalized against an exported .app's bundle path) would be
   // silently accepted as datadir instead of falling through to the
@@ -325,9 +322,8 @@ bool DtBackend::init(int display_width, int display_height) {
   // shared library inside Godot.app, so that auto-detection resolves to
   // nonsense paths under Godot.app itself. These used to be compile-time
   // constants baked in by SConstruct (DT_DATADIR_PATH/DT_MODULEDIR_PATH),
-  // which hardcoded this dev machine's absolute paths into the compiled
-  // binary and broke as soon as the binary moved -- see
-  // PORTABILITY_PLAN.md section 3. They are now computed at runtime by
+  // which baked absolute paths into the compiled binary and broke as soon as
+  // the binary moved. They are now computed at runtime by
   // compute_dt_dirs() (env var override -> bundle-relative via Godot's
   // executable path -> dladdr()-relative fallback -> hard failure).
   //
@@ -391,9 +387,8 @@ bool DtBackend::init(int display_width, int display_height) {
   g_free(cachedir);
   g_free(datadir);
   g_free(moduledir);
-  // DARKTABLE_API_NOTES.md section A: both darktable-cli and darktable-mcp
-  // treat a *non-zero* return from dt_init() as fatal init failure, so 0
-  // means success here.
+  // dt_init() returns non-zero to signal a fatal init failure, so 0 means
+  // success here.
   if(rc != 0) {
     UtilityFunctions::printerr("DtBackend::init: dt_init() failed, rc=", rc);
     return false;
@@ -427,9 +422,9 @@ bool DtBackend::init(int display_width, int display_height) {
   return true;
 }
 
-// Sections B + C + D(steps 1-4): import the file, load it into a
-// dt_develop_t, then stand up a persistent pixelpipe once (not per
-// process() call) so repeated set_exposure()/process() calls are cheap.
+// Import the file, load it into a dt_develop_t, then stand up a persistent
+// pixelpipe once (not per process() call) so repeated set_exposure()/process()
+// calls are cheap.
 bool DtBackend::load_image(String path) {
   if(!initialized) {
     UtilityFunctions::printerr("DtBackend::load_image: init() was not called");
@@ -445,9 +440,9 @@ bool DtBackend::load_image(String path) {
   const CharString path_utf8 = path.utf8();
   const char *cpath = path_utf8.get_data();
 
-  // Section B, step 1: dt_film_t must be zeroed via dt_film_init() before
-  // dt_film_new() -- an uninitialized images_mutex SIGKILLs on macOS. Mirror
-  // dt_bridge.c (NOT main.c's inline pattern, which skips dt_film_init()).
+  // dt_film_t must be zeroed via dt_film_init() before dt_film_new() -- an
+  // uninitialized images_mutex SIGKILLs on macOS. Use dt_film_init() rather
+  // than darktable's main.c inline pattern, which skips it.
   dt_film_t film;
   dt_film_init(&film);
 
@@ -461,7 +456,7 @@ bool DtBackend::load_image(String path) {
     return false;
   }
 
-  // Section B, step 2: import into the (in-memory) library DB.
+  // Import into the (in-memory) library DB.
   const dt_imgid_t new_imgid = dt_image_import(filmid, cpath, TRUE, FALSE);
   dt_film_cleanup(&film);
 
@@ -471,13 +466,12 @@ bool DtBackend::load_image(String path) {
   }
   imgid = new_imgid;
 
-  // Section C: dt_dev_init(&dev, FALSE) -> dt_dev_load_image(&dev, imgid).
+  // dt_dev_init(&dev, FALSE) -> dt_dev_load_image(&dev, imgid).
   dt_dev_init(&dev, FALSE);
   dt_dev_load_image(&dev, imgid);
 
-  // Section D, step 2: pull the full-res buffer from the mipmap cache. Kept
-  // alive as member state (mipmap_buf) until cleanup(), since it backs the
-  // pipe's input buffer.
+  // Pull the full-res buffer from the mipmap cache. Kept alive as member state
+  // (mipmap_buf) until cleanup(), since it backs the pipe's input buffer.
   dt_mipmap_cache_get(&mipmap_buf, imgid, DT_MIPMAP_FULL, DT_MIPMAP_BLOCKING, 'r');
   if(!mipmap_buf.buf || !mipmap_buf.width || !mipmap_buf.height) {
     UtilityFunctions::printerr("DtBackend::load_image: dt_mipmap_cache_get() returned an invalid buffer");
@@ -494,11 +488,10 @@ bool DtBackend::load_image(String path) {
   raw_width = wd;
   raw_height = ht;
 
-  // Section D, step 3: DARKTABLE_API_NOTES.md is explicit that
-  // dt_dev_pixelpipe_init_full() does NOT exist in this checkout -- only
-  // _init(), _init_preview(), _init_preview2(), _init_export(),
-  // _init_thumbnail(), _init_dummy(). Use plain dt_dev_pixelpipe_init() for
-  // this live/full preview pipe.
+  // dt_dev_pixelpipe_init_full() does NOT exist -- only dt_dev_pixelpipe_init(),
+  // _init_preview(), _init_preview2(), _init_export(), _init_thumbnail(),
+  // _init_dummy(). Use plain dt_dev_pixelpipe_init() for this live/full
+  // preview pipe.
   if(!dt_dev_pixelpipe_init(&pipe)) {
     UtilityFunctions::printerr("DtBackend::load_image: dt_dev_pixelpipe_init() failed");
     dt_mipmap_cache_release(&mipmap_buf);
@@ -508,12 +501,17 @@ bool DtBackend::load_image(String path) {
     return false;
   }
 
-  // Section D, step 4: set input, ICC, build nodes, sync params.
-  // DT_COLORSPACE_DISPLAY / DT_INTENT_LAST mirrors dt_bridge.c's own call to
-  // dt_imageio_export_with_flags() (dt_bridge.c:1205, DARKTABLE_API_NOTES.md
-  // section D "_mcp_fmt_t" example) -- the concrete "sane default" the task
-  // asked to find, taken directly from the working reference implementation
-  // rather than guessed.
+  // Point the pipe at its input, choose the output colorspace, then build the
+  // module node list and commit the current params/history into it.
+  // dt_dev_pixelpipe_set_input() records the buffer plus its dimensions and
+  // scale (and derives a starting output descriptor via get_output_format());
+  // DT_COLORSPACE_DISPLAY with a NULL profile means "convert the output into
+  // the user's configured display profile", and DT_INTENT_LAST is darktable's
+  // sentinel for "no explicit rendering intent" (colorout.c leaves the intent
+  // at the module default in that case) -- both are the values darktable's own
+  // display-referred export path uses. create_nodes() then materializes one
+  // node per active module and synch_all() commits each module's params (and
+  // this image's history) into those nodes.
   dt_dev_pixelpipe_set_input(&pipe, &dev, (float *)mipmap_buf.buf,
                               mipmap_buf.width, mipmap_buf.height, mipmap_buf.iscale);
   dt_dev_pixelpipe_set_icc(&pipe, DT_COLORSPACE_DISPLAY, NULL, DT_INTENT_LAST);
@@ -1061,8 +1059,7 @@ float DtBackend::_estimate_dehaze_ambient(const uint8_t *rgba8, int width, int h
 // every other field (autoscale, preset, unbound_ab, preserve_colors) exactly
 // as introspection defaults left them. Interpolation type is forced to
 // MONOTONE_HERMITE to match the module's own default and this backend's
-// curve widget, which draws the same monotone-hermite spline (see
-// docs/DARKTABLE_API_NOTES.md section F's tonecurve subsection).
+// curve widget, which draws the same monotone-hermite spline.
 void DtBackend::set_tonecurve(PackedVector2Array points) {
   if(!image_loaded) {
     UtilityFunctions::printerr("DtBackend::set_tonecurve: no image loaded");
@@ -1401,11 +1398,10 @@ PackedByteArray DtBackend::render_pipe_roi(dt_dev_pixelpipe_t *p, int native_w, 
   // _no_gamma() path -- simplest for a PoC preview.
   dt_dev_pixelpipe_process(p, &dev, x, y, wd, ht, (float)scale, DT_DEVICE_NONE);
 
-  // Lock backbuf_mutex around the read, per DARKTABLE_API_NOTES.md sections
-  // G/I. dtpthread.h (checked directly: source/src/common/dtpthread.h)
-  // declares exactly dt_pthread_mutex_lock()/dt_pthread_mutex_unlock() (both
-  // release and _DEBUG builds), so no deviation from the requested names was
-  // needed here.
+  // Lock backbuf_mutex around the read, mirroring darktable's own display
+  // path. dtpthread.h (source/src/common/dtpthread.h) declares
+  // dt_pthread_mutex_lock()/dt_pthread_mutex_unlock() in both release and
+  // _DEBUG builds.
   dt_pthread_mutex_lock(&p->backbuf_mutex);
 
   uint8_t *backbuf = p->backbuf;
@@ -1424,11 +1420,10 @@ PackedByteArray DtBackend::render_pipe_roi(dt_dev_pixelpipe_t *p, int native_w, 
   out.resize(byte_count);
   uint8_t *dst = out.ptrw();
 
-  // darktable's 8-bit backbuf is BGRx-ordered (DARKTABLE_API_NOTES.md
-  // section D/G, imageio.c's byte-swap code); Godot's FORMAT_RGBA8 wants
-  // R,G,B,A. Swap byte 0 <-> byte 2 per pixel and force alpha to 0xFF, since
-  // the notes explicitly warn darktable's own path does not reliably write
-  // a usable alpha byte here.
+  // darktable's 8-bit backbuf is BGRx-ordered (see imageio.c's byte-swap
+  // code); Godot's FORMAT_RGBA8 wants R,G,B,A. Swap byte 0 <-> byte 2 per
+  // pixel and force alpha to 0xFF, since darktable does not reliably write a
+  // usable alpha byte here.
   //
   // Godot 4 dropped FORMAT_BGRA8 from Image::Format (the enum jumps RGB8 ->
   // RGBA8 -> RGBA4444), so there is no format we could hand the BGRx buffer
@@ -1535,8 +1530,8 @@ PackedByteArray DtBackend::process_fit(int max_width, int max_height) {
 // It stands up a *fresh* dt_develop_t from `imgid` internally
 // (imageio.c:1066-1068) and replays that image's history from the library DB.
 // So we must first flush our in-memory history stack to the DB with
-// dt_dev_write_history_ext(), exactly as darktable-mcp does before it renders
-// (dt_bridge.c:1299). init() set darktable.prefer_library_history so the
+// dt_dev_write_history_ext() before exporting. init() set
+// darktable.prefer_library_history so the
 // export reads that DB history rather than an (absent) XMP sidecar.
 bool DtBackend::export_image(String path) {
   if(!initialized || !image_loaded) {
@@ -1585,8 +1580,8 @@ bool DtBackend::export_image(String path) {
   fdata->style[0] = '\0';
   fdata->style_append = FALSE;
 
-  // dt_imageio_export_with_flags() returns FALSE on SUCCESS (footgun called
-  // out in dt_bridge.c:1200). Flags mirror darktable-cli's dt_imageio_export()
+  // dt_imageio_export_with_flags() returns FALSE on SUCCESS (a footgun worth
+  // calling out). Flags mirror darktable-cli's dt_imageio_export()
   // wrapper (imageio.c:1013-1018): ignore_exif=FALSE, display_byteorder=FALSE,
   // high_quality=TRUE, upscale=FALSE, is_scaling=FALSE, scale=1.0,
   // thumbnail=FALSE, filter=NULL, copy_metadata=TRUE, export_masks=FALSE.

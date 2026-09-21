@@ -2,8 +2,7 @@ extends Control
 class_name ToneCurveEditor
 
 # A minimal spline editor for darktable's tonecurve module (L channel only).
-# Backs DtBackend.set_tonecurve() -- see .claude/skills/add-darktable-module and
-# docs/DARKTABLE_API_NOTES.md section F's tonecurve subsection.
+# Backs DtBackend.set_tonecurve() -- see the README's module documentation.
 #
 # Curve space is [0,1] x [0,1] with (0,0) at the bottom-left and (1,1) at the
 # top-right, matching darktable's own curve editor convention. Points are kept

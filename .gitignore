@@ -1,10 +1,21 @@
-project/.godot
-project/Luxe.app/
-project/.godot
-**/.DS_STORE
+# macOS
+**/.DS_Store
+
+# Godot editor cache
+project/.godot/
+
+# Build outputs
 dist/
-project/bin
+project/bin/
 extension/.sconsign.dblite
-extension/src/*.os
+*.os
+
+# Vendored godot-cpp (clone it yourself; see README)
+extension/godot-cpp/
+
+# Generated per-machine link flags (regenerate via SConstruct; see README)
+extension/dt_link_flags.json
+
+# Test output
 scripts/.smoke_out/
-extension/godot-cpp
+scripts/.crop_out/

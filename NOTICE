@@ -1,0 +1,39 @@
+NOTICE
+======
+
+Luxe is a Godot-powered RAW photo editor. It builds on the following
+third-party projects. Their licenses are compatible with Luxe's own
+GPL-3.0-or-later license, and their respective terms apply to their code.
+
+darktable
+---------
+Luxe embeds and links against darktable's core image-processing engine
+(the "pixelpipe") in-process via a GDExtension.
+
+  Project: https://www.darktable.org
+  Source:  https://github.com/darktable-org/darktable
+  License: GNU General Public License v3.0 (GPL-3.0)
+
+darktable is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.
+
+godot-cpp
+---------
+The GDExtension shim (extension/) is built against godot-cpp, Godot's official
+C++ bindings, which provide the bridge between the C++ backend and the Godot
+engine.
+
+  Project: https://github.com/godotengine/godot-cpp
+  License: MIT License
+
+godot-cpp is distributed under the MIT License and is not covered by Luxe's
+GPL-3.0 licensing.
+
+Godot Engine
+------------
+Luxe runs inside the Godot Engine (frontend).
+
+  Project: https://godotengine.org
+  License: MIT License (Godot Engine)

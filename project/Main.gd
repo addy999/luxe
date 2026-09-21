@@ -117,7 +117,7 @@ var _reset_buttons: Array[Button] = []
 # another is still in flight is never lost or clobbered — and any burst of
 # changes collapses into a single follow-up render.
 #
-# To expose a new module (see .claude/skills/add-darktable-module): add its key
+# To expose a new module (see the README's module documentation): add its key
 # here, add one line to _apply_params_to_backend(), and add a control that writes
 # the key and calls _request_render(). Only params whose value changed since the
 # last apply are pushed (see _applied_params / _params_differ below), so a new
@@ -340,8 +340,8 @@ var _dragging: bool = false
 # someone did launch from a terminal with an explicit override), leave them
 # alone -- an explicit external override should win over this project default.
 #
-# BUNDLE-SAFETY GUARD (PORTABILITY_PLAN.md 5.3.4 root-cause fix): this must
-# never run in an exported/standalone build. NOTE: "standalone" is NOT a real
+# BUNDLE-SAFETY GUARD: this must never run in an exported/standalone build.
+# NOTE: "standalone" is NOT a real
 # Godot feature tag (verified against Godot's own feature-tags doc; an
 # earlier version of this guard used it and it silently always evaluated to
 # false, since OS.has_feature() returns false for unknown tags rather than
