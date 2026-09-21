@@ -22,6 +22,13 @@ extern "C" {
 
 using namespace godot;
 
+// Dehaze color-compensation constants, paired with colorbalancergb's global
+// offset (see set_dehaze). Chroma per unit of module strength; hues in the
+// module's degree ring (0 = warm/pink, 180 = teal).
+static constexpr float DEHAZE_CORRECTION_CHROMA = 0.005f;
+static constexpr float DEHAZE_CORRECTION_WARM_HUE = 0.0f;
+static constexpr float DEHAZE_CORRECTION_COOL_HUE = 180.0f;
+
 void DtBackend::_bind_methods() {
   ClassDB::bind_method(D_METHOD("init", "display_width", "display_height"), &DtBackend::init,
                        DEFVAL(0), DEFVAL(0));
@@ -932,6 +939,37 @@ void DtBackend::set_dehaze(float value) {
 
   dt_dev_add_history_item_ext(&dev, hazeremoval_module, hazeremoval_module->enabled, TRUE);
   note_pipe_change(hazeremoval_module);
+
+  // Companion color compensation, paired with "colorbalancergb" (the module
+  // set_contrast() already drives -- we only touch its global-offset fields,
+  // never contrast/grey_fulcrum, and never DISABLE it here because contrast
+  // may need it). Both ends of the strength range carry a scene-independent
+  // global cast: positive strength removes warm ambient light, which reads
+  // teal/blue; negative strength pulls pixels toward the warm ambient color
+  // A0, which reads pink. Counter it with an additive global offset in the
+  // opposite hue, chroma scaled with |strength| so neutral (0) stays exactly
+  // neutral (global_C = 0 is the module's default).
+  if(!colorbalance_module) {
+    colorbalance_module = dt_iop_get_module_from_list(dev.iop, "colorbalancergb");
+    if(!colorbalance_module) {
+      UtilityFunctions::printerr("DtBackend::set_dehaze: could not find \"colorbalancergb\" module in dev.iop");
+      return;
+    }
+  }
+
+  dt_iop_colorbalancergb_params_t *cp = (dt_iop_colorbalancergb_params_t *)colorbalance_module->params;
+  if(value == 0.0f) {
+    cp->global_C = 0.0f;
+  } else {
+    cp->global_C = fabsf(value) * DEHAZE_CORRECTION_CHROMA;
+    // 0 deg is the warm/pink direction in colorbalancergb's hue ring, 180 deg
+    // the teal direction (empirically confirmed on window-lit interiors).
+    cp->global_H = (value > 0.0f) ? DEHAZE_CORRECTION_WARM_HUE : DEHAZE_CORRECTION_COOL_HUE;
+    colorbalance_module->enabled = TRUE;
+  }
+
+  dt_dev_add_history_item_ext(&dev, colorbalance_module, TRUE, TRUE);
+  note_pipe_change(colorbalance_module);
 }
 
 // Drives the tonecurve module's L-channel spline. Unlike every scalar setter
