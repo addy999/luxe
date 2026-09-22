@@ -141,7 +141,7 @@ scons arch=arm64 target=template_release
 
 The build writes compiled frameworks into `project/bin/`, which `project/dt_backend.gdextension` points at.
 
-`extension/dt_link_flags.json` is generated per machine: it lists the include paths, link libraries, and preprocessor defines extracted from your own darktable build. `SConstruct` reads it, so regenerate it from your build tree whenever you rebuild darktable with different options. (The defines matter for correctness, not just compilation: darktable's headers put struct fields behind `#ifdef` guards, so a mismatched define set shifts struct offsets silently.)
+`extension/dt_link_flags.json` is generated per machine (gitignored, never committed): it lists the include paths, link libraries, and preprocessor defines extracted from your own darktable build. `SConstruct` reads it and, when the file is missing, runs `extension/gen_link_flags.py` to regenerate it from your build tree automatically. (The defines matter for correctness, not just compilation: darktable's headers put struct fields behind `#ifdef` guards, so a mismatched define set shifts struct offsets silently.)
 
 </details>
 

@@ -44,8 +44,8 @@ darktable, the two-pipe preview/full design, the UI shell, and more), read
    smoke test (below).
 
 `extension/dt_link_flags.json` is a generated, per-machine file (gitignored).
-SCons regenerates it from your darktable build tree during the extension
-build; see the README for details.
+`SConstruct` regenerates it from your darktable build tree during the extension
+build via `extension/gen_link_flags.py`; see the README for details.
 
 ## Running tests
 

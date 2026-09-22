@@ -51,6 +51,8 @@ directory and library exist. That's expected during early scaffolding.
 """
 
 import os
+import subprocess
+import sys
 
 env = SConscript("godot-cpp/SConstruct")
 
@@ -167,17 +169,35 @@ if env["platform"] == "macos":
 # darktable.h transitively pulls in dozens of third-party headers (GTK3,
 # glib, librsvg, json-glib, exiv2, lensfun, OpenCV, OpenEXR, ...). Rather
 # than hand-maintain that list, dt_link_flags.json is generated per-machine
-# from the actual CMake build by dumping compile_commands.json's include paths
-# for common/darktable.c and build.ninja's LINK_LIBRARIES for libdarktable.dylib.
+# from the actual CMake build by gen_link_flags.py (compile_commands.json's
+# entry for common/darktable.c supplies the include paths and defines;
+# the libdarktable.dylib link line supplies the link flags and libraries --
+# Ninja's build.ninja or the Makefiles generator's link.txt, whichever the
+# darktable build used).
 #
 # dt_link_flags.json is gitignored: it bakes in absolute paths tied to one
-# machine's darktable build, so it is NOT checked in. A FRESH CLONE MUST
-# REGENERATE IT before `scons` can compile dt_backend; the SCons recipe below
-# derives it from darktable's own link metadata.
+# machine's darktable build, so it is NOT checked in. If it is missing (fresh
+# clone, or after rebuilding darktable elsewhere), run the generator now.
 flags_path = os.path.join(extension_dir, "dt_link_flags.json")
-# Read the per-machine flag set generated above. If it is missing (fresh
-# clone, or a different machine), regenerate it rather than relying on the
-# bare pkg-config fallback in the else branch below.
+if not os.path.isfile(flags_path):
+    gen_cmd = [
+        sys.executable or "python3",
+        os.path.join(extension_dir, "gen_link_flags.py"),
+        "--build-dir", dt_build_dir,
+        "--output", flags_path,
+    ]
+    print("*** dt_backend: %s not found, generating from %s ..."
+          % (flags_path, dt_build_dir))
+    gen_rc = subprocess.call(gen_cmd)
+    if gen_rc != 0 or not os.path.isfile(flags_path):
+        print(
+            "*** dt_backend: warning: could not generate %s (exit %d) -- "
+            "falling back to bare pkg-config gtk+-3.0 flags, which is NOT "
+            "enough to satisfy darktable.h's transitive includes."
+            % (flags_path, gen_rc)
+        )
+        env.ParseConfig("pkg-config gtk+-3.0 --cflags --libs")
+# Read the per-machine flag set generated above.
 if os.path.isfile(flags_path):
     import json
 
@@ -193,14 +213,8 @@ if os.path.isfile(flags_path):
     # dt_iop_module_t.params_size silently reads garbage instead of failing
     # to compile. These must match darktable's own CMake build exactly.
     env.Append(CPPDEFINES=dt_flags.get("defines", []))
-else:
-    print(
-        "*** dt_backend: warning: %s not found -- falling back to bare "
-        "pkg-config gtk+-3.0 flags, which is NOT enough to satisfy "
-        "darktable.h's transitive includes (librsvg, json-glib, exiv2, "
-        "lensfun, etc). Regenerate dt_link_flags.json from your darktable build." % flags_path
-    )
-    env.ParseConfig("pkg-config gtk+-3.0 --cflags --libs")
+# (If the file still doesn't exist, generation failed above and the
+# pkg-config fallback has already been applied.)
 
 # --- sources -----------------------------------------------------------
 sources = Glob("src/*.cpp")
