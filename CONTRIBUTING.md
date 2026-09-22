@@ -43,9 +43,10 @@ darktable, the two-pipe preview/full design, the UI shell, and more), read
 4. Open the Godot project at `project/project.godot` and run it, or use the
    smoke test (below).
 
-`extension/dt_link_flags.json` is a generated, per-machine file (gitignored).
-`SConstruct` regenerates it from your darktable build tree during the extension
-build via `extension/gen_link_flags.py`; see the README for details.
+`extension/dt_link_flags.json` is a per-machine file (gitignored) listing the
+include paths, link flags, and defines for your darktable build. It is not
+distributed with the source; you must construct it yourself before the
+extension will compile.
 
 ## Running tests
 

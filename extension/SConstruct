@@ -51,8 +51,6 @@ directory and library exist. That's expected during early scaffolding.
 """
 
 import os
-import subprocess
-import sys
 
 env = SConscript("godot-cpp/SConstruct")
 
@@ -176,27 +174,18 @@ if env["platform"] == "macos":
 # darktable build used).
 #
 # dt_link_flags.json is gitignored: it bakes in absolute paths tied to one
-# machine's darktable build, so it is NOT checked in. If it is missing (fresh
-# clone, or after rebuilding darktable elsewhere), run the generator now.
+# machine's darktable build, so it is NOT checked in. It is also not
+# generated automatically: you must provide it yourself before building.
 flags_path = os.path.join(extension_dir, "dt_link_flags.json")
 if not os.path.isfile(flags_path):
-    gen_cmd = [
-        sys.executable or "python3",
-        os.path.join(extension_dir, "gen_link_flags.py"),
-        "--build-dir", dt_build_dir,
-        "--output", flags_path,
-    ]
-    print("*** dt_backend: %s not found, generating from %s ..."
-          % (flags_path, dt_build_dir))
-    gen_rc = subprocess.call(gen_cmd)
-    if gen_rc != 0 or not os.path.isfile(flags_path):
-        print(
-            "*** dt_backend: warning: could not generate %s (exit %d) -- "
-            "falling back to bare pkg-config gtk+-3.0 flags, which is NOT "
-            "enough to satisfy darktable.h's transitive includes."
-            % (flags_path, gen_rc)
-        )
-        env.ParseConfig("pkg-config gtk+-3.0 --cflags --libs")
+    print(
+        "*** dt_backend: %s not found. It is machine-specific and not "
+        "distributed with the source; you need to create it yourself "
+        "(include paths, link flags, and defines for your darktable "
+        "build) before the GDExtension can compile."
+        % flags_path
+    )
+    Exit(1)
 # Read the per-machine flag set generated above.
 if os.path.isfile(flags_path):
     import json
