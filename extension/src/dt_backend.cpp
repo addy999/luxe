@@ -15,6 +15,7 @@
 
 extern "C" {
 #include "common/dtpthread.h"
+#include "common/introspection.h" // dt_introspection_field_t + dt_introspection_get_enum_value()
 }
 
 #include <algorithm>
@@ -124,6 +125,97 @@ bool datadir_looks_valid(const std::string &datadir) {
   const bool ok = path_exists(sentinel);
   g_free(sentinel);
   return ok;
+}
+
+// --- introspection field access ---------------------------------------------
+// darktable's DT_MODULE_INTROSPECTION() generates per-module accessors on every
+// IOP module: get_p(params, "name") -> the byte address of a named field inside
+// an opaque params blob, and get_f("name") -> that field's runtime descriptor
+// (type, size, offset, and, for enums, the symbolic value table). This lets the
+// backend drive a module's PRIVATE params struct without redeclaring it: a name
+// typo or an upstream field removal surfaces as a NULL return here (logged, and
+// the setter bails) instead of a silently-shifted struct offset. See the note
+// in dt_backend.h for why this replaces verbatim struct redeclarations.
+
+// Live-params field address by name (for writes). NULL (with a log line) if the
+// module or field is missing.
+void *dt_iop_field(dt_iop_module_t *m, const char *name)
+{
+  if(!m || !m->get_p) return nullptr;
+  void *p = m->get_p(m->params, name);
+  if(!p)
+    UtilityFunctions::printerr("DtBackend: module has no params field \"", name, "\"");
+  return p;
+}
+
+// Same, but on default_params (for reading as-shot values that darktable
+// resolves into default_params at load, not the live blob).
+const void *dt_iop_field_default(dt_iop_module_t *m, const char *name)
+{
+  if(!m || !m->get_p) return nullptr;
+  const void *p = m->get_p(m->default_params, name);
+  if(!p)
+    UtilityFunctions::printerr("DtBackend: module has no params field \"", name, "\"");
+  return p;
+}
+
+// Write a float / int field by name into a module's live params. Return false
+// (logging via dt_iop_field) if the field is missing.
+bool dt_iop_set_float(dt_iop_module_t *m, const char *name, float value)
+{
+  float *p = (float *)dt_iop_field(m, name);
+  if(!p) return false;
+  *p = value;
+  return true;
+}
+
+bool dt_iop_set_int(dt_iop_module_t *m, const char *name, int value)
+{
+  int *p = (int *)dt_iop_field(m, name);
+  if(!p) return false;
+  *p = value;
+  return true;
+}
+
+// Write an enum field by resolving its symbolic C value name (e.g.
+// "DT_ILLUMINANT_D") to the integer code via the generated introspection, then
+// store that code. Returns false (logging) if the field or the named value is
+// unknown. Enum fields are int-sized in every module this backend touches.
+bool dt_iop_set_enum(dt_iop_module_t *m, const char *name, const char *value_name)
+{
+  if(!m || !m->get_f) return false;
+  dt_introspection_field_t *f = m->get_f(name);
+  int code = 0;
+  if(!f || !dt_introspection_get_enum_value(f, value_name, &code))
+  {
+    UtilityFunctions::printerr("DtBackend: enum field \"", name,
+                               "\" has no value \"", value_name, "\"");
+    return false;
+  }
+  int *p = (int *)dt_iop_field(m, name);
+  if(!p) return false;
+  *p = code;
+  return true;
+}
+
+// Pin toneequal's mask machinery to the "simple tone curve" preset state
+// (toneequal.c:480-491): details = DT_TONEEQ_NONE (no guided filter -- a plain
+// global tone curve, cheap and free of side effects), method = DT_TONEEQ_NORM_2
+// (RGB euclidean norm), iterations = 1, and the feather/quantization/boost
+// fields at their preset defaults. Both set_blacks and set_whites call this so
+// whichever runs first leaves the params blob in a known state. Returns false
+// (logging) if any field is missing.
+bool toneequal_pin_preset(dt_iop_module_t *m)
+{
+  return dt_iop_set_enum(m, "details", "DT_TONEEQ_NONE")
+      && dt_iop_set_enum(m, "method", "DT_TONEEQ_NORM_2")
+      && dt_iop_set_int(m, "iterations", 1)
+      && dt_iop_set_float(m, "blending", 5.0f)
+      && dt_iop_set_float(m, "smoothing", 1.414213562f)
+      && dt_iop_set_float(m, "feathering", 1.0f)
+      && dt_iop_set_float(m, "quantization", 0.0f)
+      && dt_iop_set_float(m, "contrast_boost", 0.0f)
+      && dt_iop_set_float(m, "exposure_boost", 0.0f);
 }
 
 } // namespace
@@ -622,8 +714,7 @@ void DtBackend::set_exposure(float ev) {
     }
   }
 
-  dt_iop_exposure_params_t *p = (dt_iop_exposure_params_t *)exposure_module->params;
-  p->exposure = ev;
+  if(!dt_iop_set_float(exposure_module, "exposure", ev)) return;
   exposure_module->enabled = TRUE;
 
   dt_dev_add_history_item_ext(&dev, exposure_module, TRUE, TRUE);
@@ -655,8 +746,7 @@ void DtBackend::set_contrast(float value) {
     }
   }
 
-  dt_iop_colorbalancergb_params_t *p = (dt_iop_colorbalancergb_params_t *)colorbalance_module->params;
-  p->contrast = value;
+  if(!dt_iop_set_float(colorbalance_module, "contrast", value)) return;
   colorbalance_module->enabled = TRUE;
 
   dt_dev_add_history_item_ext(&dev, colorbalance_module, TRUE, TRUE);
@@ -686,8 +776,7 @@ void DtBackend::set_shadows(float value) {
     }
   }
 
-  dt_iop_shadhi_params_t *p = (dt_iop_shadhi_params_t *)shadhi_module->params;
-  p->shadows = value;
+  if(!dt_iop_set_float(shadhi_module, "shadows", value)) return;
   shadhi_module->enabled = TRUE;
 
   dt_dev_add_history_item_ext(&dev, shadhi_module, TRUE, TRUE);
@@ -711,8 +800,7 @@ void DtBackend::set_highlights(float value) {
     }
   }
 
-  dt_iop_shadhi_params_t *p = (dt_iop_shadhi_params_t *)shadhi_module->params;
-  p->highlights = value;
+  if(!dt_iop_set_float(shadhi_module, "highlights", value)) return;
   shadhi_module->enabled = TRUE;
 
   dt_dev_add_history_item_ext(&dev, shadhi_module, TRUE, TRUE);
@@ -753,22 +841,13 @@ void DtBackend::set_blacks(float value) {
     }
   }
 
-  dt_iop_toneequalizer_params_t *p = (dt_iop_toneequalizer_params_t *)toneequal_module->params;
   // Pin the mask machinery to the "simple tone curve" preset state so a
   // fresh params blob is always in a known state.
-  p->details = DT_TONEEQ_NONE;
-  p->method = 4; // DT_TONEEQ_NORM_2 (RGB euclidean norm)
-  p->iterations = 1;
-  p->blending = 5.0f;
-  p->smoothing = 1.414213562f;
-  p->feathering = 1.0f;
-  p->quantization = 0.0f;
-  p->contrast_boost = 0.0f;
-  p->exposure_boost = 0.0f;
+  if(!toneequal_pin_preset(toneequal_module)) return;
 
   // Sign-inverted, full ±2 EV: see the comment above.
   // UI -1..1 -> module gain +2..-2 EV.
-  p->blacks = -value * 2.0f;
+  if(!dt_iop_set_float(toneequal_module, "blacks", -value * 2.0f)) return;
 
   toneequal_module->enabled = (value != 0.0f) ? TRUE : FALSE;
   dt_dev_add_history_item_ext(&dev, toneequal_module, TRUE, TRUE);
@@ -792,21 +871,12 @@ void DtBackend::set_whites(float value) {
     }
   }
 
-  dt_iop_toneequalizer_params_t *p = (dt_iop_toneequalizer_params_t *)toneequal_module->params;
   // Same preset pinning as set_blacks (whichever setter runs first puts the
   // blob in a known state; the other re-asserts it).
-  p->details = DT_TONEEQ_NONE;
-  p->method = 4; // DT_TONEEQ_NORM_2 (RGB euclidean norm)
-  p->iterations = 1;
-  p->blending = 5.0f;
-  p->smoothing = 1.414213562f;
-  p->feathering = 1.0f;
-  p->quantization = 0.0f;
-  p->contrast_boost = 0.0f;
-  p->exposure_boost = 0.0f;
+  if(!toneequal_pin_preset(toneequal_module)) return;
 
   // Straight through: UI +1 -> +1 EV on the whites band (brighter whites).
-  p->whites = value;
+  if(!dt_iop_set_float(toneequal_module, "whites", value)) return;
 
   toneequal_module->enabled = (value != 0.0f) ? TRUE : FALSE;
   dt_dev_add_history_item_ext(&dev, toneequal_module, TRUE, TRUE);
@@ -833,8 +903,7 @@ void DtBackend::set_saturation(float value) {
     }
   }
 
-  dt_iop_velvia_params_t *p = (dt_iop_velvia_params_t *)velvia_module->params;
-  p->strength = value;
+  if(!dt_iop_set_float(velvia_module, "strength", value)) return;
   velvia_module->enabled = TRUE;
 
   dt_dev_add_history_item_ext(&dev, velvia_module, TRUE, TRUE);
@@ -915,8 +984,7 @@ void DtBackend::set_vibrance(float value) {
     }
   }
 
-  dt_iop_vibrance_params_t *p = (dt_iop_vibrance_params_t *)vibrance_module->params;
-  p->amount = value;
+  if(!dt_iop_set_float(vibrance_module, "amount", value)) return;
   vibrance_module->enabled = TRUE;
 
   dt_dev_add_history_item_ext(&dev, vibrance_module, TRUE, TRUE);
@@ -1088,7 +1156,28 @@ void DtBackend::set_tonecurve(PackedVector2Array points) {
     }
   }
 
-  dt_iop_tonecurve_params_t *p = (dt_iop_tonecurve_params_t *)tonecurve_module->params;
+  dt_iop_module_t *m = tonecurve_module;
+
+  // The L-channel spline is tonecurve[0][0..n-1]: a counted sub-range of a
+  // fixed dt_iop_tonecurve_node_t[DT_BACKEND_TONECURVE_MAXNODES] array, plus
+  // tonecurve_nodes[0] (the live count) and tonecurve_type[0] (the
+  // interpolation kind). Resolve the array base and the node layout from the
+  // generated introspection (get_p returns the base address; get_f gives the
+  // node {x,y} stride/offsets), so no private struct is redeclared and a future
+  // node-field reorder can't silently shift the curve.
+  float *nodes = (float *)dt_iop_field(m, "tonecurve"); // &tonecurve[0][0].x
+  int *node_count = (int *)dt_iop_field(m, "tonecurve_nodes"); // &tonecurve_nodes[0]
+  int *node_type = (int *)dt_iop_field(m, "tonecurve_type");   // &tonecurve_type[0]
+  if(!nodes || !node_count || !node_type) return;
+
+  dt_introspection_field_t *node_f = m->get_f("tonecurve[0][0]");   // STRUCT {x,y}
+  dt_introspection_field_t *x_f    = m->get_f("tonecurve[0][0].x");
+  dt_introspection_field_t *y_f    = m->get_f("tonecurve[0][0].y");
+  if(!node_f || !x_f || !y_f) return;
+  const size_t node_stride = node_f->header.size;                   // sizeof(dt_iop_tonecurve_node_t) == 8
+  const size_t x_off = x_f->header.offset - node_f->header.offset;  // 0
+  const size_t y_off = y_f->header.offset - node_f->header.offset;  // 4
+
   for(int i = 0; i < n; i++) {
     Vector2 pt = points[i];
     float x = pt.x, y = pt.y;
@@ -1096,28 +1185,31 @@ void DtBackend::set_tonecurve(PackedVector2Array points) {
     if(x > 1.0f) x = 1.0f;
     if(y < 0.0f) y = 0.0f;
     if(y > 1.0f) y = 1.0f;
-    p->tonecurve[0][i].x = x;
-    p->tonecurve[0][i].y = y;
+    char *node = (char *)nodes + (size_t)i * node_stride;
+    *(float *)(node + x_off) = x;
+    *(float *)(node + y_off) = y;
   }
-  p->tonecurve_nodes[0] = n;
-  p->tonecurve_type[0] = DT_BACKEND_MONOTONE_HERMITE;
+  node_count[0] = n;
+  node_type[0] = DT_BACKEND_MONOTONE_HERMITE;
   tonecurve_module->enabled = TRUE;
 
   dt_dev_add_history_item_ext(&dev, tonecurve_module, TRUE, TRUE);
   note_pipe_change(tonecurve_module);
 }
 
-// White balance via channelmixerrgb's chromatic adaptation. See the NOTE on
-// white balance above dt_iop_channelmixer_rgb_params_t in dt_backend.h for
-// why this targets channelmixerrgb ("color calibration") instead of
-// temperature. Locates the module once (op name "channelmixerrgb"), clamps
-// to TEMP_MIN/TEMP_MAX, sets illuminant = DT_ILLUMINANT_D (daylight) and
-// adaptation = DT_ADAPTATION_CAT16 so `temperature` alone drives the CAT
-// (commit_params() derives x/y from illuminant+temperature for
-// DT_ILLUMINANT_D; see channelmixerrgb.c:3092-3098), enables the module, and
-// records a headless history item -- same pattern as every other setter
-// here. Does NOT touch `temperature` (source/src/iop/temperature.c); that
-// module is left exactly as darktable itself initialized it.
+// White balance via channelmixerrgb's chromatic adaptation. This targets
+// channelmixerrgb ("color calibration") instead of temperature because in the
+// modern scene-referred workflow `temperature` is pinned to a neutral D65_LATE
+// preset and the real chromatic adaptation is channelmixerrgb's job. Locates
+// the module once (op name "channelmixerrgb"), clamps to TEMP_MIN/TEMP_MAX,
+// sets illuminant = "DT_ILLUMINANT_D" (daylight) and adaptation =
+// "DT_ADAPTATION_CAT16" so `temperature` alone drives the CAT (commit_params()
+// derives x/y from illuminant+temperature for DT_ILLUMINANT_D; see
+// channelmixerrgb.c:3092-3098), enables the module, and records a headless
+// history item -- same pattern as every other setter here. Does NOT touch
+// `temperature` (source/src/iop/temperature.c); that module is left exactly as
+// darktable itself initialized it. The illuminant/adaptation enums are resolved
+// by name via dt_iop_set_enum(), not hardcoded numbers.
 void DtBackend::set_white_balance_temperature(float kelvin) {
   if(!image_loaded) {
     UtilityFunctions::printerr("DtBackend::set_white_balance_temperature: no image loaded");
@@ -1135,10 +1227,9 @@ void DtBackend::set_white_balance_temperature(float kelvin) {
     }
   }
 
-  dt_iop_channelmixer_rgb_params_t *p = (dt_iop_channelmixer_rgb_params_t *)channelmixer_rgb_module->params;
-  p->illuminant = DT_BACKEND_ILLUMINANT_D;
-  p->adaptation = DT_BACKEND_ADAPTATION_CAT16;
-  p->temperature = kelvin;
+  if(!dt_iop_set_enum(channelmixer_rgb_module, "illuminant", "DT_ILLUMINANT_D")) return;
+  if(!dt_iop_set_enum(channelmixer_rgb_module, "adaptation", "DT_ADAPTATION_CAT16")) return;
+  if(!dt_iop_set_float(channelmixer_rgb_module, "temperature", kelvin)) return;
   channelmixer_rgb_module->enabled = TRUE;
 
   dt_dev_add_history_item_ext(&dev, channelmixer_rgb_module, TRUE, TRUE);
@@ -1172,8 +1263,8 @@ float DtBackend::get_white_balance_temperature() {
   // default_params->temperature (channelmixerrgb.c reload_defaults ~3883-3886).
   // This getter exists solely to seed the UI slider at load, so read the
   // as-shot value from default_params.
-  dt_iop_channelmixer_rgb_params_t *dp = (dt_iop_channelmixer_rgb_params_t *)channelmixer_rgb_module->default_params;
-  return dp->temperature;
+  const float *t = (const float *)dt_iop_field_default(channelmixer_rgb_module, "temperature");
+  return t ? *t : 0.0f;
 }
 
 // Section F, same pattern as set_exposure()/set_tonecurve(): locate the
@@ -1182,9 +1273,8 @@ float DtBackend::get_white_balance_temperature() {
 // 0.1..1.0; clipping.c:1325-1328), write them into the live params blob,
 // enable the module, and record a headless history item. (left, top) is one
 // corner of the crop box and (right, bottom) the opposite corner, all as
-// normalized 0..1 fractions of the whole image -- see the struct redeclaration
-// comment in dt_backend.h for the left/top/right/bottom (NOT x/y/w/h)
-// semantics. Passing the full frame (0, 0, 1, 1) disables the module instead,
+// normalized 0..1 fractions of the whole image. (left, top) is one corner and
+// (right, bottom) the opposite corner -- cx/cy/cw/ch are edges, NOT x/y/w/h. Passing the full frame (0, 0, 1, 1) disables the module instead,
 // so a cleared crop costs nothing in the pipe. angle and all keystone/ratio
 // fields are left exactly as the module's introspection defaults left them.
 void DtBackend::set_crop(float left, float top, float right, float bottom) {
@@ -1211,11 +1301,10 @@ void DtBackend::set_crop(float left, float top, float right, float bottom) {
     }
   }
 
-  dt_iop_clipping_params_t *p = (dt_iop_clipping_params_t *)clipping_module->params;
-  p->cx = left;
-  p->cy = top;
-  p->cw = right;
-  p->ch = bottom;
+  if(!dt_iop_set_float(clipping_module, "cx", left)) return;
+  if(!dt_iop_set_float(clipping_module, "cy", top)) return;
+  if(!dt_iop_set_float(clipping_module, "cw", right)) return;
+  if(!dt_iop_set_float(clipping_module, "ch", bottom)) return;
 
   // Full frame == no crop: disable the module entirely (its own process()
   // fast path would degenerate to a copy anyway). Any tighter box re-enables.

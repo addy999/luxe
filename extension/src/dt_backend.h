@@ -10,11 +10,11 @@
  * single process-wide global), matching the architecture's "one
  * image/session at a time in-process" constraint.
  *
- * This file reproduces several private IOP parameter structs verbatim from
- * darktable (https://github.com/darktable-org/darktable), Copyright (C) the
- * darktable contributors, licensed under the GNU General Public License v3.0
- * or later. See NOTICE for full attribution and source provenance, and each
- * struct below for the specific upstream file/line it was copied from.
+ * Links against and drives darktable (https://github.com/darktable-org/darktable),
+ * Copyright (C) the darktable contributors, licensed under the GNU General
+ * Public License v3.0 or later. See NOTICE for full attribution. IOP params
+ * are accessed via darktable's generated introspection API (get_p/get_f), not
+ * by redeclaring private structs -- see the note below.
  */
 #pragma once
 
@@ -39,473 +39,38 @@ extern "C" {
 #include "imageio/imageio_module.h"
 }
 
-// dt_iop_exposure_params_t is defined inside source/src/iop/exposure.c
-// itself (not a header) -- darktable IOP modules keep their params struct
-// private to their own translation unit and only expose it to the rest of
-// darktable as an opaque `void *params` blob sized by `params_size`, with
-// runtime introspection doing the rest. That means this struct can't be
-// #included; it's redeclared here to match exposure.c exactly (field order
-// and types straight from source/src/iop/exposure.c:49-75,
-// DT_MODULE_INTROSPECTION version 7).
-// If exposure.c's params struct or introspection version ever changes,
-// this redeclaration must be updated to match.
-typedef enum dt_iop_exposure_mode_t
-{
-  EXPOSURE_MODE_MANUAL,
-  EXPOSURE_MODE_DEFLICKER
-} dt_iop_exposure_mode_t;
-
-typedef struct dt_iop_exposure_params_t
-{
-  dt_iop_exposure_mode_t mode;
-  float black;
-  float exposure;
-  float deflicker_percentile;
-  float deflicker_target_level;
-  gboolean compensate_exposure_bias;
-  gboolean compensate_hilite_pres;
-} dt_iop_exposure_params_t;
-
-// dt_iop_colorbalancergb_params_t is likewise private to
-// source/src/iop/colorbalancergb.c, so it's redeclared here to match that file
-// exactly (source/src/iop/colorbalancergb.c:54-106, DT_MODULE_INTROSPECTION
-// version 5). We only drive the `contrast` field ($MIN: -1.0 $MAX: 1.0
-// $DEFAULT: 0.0), but the WHOLE struct and its trailing enum must be reproduced
-// verbatim -- field order and types are load-bearing: the opaque void* params
-// blob is indexed by offset, so a wrong/missing field silently shifts `contrast`
-// to the wrong bytes. Every field here is 4 bytes (float, or the int-sized enum),
-// so the layout is padding-free. The enum name keeps darktable's own upstream
-// spelling `colorbalancrgb` (missing the second `e`) on purpose. If this
-// module's struct or introspection version changes upstream, update this block.
-typedef enum dt_iop_colorbalancrgb_saturation_t
-{
-  DT_COLORBALANCE_SATURATION_JZAZBZ = 0,
-  DT_COLORBALANCE_SATURATION_DTUCS = 1
-} dt_iop_colorbalancrgb_saturation_t;
-
-typedef struct dt_iop_colorbalancergb_params_t
-{
-  /* params of v1 */
-  float shadows_Y;
-  float shadows_C;
-  float shadows_H;
-  float midtones_Y;
-  float midtones_C;
-  float midtones_H;
-  float highlights_Y;
-  float highlights_C;
-  float highlights_H;
-  float global_Y;
-  float global_C;
-  float global_H;
-  float shadows_weight;
-  float white_fulcrum;
-  float highlights_weight;
-  float chroma_shadows;
-  float chroma_highlights;
-  float chroma_global;
-  float chroma_midtones;
-  float saturation_global;
-  float saturation_highlights;
-  float saturation_midtones;
-  float saturation_shadows;
-  float hue_angle;
-
-  /* params of v2 */
-  float brilliance_global;
-  float brilliance_highlights;
-  float brilliance_midtones;
-  float brilliance_shadows;
-
-  /* params of v3 */
-  float mask_grey_fulcrum;
-
-  /* params of v4 */
-  float vibrance;
-  float grey_fulcrum;
-  float contrast;
-
-  /* params of v5 */
-  dt_iop_colorbalancrgb_saturation_t saturation_formula;
-} dt_iop_colorbalancergb_params_t;
-
-// dt_iop_shadhi_params_t is likewise private to source/src/iop/shadhi.c, so
-// it's redeclared here to match that file exactly (source/src/iop/shadhi.c:
-// 66-80, DT_MODULE_INTROSPECTION version 5). We only drive `shadows` ($MIN:
-// -100.0 $MAX: 100.0 $DEFAULT: 50.0) and `highlights` ($MIN: -100.0 $MAX:
-// 100.0 $DEFAULT: -50.0), but the whole struct must be reproduced verbatim --
-// field order/types are load-bearing (offset-indexed opaque void* params
-// blob), including `reserved2`, which carries no introspection tag but must
-// stay in place or every field after it (compress onward) shifts. The op
-// name for lookup is "shadhi" (source filename), while name() returns the
-// display string "shadows and highlights". dt_gaussian_order_t is normally
-// declared in source/src/common/gaussian.h; redeclared here for the same
-// reason. If shadhi.c's struct or introspection version changes upstream,
-// update this block.
-// dt_gaussian_order_t used to be redeclared here (shadhi.c keeps it private);
-// blend.h (needed for monochrome's blend-opacity driving) pulls in
-// common/gaussian.h which defines it for real, so the redeclaration is gone.
-
-typedef enum dt_iop_shadhi_algo_t
-{
-  SHADHI_ALGO_GAUSSIAN,
-  SHADHI_ALGO_BILATERAL
-} dt_iop_shadhi_algo_t;
-
-typedef struct dt_iop_shadhi_params_t
-{
-  dt_gaussian_order_t order;
-  float radius;
-  float shadows;
-  float whitepoint;
-  float highlights;
-  float reserved2;
-  float compress;
-  float shadows_ccorrect;
-  float highlights_ccorrect;
-  unsigned int flags;
-  float low_approximation;
-  dt_iop_shadhi_algo_t shadhi_algo;
-} dt_iop_shadhi_params_t;
-
-// dt_iop_toneequalizer_params_t is likewise private to
-// source/src/iop/toneequal.c, so it's redeclared here to match that file
-// exactly (source/src/iop/toneequal.c:171-193, DT_MODULE_INTROSPECTION
-// version 2). This module backs the app's "Blacks"/"Whites" sliders, which
-// need TWO-SIDED control (Lightroom semantics: positive Whites brightens,
-// positive Blacks deepens). It replaced rgblevels, whose black/white POINT
-// fields are hard-bounded to 0..1 (RGBLEVELS_MIN/MAX, rgblevels.c:36-38) and
-// at neutral already sit AT those extremes, so there was no field to write
-// for "expand the range" -- Whites could only compress the white point down,
-// which read as broken in the UI. toneequal exposes nine 1-EV-band gain
-// fields, all two-sided (-2..+2 EV, default 0, zero coupling); we drive
-// `whites` (the -1 EV band, toneequal.c:180) and `blacks` (the -5 EV band,
-// toneequal.c:176). NOTE THE SIGN: a positive EV gain LIFTS its band, but
-// Lightroom's positive Blacks DEEPENS blacks, so the Blacks setter writes
-// -value (sign-inverted); Whites writes +value straight through. The UI range
-// is -1..1; Blacks maps to the FULL ±2 EV band gain (at ±1 EV it felt weaker
-// than the shadhi-backed Shadows slider), Whites to ±1 EV. Mask machinery
-// is pinned to the
-// module's "simple tone curve" preset values (toneequal.c:480-491): details =
-// DT_TONEEQ_NONE (no guided filter -- global tone curve, cheap and free of
-// side effects), method = DT_TONEEQ_NORM_2 (dt_iop_luminance_mask_method_t,
-// source/src/common/luminance_mask.h:39-49, 4-byte enum, RGB euclidean norm =
-// 4), iterations = 1, all boost fields 0. blending/feathering/quantization/
-// smoothing are ignored by DT_TONEEQ_NONE but set to preset defaults anyway
-// so the params blob always matches a known state. Every field is 4 bytes, so
-// the layout is padding-free. If toneequal.c's struct or introspection
-// version changes upstream, update this block.
-
-typedef enum dt_iop_toneequalizer_filter_t
-{
-  DT_TONEEQ_NONE = 0,
-  DT_TONEEQ_AVG_GUIDED,
-  DT_TONEEQ_GUIDED,
-  DT_TONEEQ_AVG_EIGF,
-  DT_TONEEQ_EIGF
-} dt_iop_toneequalizer_filter_t;
-
-typedef struct dt_iop_toneequalizer_params_t
-{
-  float noise;              // $MIN: -2.0 $MAX: 2.0 $DEFAULT: 0.0 ("blacks")
-  float ultra_deep_blacks;  // $MIN: -2.0 $MAX: 2.0 $DEFAULT: 0.0 ("deep shadows")
-  float deep_blacks;        // $MIN: -2.0 $MAX: 2.0 $DEFAULT: 0.0 ("shadows")
-  float blacks;             // $MIN: -2.0 $MAX: 2.0 $DEFAULT: 0.0 ("light shadows")
-  float shadows;            // $MIN: -2.0 $MAX: 2.0 $DEFAULT: 0.0 ("mid-tones")
-  float midtones;           // $MIN: -2.0 $MAX: 2.0 $DEFAULT: 0.0 ("dark highlights")
-  float highlights;         // $MIN: -2.0 $MAX: 2.0 $DEFAULT: 0.0 ("highlights")
-  float whites;             // $MIN: -2.0 $MAX: 2.0 $DEFAULT: 0.0 ("whites")
-  float speculars;          // $MIN: -2.0 $MAX: 2.0 $DEFAULT: 0.0 ("speculars")
-  float blending;           // $MIN: 0.01 $MAX: 100.0 $DEFAULT: 5.0
-  float smoothing;          // $DEFAULT: sqrt(2)
-  float feathering;         // $MIN: 0.01 $MAX: 10000.0 $DEFAULT: 1.0
-  float quantization;       // $MIN: 0.0 $MAX: 2.0 $DEFAULT: 0.0
-  float contrast_boost;     // $MIN: -16.0 $MAX: 16.0 $DEFAULT: 0.0
-  float exposure_boost;     // $MIN: -16.0 $MAX: 16.0 $DEFAULT: 0.0
-  dt_iop_toneequalizer_filter_t details; // $DEFAULT: DT_TONEEQ_EIGF (we pin NONE)
-  int method;               // dt_iop_luminance_mask_method_t, $DEFAULT: DT_TONEEQ_NORM_2 (4)
-  int iterations;           // $MIN: 1 $MAX: 20 $DEFAULT: 1
-} dt_iop_toneequalizer_params_t;
-
-// dt_iop_velvia_params_t is likewise private to source/src/iop/velvia.c, so
-// it's redeclared here to match that file exactly (source/src/iop/velvia.c:
-// 40-44, DT_MODULE_INTROSPECTION version 2). We only drive `strength` ($MIN:
-// 0.0 $MAX: 100.0 $DEFAULT: 25.0), but the whole struct (including `bias`)
-// must be reproduced verbatim -- field order/types are load-bearing. If
-// velvia.c's struct or introspection version changes upstream, update this
-// block. "velvia" is a saturation-boost module and is what this app's
-// "Saturation" slider drives.
-typedef struct dt_iop_velvia_params_t
-{
-  float strength;
-  float bias;
-} dt_iop_velvia_params_t;
-
-// dt_iop_monochrome_params_t is likewise private to source/src/iop/monochrome.c,
-// so it is redeclared here to match that file exactly (source/src/iop/
-// monochrome.c:49-55, DT_MODULE_INTROSPECTION version 2). This backend never
-// writes any of these fields -- the module's introspection defaults (a=0, b=0,
-// size=2, highlights=0) sitting in the live params blob are already a plain
-// neutral grayscale conversion, which is all the saturation slider's
-// below-neutral range needs. What it DOES drive is the module's blend
-// parameters (dt_develop_blend_params_t, source/src/develop/blend.h:180-225):
-// uniform-mask mode (DEVELOP_MASK_ENABLED) with a fractional `opacity`
-// (0..100), so the slider can fade between full color and full B&W. If
-// monochrome.c's struct or introspection version changes upstream, update
-// this block.
-typedef struct dt_iop_monochrome_params_t
-{
-  float a;
-  float b;
-  float size;
-  float highlights;
-} dt_iop_monochrome_params_t;
-
-// dt_iop_vibrance_params_t is likewise private to source/src/iop/vibrance.c,
-// so it's redeclared here to match that file exactly (source/src/iop/
-// vibrance.c:37-40, DT_MODULE_INTROSPECTION version 2). Single-field struct:
-// `amount` ($MIN: 0.0 $MAX: 100.0 $DEFAULT: 25.0). If vibrance.c's struct or
-// introspection version changes upstream, update this block.
-typedef struct dt_iop_vibrance_params_t
-{
-  float amount;
-} dt_iop_vibrance_params_t;
-
-// NOTE on white balance: earlier revisions of this backend drove `temperature.c`'s
-// red/green/blue directly to implement white balance, matching darktable's
-// LEGACY workflow where `temperature` owns the camera-to-D65 correction. In
-// the modern scene-referred (sigmoid) workflow this checkout defaults to,
-// `temperature` is instead pinned to a neutral D65_LATE preset (1.0/1.0/1.0)
-// and the real chromatic adaptation is performed by `channelmixerrgb` (op
-// name "channelmixerrgb", display name "color calibration"; see
-// source/src/iop/channelmixerrgb.c reload_defaults(), lines ~3844-3888).
-// Force-enabling/committing `temperature` for WB fought that handoff and
-// left the camera-to-D65 correction never applied, which is the "green
-// tint" bug. `temperature` is now left completely untouched by this backend
-// (no setter, no getter, no forced enable/history item); the struct
-// redeclaration for it has been removed along with set/get_white_balance_red/
-// _blue(). White balance is now driven via set_white_balance_temperature()
-// below, which targets `channelmixerrgb`'s `temperature`/`illuminant`/
-// `adaptation` fields instead. If a future task needs to read/write
-// `temperature.c`'s own params again, its struct was: { float red; float
-// green; float blue; float various; int preset; } (source/src/iop/
-// temperature.c:67-74, DT_MODULE_INTROSPECTION version 4).
-
-// dt_iop_channelmixer_rgb_params_t is private to
-// source/src/iop/channelmixerrgb.c, so it's redeclared here to match that
-// file exactly (source/src/iop/channelmixerrgb.c:92-116, DT_MODULE_
-// INTROSPECTION version 3). CHANNEL_SIZE is 4 (channelmixerrgb.c:73). We only
-// drive `illuminant`, `adaptation`, and `temperature` ($MIN: TEMP_MIN=1667.0
-// $MAX: TEMP_MAX=25000.0 $DEFAULT: 5003.0) to implement white balance as a
-// chromatic-adaptation-transform (CAT) problem: illuminant = DT_ILLUMINANT_D
-// (daylight) with `temperature` set from the Kelvin slider, and adaptation =
-// DT_ADAPTATION_CAT16 (both are the module's own defaults for a
-// non-monochrome raw with no other CAT already registered on the pipe -- see
-// reload_defaults() below). The channel-mix matrix (red/green/blue/grey[])
-// and everything else is left at whatever darktable itself initialized, so
-// this backend only ever touches 3 of the ~20 fields. The WHOLE struct must
-// still be reproduced verbatim -- field order/types are load-bearing, since
-// the opaque void* params blob is indexed by offset. Every field here is
-// 4 bytes (float, gboolean/gint, or a 4-byte enum), so the layout is
-// padding-free.
+// --- darktable params access strategy --------------------------------------
+// darktable IOP modules keep their params struct private to their own
+// translation unit: exposure.c defines dt_iop_exposure_params_t locally, never
+// in a header. The rest of darktable sees only an opaque `void *params` blob
+// sized by `params_size`, with runtime introspection doing the rest
+// (source/src/common/introspection.h). So rather than redeclare those structs
+// here -- struct layout is load-bearing and drifts silently with every upstream
+// field edit -- this backend drives modules through the generated per-module
+// accessors: `module->get_p(params, "name")` returns the byte address of a field
+// looked up BY NAME, and
+// `dt_introspection_get_enum_value(module->get_f("name"), "ENUM_VALUE", &code)`
+// resolves an enum's symbolic value to its integer code. A field rename/removal
+// upstream surfaces as a NULL lookup (logged, and the setter bails) instead of a
+// silently-shifted struct offset. See dt_iop_field()/dt_iop_set_enum() in
+// dt_backend.cpp.
 //
-// Per source/src/iop/channelmixerrgb.c commit_params() (lines ~3092-3098):
-// for any illuminant OTHER than DT_ILLUMINANT_CAMERA/DT_ILLUMINANT_CUSTOM,
-// the module derives the CIE xy chromaticity coordinates (`x`,`y` in this
-// struct) FROM `illuminant`+`temperature` at commit time via
-// illuminant_to_xy() -- it does not read back the `x`,`y` fields we don't
-// set for DT_ILLUMINANT_D. So setting `temperature` alone (with illuminant
-// pinned to DT_ILLUMINANT_D) is sufficient to drive the adaptation matrix;
-// `x`/`y` are left untouched (they default to 0.333 per the struct's own
-// $DEFAULT and are irrelevant for DT_ILLUMINANT_D).
-//
-// Per reload_defaults() (channelmixerrgb.c lines ~3844-3888): on a fresh RAW
-// load with no other module already registered as the pipe's CAT, darktable
-// itself computes the AS-SHOT temperature from the camera's raw white-balance
-// coefficients (find_temperature_from_raw_coeffs()) and typically resolves
-// illuminant to DT_ILLUMINANT_CAMERA or DT_ILLUMINANT_D (via
-// _check_if_close_to_daylight()), NOT the struct's flat $DEFAULT: 5003.0.
-// get_white_balance_temperature() below reads that already-resolved
-// as-shot value back (before this backend's setter ever runs) so the UI can
-// seed its slider from the real per-image default, matching the old
-// get_white_balance_red()/_blue() pattern. If channelmixerrgb.c's struct or
-// introspection version changes upstream, update this block.
-#define DT_BACKEND_CHANNELMIXERRGB_CHANNEL_SIZE 4
+// The only constants still needed below are plain literals documented at their
+// darktable source sites -- no private enum or struct is redeclared in this file.
 
-typedef enum dt_backend_illuminant_t
-{
-  DT_BACKEND_ILLUMINANT_PIPE            = 0,
-  DT_BACKEND_ILLUMINANT_A               = 1,
-  DT_BACKEND_ILLUMINANT_D               = 2,
-  DT_BACKEND_ILLUMINANT_E               = 3,
-  DT_BACKEND_ILLUMINANT_F               = 4,
-  DT_BACKEND_ILLUMINANT_LED             = 5,
-  DT_BACKEND_ILLUMINANT_BB              = 6,
-  DT_BACKEND_ILLUMINANT_CUSTOM          = 7,
-  DT_BACKEND_ILLUMINANT_DETECT_SURFACES = 8,
-  DT_BACKEND_ILLUMINANT_DETECT_EDGES    = 9,
-  DT_BACKEND_ILLUMINANT_CAMERA          = 10,
-} dt_backend_illuminant_t;
-
-typedef enum dt_backend_illuminant_fluo_t
-{
-  DT_BACKEND_ILLUMINANT_FLUO_F1  = 0,
-  DT_BACKEND_ILLUMINANT_FLUO_F2  = 1,
-  DT_BACKEND_ILLUMINANT_FLUO_F3  = 2,
-  DT_BACKEND_ILLUMINANT_FLUO_F4  = 3,
-  DT_BACKEND_ILLUMINANT_FLUO_F5  = 4,
-  DT_BACKEND_ILLUMINANT_FLUO_F6  = 5,
-  DT_BACKEND_ILLUMINANT_FLUO_F7  = 6,
-  DT_BACKEND_ILLUMINANT_FLUO_F8  = 7,
-  DT_BACKEND_ILLUMINANT_FLUO_F9  = 8,
-  DT_BACKEND_ILLUMINANT_FLUO_F10 = 9,
-  DT_BACKEND_ILLUMINANT_FLUO_F11 = 10,
-  DT_BACKEND_ILLUMINANT_FLUO_F12 = 11,
-} dt_backend_illuminant_fluo_t;
-
-typedef enum dt_backend_illuminant_led_t
-{
-  DT_BACKEND_ILLUMINANT_LED_B1   = 0,
-  DT_BACKEND_ILLUMINANT_LED_B2   = 1,
-  DT_BACKEND_ILLUMINANT_LED_B3   = 2,
-  DT_BACKEND_ILLUMINANT_LED_B4   = 3,
-  DT_BACKEND_ILLUMINANT_LED_B5   = 4,
-  DT_BACKEND_ILLUMINANT_LED_BH1  = 5,
-  DT_BACKEND_ILLUMINANT_LED_RGB1 = 6,
-  DT_BACKEND_ILLUMINANT_LED_V1   = 7,
-  DT_BACKEND_ILLUMINANT_LED_V2   = 8,
-} dt_backend_illuminant_led_t;
-
-typedef enum dt_backend_adaptation_t
-{
-  DT_BACKEND_ADAPTATION_LINEAR_BRADFORD = 0,
-  DT_BACKEND_ADAPTATION_CAT16           = 1,
-  DT_BACKEND_ADAPTATION_FULL_BRADFORD   = 2,
-  DT_BACKEND_ADAPTATION_XYZ             = 3,
-  DT_BACKEND_ADAPTATION_RGB             = 4,
-} dt_backend_adaptation_t;
-
-typedef enum dt_backend_channelmixerrgb_version_t
-{
-  DT_BACKEND_CHANNELMIXERRGB_V_1 = 0,
-  DT_BACKEND_CHANNELMIXERRGB_V_2 = 1,
-  DT_BACKEND_CHANNELMIXERRGB_V_3 = 2,
-} dt_backend_channelmixerrgb_version_t;
-
-// TEMP_MIN/TEMP_MAX from channelmixerrgb.c:82-83, used to clamp
-// set_white_balance_temperature()'s input.
+// channelmixerrgb.c:82-83 -- clamp range for the White Balance Kelvin slider.
 #define DT_BACKEND_CHANNELMIXERRGB_TEMP_MIN 1667.0f
 #define DT_BACKEND_CHANNELMIXERRGB_TEMP_MAX 25000.0f
 
-typedef struct dt_iop_channelmixer_rgb_params_t
-{
-  /* params of v1 and v2 */
-  float red[DT_BACKEND_CHANNELMIXERRGB_CHANNEL_SIZE];
-  float green[DT_BACKEND_CHANNELMIXERRGB_CHANNEL_SIZE];
-  float blue[DT_BACKEND_CHANNELMIXERRGB_CHANNEL_SIZE];
-  float saturation[DT_BACKEND_CHANNELMIXERRGB_CHANNEL_SIZE];
-  float lightness[DT_BACKEND_CHANNELMIXERRGB_CHANNEL_SIZE];
-  float grey[DT_BACKEND_CHANNELMIXERRGB_CHANNEL_SIZE];
-  gboolean normalize_R, normalize_G, normalize_B, normalize_sat, normalize_light, normalize_grey;
-  dt_backend_illuminant_t illuminant;
-  dt_backend_illuminant_fluo_t illum_fluo;
-  dt_backend_illuminant_led_t illum_led;
-  dt_backend_adaptation_t adaptation;
-  float x, y;
-  float temperature;
-  float gamut;
-  gboolean clip;
-
-  /* params of v3 */
-  dt_backend_channelmixerrgb_version_t version;
-
-  /* always add new params after this so we can import legacy params with memcpy on the common part of the struct */
-
-} dt_iop_channelmixer_rgb_params_t;
-
-// dt_iop_tonecurve_params_t is likewise private to source/src/iop/tonecurve.c,
-// so it's redeclared here to match that file exactly (source/src/iop/
-// tonecurve.c:81-112, DT_MODULE_INTROSPECTION version 5). Unlike every other
-// module above, the field we drive (`tonecurve[0]`, the L-channel curve) is a
-// fixed-size array of {x,y} node structs plus a live node count
-// (`tonecurve_nodes[0]`), not a single scalar -- see set_tonecurve() below
-// for the spline UI this backs. DT_IOP_TONECURVE_MAXNODES is 20
-// (tonecurve.c:48). The whole
-// struct (all three L/a/b channels, autoscale, preset, unbound_ab,
-// preserve_colors) must be reproduced verbatim even though we only ever touch
-// channel 0 -- field order/types are load-bearing. If tonecurve.c's struct or
-// introspection version changes upstream, update this block.
+// tonecurve.c:48 -- max spline control points on the L-channel curve.
 #define DT_BACKEND_TONECURVE_MAXNODES 20
 
-typedef struct dt_iop_tonecurve_node_t
-{
-  float x;
-  float y;
-} dt_iop_tonecurve_node_t;
-
-typedef enum dt_iop_tonecurve_autoscale_t
-{
-  DT_S_SCALE_MANUAL = 0,
-  DT_S_SCALE_AUTOMATIC = 1,
-  DT_S_SCALE_AUTOMATIC_XYZ = 2,
-  DT_S_SCALE_AUTOMATIC_RGB = 3,
-} dt_iop_tonecurve_autoscale_t;
-
-// Mirrors the plain #defines CUBIC_SPLINE/CATMULL_ROM/MONOTONE_HERMITE from
-// source/src/common/curve_tools.h:27-29 (0/1/2) -- tonecurve_type[] stores one
-// of these as a plain int, not a named enum type, in the real struct.
+// curve_tools.h:29 -- CUBIC_SPLINE 0, CATMULL_ROM 1, MONOTONE_HERMITE 2.
+// tonecurve_type[] stores one of these as a plain int (no named enum type in
+// the struct), so the interpolation kind is written as this literal rather than
+// resolved from a nonexistent enum introspection.
 #define DT_BACKEND_MONOTONE_HERMITE 2
 
-typedef struct dt_iop_tonecurve_params_t
-{
-  dt_iop_tonecurve_node_t tonecurve[3][DT_BACKEND_TONECURVE_MAXNODES]; // L, a, b
-  int tonecurve_nodes[3];
-  int tonecurve_type[3];
-  dt_iop_tonecurve_autoscale_t tonecurve_autoscale_ab;
-  int tonecurve_preset;
-  int tonecurve_unbound_ab;
-  int preserve_colors; // dt_iop_rgb_norms_t, 4-byte enum
-} dt_iop_tonecurve_params_t;
-
-// dt_iop_clipping_params_t is likewise private to source/src/iop/clipping.c,
-// so it's redeclared here to match that file exactly (source/src/iop/
-// clipping.c:58-79, DT_MODULE_INTROSPECTION version 5). We only drive the
-// crop box cx/cy/cw/ch -- which are LEFT/TOP/RIGHT/BOTTOM edges, NOT x/y/w/h
-// (the $DESCRIPTION labels at clipping.c:61-64 and commit_params' copysignf
-// at clipping.c:3094-3104 confirm; sign of cw/ch encodes flip, magnitude is
-// the edge) -- as normalized fractions 0..1 of the whole image. commit_params
-// clamps them (clipping.c:1325-1328): cx/cy to 0..0.9, |cw|/|ch| to 0.1..1.0.
-// No crop = cx=0, cy=0, cw=1, ch=1 (image.c initializes usercrop to {0,0,1,1},
-// and clipping's own commit_box resets to the same when first enabled). All
-// other fields (angle, keystone quad, ratio) are left at the module's
-// introspection defaults so no rotation/keystone/aspect-lock is applied.
-// The WHOLE struct must be reproduced verbatim -- field order/types are
-// load-bearing (opaque void* params blob indexed by offset). gboolean is
-// glib's gint (4 bytes) and every field here is 4 bytes, so the layout is
-// padding-free. If clipping.c's struct or introspection version changes
-// upstream, update this block.
-typedef struct dt_iop_clipping_params_t
-{
-  float angle; // $MIN: -180.0 $MAX: 180.0
-  float cx;    // $MIN: 0.0 $MAX: 1.0 $DESCRIPTION: "left"
-  float cy;    // $MIN: 0.0 $MAX: 1.0 $DESCRIPTION: "top"
-  float cw;    // $MIN: 0.0 $MAX: 1.0 $DESCRIPTION: "right"
-  float ch;    // $MIN: 0.0 $MAX: 1.0 $DESCRIPTION: "bottom"
-  float k_h, k_v;
-  float kxa;   // $MIN: 0.0 $MAX: 1.0 $DEFAULT: 0.2
-  float kya;   // $MIN: 0.0 $MAX: 1.0 $DEFAULT: 0.2
-  float kxb;   // $MIN: 0.0 $MAX: 1.0 $DEFAULT: 0.8
-  float kyb;   // $MIN: 0.0 $MAX: 1.0 $DEFAULT: 0.2
-  float kxc;   // $MIN: 0.0 $MAX: 1.0 $DEFAULT: 0.8
-  float kyc;   // $MIN: 0.0 $MAX: 1.0 $DEFAULT: 0.8
-  float kxd;   // $MIN: 0.0 $MAX: 1.0 $DEFAULT: 0.2
-  float kyd;   // $MIN: 0.0 $MAX: 1.0 $DEFAULT: 0.8
-  int k_type, k_sym;
-  int k_apply;   // $DEFAULT: 0
-  int crop_auto; // gboolean: $DEFAULT: TRUE ("automatic cropping")
-  int ratio_n;   // $DEFAULT: -1
-  int ratio_d;   // $DEFAULT: -1
-} dt_iop_clipping_params_t;
 
 namespace godot {
 
@@ -556,8 +121,8 @@ private:
   dt_iop_module_t *exposure_module = nullptr;
   dt_iop_module_t *colorbalance_module = nullptr;
   dt_iop_module_t *shadhi_module = nullptr;
-  // toneequal ("tone equalizer") backs the Blacks/Whites sliders -- see the
-  // dt_iop_toneequalizer_params_t redeclaration above.
+  // toneequal ("tone equalizer") backs the Blacks/Whites sliders via its
+  // 1-EV-band gains ("blacks"/"whites" fields) -- see set_blacks()/set_whites().
   dt_iop_module_t *toneequal_module = nullptr;
   dt_iop_module_t *velvia_module = nullptr;
   // monochrome backs the saturation slider's BELOW-neutral range only -- see
@@ -566,8 +131,7 @@ private:
   dt_iop_module_t *vibrance_module = nullptr;
   dt_iop_module_t *tonecurve_module = nullptr;
   // White balance now targets channelmixerrgb ("color calibration"), not
-  // temperature -- see the NOTE on white balance above
-  // dt_iop_channelmixer_rgb_params_t.
+  // temperature -- see set_white_balance_temperature() below.
   dt_iop_module_t *channelmixer_rgb_module = nullptr;
   dt_iop_module_t *clipping_module = nullptr;
 
@@ -676,13 +240,13 @@ public:
   void set_shadows(float value);
   void set_highlights(float value);
   // Blacks/Whites: Lightroom-style two-sided sliders driven via toneequal's
-  // 1-EV-band gains (see the dt_iop_toneequalizer_params_t redeclaration
-  // above). This replaced the earlier rgblevels wiring, whose 0..1-bounded
-  // endpoints could only move one way, so Whites-up had nothing to push and
-  // the slider read as broken. Both setters take -1..1 and write ±1 EV into
-  // their band. Sign note: positive Blacks in Lightroom DEEPENS blacks, but a
-  // positive toneequal gain LIFTS its band, so set_blacks writes -value.
-  // Neutral (0) disables toneequal so it costs nothing in the pipe.
+  // "blacks"/"whites" 1-EV-band gains. This replaced the earlier rgblevels
+  // wiring, whose 0..1-bounded endpoints could only move one way, so Whites-up
+  // had nothing to push and the slider read as broken. Both setters take -1..1
+  // and write ±1 EV into their band. Sign note: positive Blacks in Lightroom
+  // DEEPENS blacks, but a positive toneequal gain LIFTS its band, so
+  // set_blacks writes -value. Neutral (0) disables toneequal so it costs
+  // nothing in the pipe.
   void set_blacks(float value);
   void set_whites(float value);
   void set_saturation(float value);
@@ -691,8 +255,8 @@ public:
   // point), 1 enables it at full opacity (full B&W), and values between enable
   // it with a uniform-blend opacity of amount*100% so the image fades
   // continuously between the two. Implemented on the "monochrome" module via
-  // its blend parameters rather than any of its own fields -- see the note on
-  // dt_iop_monochrome_params_t above.
+  // its blend parameters rather than any of its own fields (monochrome's own
+  // params stay at their neutral INTROSPECTION defaults).
   void set_desaturation(float amount);
   // Dehaze is NOT the darktable "hazeremoval" module: that module estimates a
   // per-channel ambient light A0 from the haziest pixels with no chroma
@@ -725,12 +289,12 @@ public:
   // is const and estimates it lazily.
   mutable float _dehaze_ambient = 0.0f;
   void set_vibrance(float value);
-  // White balance via channelmixerrgb's chromatic adaptation -- see the NOTE
-  // on white balance above dt_iop_channelmixer_rgb_params_t. Sets illuminant
-  // = DT_ILLUMINANT_D, adaptation = DT_ADAPTATION_CAT16, and `temperature`
-  // (clamped to DT_BACKEND_CHANNELMIXERRGB_TEMP_MIN/_MAX), leaving the
-  // channel-mix matrix untouched. Enables the module and records a headless
-  // history item, same pattern as every other setter here.
+  // White balance via channelmixerrgb's chromatic adaptation -- see the white
+  // balance NOTE in dt_backend.cpp. Sets illuminant = "DT_ILLUMINANT_D",
+  // adaptation = "DT_ADAPTATION_CAT16", and `temperature` (clamped to
+  // DT_BACKEND_CHANNELMIXERRGB_TEMP_MIN/_MAX), leaving the channel-mix matrix
+  // untouched. Enables the module and records a headless history item, same
+  // pattern as every other setter here.
   void set_white_balance_temperature(float kelvin);
   // Read back channelmixerrgb's current `temperature` (as-shot right after
   // load_image(), pre-edit) so the UI can seed its White Balance slider from
@@ -747,8 +311,8 @@ public:
   // Enables the module and records a headless history item, same pattern as
   // every other setter here. Rotation/keystone/aspect are never touched.
   void set_crop(float left, float top, float right, float bottom);
-  // Drives the tonecurve module's L-channel spline (see dt_iop_tonecurve_params_t
-  // above). `points` is a caller-sorted list of {x,y} control points in [0,1]x[0,1]
+  // Drives the tonecurve module's L-channel spline (see dt_backend.cpp's
+  // set_tonecurve for the array layout). `points` is a caller-sorted list of {x,y} control points in [0,1]x[0,1]
   // (the coordinate space darktable's own curve editor uses), first point x==0,
   // last point x==1, 2..DT_BACKEND_TONECURVE_MAXNODES points. Node ordering/
   // spacing/endpoint rules are enforced by the GDScript curve widget, not here.
