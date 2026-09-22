@@ -1,6 +1,7 @@
 #!/bin/bash
 # Pre-commit hook: rebuild the Godot GDExtension when its sources changed,
-# so a commit never contains code that doesn't match the built framework.
+# so a commit is never made against a stale build (frameworks are not
+# committed; see README for building them after clone).
 #
 # Runs `scons arch=arm64` in extension/ only when a staged file touches
 # extension/src, extension/SConstruct, or extension/dt_link_flags.json.
