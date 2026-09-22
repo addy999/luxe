@@ -41,21 +41,19 @@ The result is a small, fast editor with a serious processing engine underneath.
 
 ## Features
 
-| Adjustment    | Driven through          |
-| ------------- | ----------------------- |
-| Exposure      | `exposure`              |
-| Contrast      | `colorbalancergb`       |
-| Highlights    | `shadhi`                |
-| Shadows       | `shadhi`                |
-| Blacks        | `toneequal`             |
-| Whites        | `toneequal`             |
-| Saturation    | `velvia` + `monochrome` |
-| Vibrance      | `vibrance`              |
-| Tone curve    | `tonecurve`             |
-| Dehaze        | `hazeremoval`           |
-| White balance | `channelmixerrgb`       |
-| Crop          | `clipping`              |
-| Export        | darktable export engine |
+- Exposure
+- Contrast
+- Highlights
+- Shadows
+- Blacks
+- Whites
+- Saturation
+- Vibrance
+- Tone curve
+- Dehaze
+- White balance
+- Crop
+- Export
 
 The UI also gives you:
 
@@ -101,30 +99,13 @@ The UI also gives you:
 - **Godot 4.6** (targets `4.6.beta3`).
 - **Python 3 + [SCons](https://scons.org/)** (`pip install scons`).
 - **A C++ toolchain** (Xcode Command Line Tools: `xcode-select --install`).
-- **A darktable build** and **godot-cpp** (both below).
+- **A darktable build** and **godot-cpp**
 
-<details>
-<summary>Building darktable</summary>
+**Building darktable**
 
-Luxe does not vendor darktable. Clone and build it headless so that the relative paths in `project/project.godot` resolve. The expected layout is a `source/` checkout beside `Luxe/`:
+Luxe does not vendor darktable; the extension is built against your own darktable checkout. Build a headless configuration of darktable from source (see darktable's build docs) and place the checkout as a `source/` directory beside this repo, so the relative paths in `project/project.godot` resolve.
 
-```bash
-git clone https://github.com/darktable-org/darktable.git source
-git -C source checkout 6a2f19f4e3ba834ada20de9b5e63ab13933d8871
-cmake -S source -B source/build-nogui -DUSE_GUI=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo
-cmake --build source/build-nogui
-```
-
-`-DUSE_GUI=OFF` builds darktable's image-processing core and modules with no GTK window dependency. The GDExtension links against:
-
-- `source/build/bin/libdarktable.dylib`
-- `source/build/share/darktable/` (runtime data: color profiles, etc.)
-- `source/build/lib/darktable/` (IOP module plugins)
-
-</details>
-
-<details>
-<summary>Building the GDExtension</summary>
+**Building the GDExtension**
 
 Clone the branch matching this repo's Godot version and build both targets:
 
@@ -132,7 +113,6 @@ Clone the branch matching this repo's Godot version and build both targets:
 git clone --branch 4.5 --depth 1 https://github.com/godotengine/godot-cpp extension/godot-cpp
 cd extension/godot-cpp
 scons target=template_debug arch=arm64
-scons target=template_release arch=arm64
 ```
 
 Then build the C++ shim itself:
@@ -140,41 +120,10 @@ Then build the C++ shim itself:
 ```bash
 cd extension
 scons arch=arm64
-scons arch=arm64 target=template_release
+scons arch=arm64 target=template_debug
 ```
 
 The build writes compiled frameworks into `project/bin/`, which `project/dt_backend.gdextension` points at.
-
-`extension/dt_link_flags.json` is a per-machine file (gitignored, never committed): it lists the include paths, link libraries, and preprocessor defines for your own darktable build. It is not distributed with the source and not generated automatically; you have to construct it yourself before the extension will compile. (The defines matter for correctness, not just compilation: darktable's headers put struct fields behind `#ifdef` guards, so a mismatched define set shifts struct offsets silently.)
-
-</details>
-
-<details>
-<summary>Running</summary>
-
-If your darktable checkout is not the default sibling layout, point `scons` at it:
-
-```bash
-cd extension
-scons arch=arm64 \
-  dt_src_dir=/path/to/darktable/src \
-  dt_build_dir=/path/to/darktable/build
-```
-
-Then open `project/project.godot` in the Godot 4.6 editor, or run it directly:
-
-```bash
-godot --path project
-```
-
-A headless smoke test renders a RAW at two exposure values through the real backend and asserts the outputs differ:
-
-```bash
-scripts/smoke_test.sh                 # auto-discovers a RAW
-scripts/smoke_test.sh /path/to/x.ARW  # or pin one
-```
-
-</details>
 
 ## How it works
 
@@ -188,21 +137,16 @@ Godot knows nothing about RAW processing and darktable knows nothing about Godot
 
 ```mermaid
 flowchart LR
-    UI["GDScript UI<br/>Main.gd"] --> BE["DtBackend<br/>(C++ GDExtension)"]
-    BE --> DT["darktable core<br/>lib_darktable, headless"]
-    DT --> PIPE["pixelpipe<br/>exposure, color, ... IOP modules"]
-    PIPE --> BUF["pipe.backbuf<br/>raw BGRx pixels"]
-    BUF --> BE
-    BE --> UI
+    UI["GDScript UI"] --> BE["DtBackend<br/>(C++ GDExtension)"]
+    BE --> DT["darktable core<br/>(headless)"]
+    DT --> UI
 ```
 
-Opening a file imports it into a throwaway in-memory darktable library (`--library :memory:`), loads it into a develop session, and builds a pixelpipe: an ordered chain of image-operation modules. Dragging a slider writes the new value into the relevant module's params, commits it to the history stack, and re-runs the pipe. The result is read back from the pipe's output buffer, byte-swapped to RGBA, and handed to Godot as a texture.
-
-The pipeline runs on a worker thread so the UI stays responsive, and live previews render through a lower-resolution preview pipe while exports always render full resolution. darktable's core state is a single global per process, so `DtBackend` holds one image session at a time.
+The internals of the bridge are not documented here; read the source if you're curious. It is single-session (one image open at a time) and keeps the UI responsive while the pipeline runs.
 
 ## Roadmap
 
-- Wire up more darktable IOP modules. Modules with masks, drawn shapes, splines, or color pickers need real custom UI first.
+- More adjustments: selected darktable IOP modules plus purpose-built Luxe tools. Darktable modules with masks, drawn shapes, splines, or color pickers need real custom UI first.
 - A universal (arm64 + x86_64) GDExtension build.
 
 ## Contributing
