@@ -4,6 +4,11 @@
  * The entry_symbol name (dt_backend_library_init) is fixed by
  * godot-poc/extension/dt_backend.gdextension's [configuration] section --
  * do not rename it without updating that file.
+ *
+ * Registers DtBackend, which links against darktable
+ * (https://github.com/darktable-org/darktable), Copyright (C) the darktable
+ * contributors, licensed under the GNU General Public License v3.0 or later.
+ * See NOTICE for full attribution.
  */
 #include "register_types.h"
 

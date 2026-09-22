@@ -9,6 +9,12 @@
  * state -- darktable.image_cache, darktable.mipmap_cache, etc. -- is a
  * single process-wide global), matching the architecture's "one
  * image/session at a time in-process" constraint.
+ *
+ * This file reproduces several private IOP parameter structs verbatim from
+ * darktable (https://github.com/darktable-org/darktable), Copyright (C) the
+ * darktable contributors, licensed under the GNU General Public License v3.0
+ * or later. See NOTICE for full attribution and source provenance, and each
+ * struct below for the specific upstream file/line it was copied from.
  */
 #pragma once
 

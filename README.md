@@ -70,16 +70,19 @@ The UI also gives you:
 ## Progress
 
 **v0.1.3** -- Speed up edits by 5x, add advanced sliders, add Crop
+
 <p align="center">
   <img src="docs/img/v0.1.3.png" width="720" alt="Luxe v0.1.3">
 </p>
 
 **v0.1.2** -- Add extra sliders
+
 <p align="center">
   <img src="docs/img/v0.1.2.png" width="720" alt="Luxe v0.1.2">
 </p>
 
 **v0.1.1** -- light/dark theme system and macOS export.
+
 <p align="center">
   <img src="docs/img/v0.1.1.png" width="720" alt="Luxe v0.1.1">
 </p>
@@ -107,8 +110,9 @@ Luxe does not vendor darktable. Clone and build it headless so that the relative
 
 ```bash
 git clone https://github.com/darktable-org/darktable.git source
-cmake -S source -B source/build -DUSE_GUI=OFF -DCMAKE_BUILD_TYPE=Release
-cmake --build source/build
+git -C source checkout 6a2f19f4e3ba834ada20de9b5e63ab13933d8871
+cmake -S source -B source/build-nogui -DUSE_GUI=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build source/build-nogui
 ```
 
 `-DUSE_GUI=OFF` builds darktable's image-processing core and modules with no GTK window dependency. The GDExtension links against:

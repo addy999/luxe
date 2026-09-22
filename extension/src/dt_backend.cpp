@@ -1,6 +1,10 @@
 /*
  * DtBackend implementation. See the architecture section of godot-poc/README.md
  * for how these pieces fit together.
+ *
+ * Links against and calls into darktable (https://github.com/darktable-org/darktable),
+ * Copyright (C) the darktable contributors, licensed under the GNU General
+ * Public License v3.0 or later. See NOTICE for full attribution.
  */
 #include "dt_backend.h"
 
