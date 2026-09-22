@@ -7,7 +7,7 @@
 # broken IOP .so (loads but can't resolve a symbol mid-render) fails here and
 # nowhere else in the audit chain.
 #
-# It does NOT run export_standalone_app.sh: that builds a GUI .app (slow: rebuild
+# It does NOT build a full .app export (slow: rebuild
 # framework + bundle ~191 dylibs + resign) which can't be functionally verified
 # headless anyway. This test exercises the same darktable pipeline the .app would,
 # via the already-built debug framework, in seconds.

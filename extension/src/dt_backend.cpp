@@ -115,7 +115,7 @@ bool path_exists(const std::string &path) {
 // stopped accepting a bogus dev-tree default in an exported .app, the
 // fallback candidates below it in compute_dt_dirs() were *also* failing to
 // resolve, tracing back to this sentinel never matching anything).
-// "rawspeed/cameras.xml" is used instead: bundle_darktable_deps.sh always
+// "rawspeed/cameras.xml" is used instead: the export bundling step always
 // copies it (it is the exact file this whole check exists to protect --
 // dt_rawspeed_load_meta() in imageio_rawspeed.cc builds this same relative
 // path off datadir), and it exists directly, unnested, in every real
