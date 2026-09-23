@@ -1,11 +1,11 @@
 /*
- * DtBackend implementation. See the architecture section of godot-poc/README.md
- * for how these pieces fit together.
- *
- * Links against and calls into darktable (https://github.com/darktable-org/darktable),
- * Copyright (C) the darktable contributors, licensed under the GNU General
- * Public License v3.0 or later. See NOTICE for full attribution.
+ * DtBackend implementation. Architecture: the "two languages, one process"
+ * section of godot-poc/README.md. Links against and calls into darktable
+ * (https://github.com/darktable-org/darktable), Copyright (C) the darktable
+ * contributors, licensed under the GNU General Public License v3.0 or later.
+ * See NOTICE for full attribution.
  */
+
 #include "dt_backend.h"
 
 #include <godot_cpp/classes/os.hpp>
@@ -29,9 +29,7 @@ extern "C" {
 using namespace godot;
 
 // sRGB <-> linear lookup tables for the dehaze post-stage (_apply_dehaze).
-// Decode is exact per 8-bit sRGB value; encode is a 4096-entry linear-in
-// table indexed by the top 12 bits of the linear float (saturating beyond
-// 1.0), which is well within 8-bit rounding error.
+// Decode exact per 8-bit value; encode is a 4096-entry table, within 8-bit error.
 namespace dt_dehaze_lut {
 static float _dt_srgb_to_linear[256];
 static uint8_t _dt_linear_to_srgb[4096];
@@ -87,39 +85,16 @@ void DtBackend::_bind_methods() {
 
 namespace {
 
-// Anchor function whose address lives inside libdt_backend's own image, used
-// solely as a dladdr() target below (dladdr needs *some* address that
-// resolves back to this .dylib/.framework; a plain free function is simpler
-// than trying to dladdr a non-static member function pointer).
+// dladdr() target: an address inside libdt_backend's own image, not a member fn pointer.
 void dt_backend_dladdr_anchor() {}
 
-// True if `path` exists on disk. Uses glib's g_file_test() to stay
-// consistent with the rest of this file's glib usage (g_build_filename(),
-// g_mkdir_with_parents(), etc. below).
 bool path_exists(const std::string &path) {
   return g_file_test(path.c_str(), G_FILE_TEST_EXISTS) == TRUE;
 }
 
-// A candidate resource_dir is only accepted if it actually contains a real
-// darktable datadir. The sentinel here used to be "darktable.png" directly
-// under datadir, on the assumption every darktable datadir install ships a
-// flat share/darktable/darktable.png -- WRONG for this darktable checkout
-// (verified: source/build/share/darktable/ has no bare darktable.png at all;
-// the app icon assets only exist nested under icons/hicolor/<size>/apps/ and
-// pixmaps/, per source/data/CMakeLists.txt's install rules). That stale
-// sentinel meant datadir_looks_valid() returned false for every real,
-// correctly-populated datadir this project's own bundle produces, which
-// silently defeated *both* of compute_dt_dirs()'s bundle-relative fallback
-// candidates (discovered while fixing the DT_BACKEND_DATADIR-override bug:
-// after that fix correctly
-// stopped accepting a bogus dev-tree default in an exported .app, the
-// fallback candidates below it in compute_dt_dirs() were *also* failing to
-// resolve, tracing back to this sentinel never matching anything).
-// "rawspeed/cameras.xml" is used instead: the export bundling step always
-// copies it (it is the exact file this whole check exists to protect --
-// dt_rawspeed_load_meta() in imageio_rawspeed.cc builds this same relative
-// path off datadir), and it exists directly, unnested, in every real
-// datadir this project produces.
+// A candidate datadir must really hold darktable data. Sentinel is
+// rawspeed/cameras.xml: the bundler copies it and dt_rawspeed_load_meta() needs it
+// (darktable.png was a stale sentinel that never matched; see PORTABILITY_PLAN.md).
 bool datadir_looks_valid(const std::string &datadir) {
   gchar *sentinel = g_build_filename(datadir.c_str(), "rawspeed", "cameras.xml", NULL);
   const bool ok = path_exists(sentinel);
@@ -128,17 +103,12 @@ bool datadir_looks_valid(const std::string &datadir) {
 }
 
 // --- introspection field access ---------------------------------------------
-// darktable's DT_MODULE_INTROSPECTION() generates per-module accessors on every
-// IOP module: get_p(params, "name") -> the byte address of a named field inside
-// an opaque params blob, and get_f("name") -> that field's runtime descriptor
-// (type, size, offset, and, for enums, the symbolic value table). This lets the
-// backend drive a module's PRIVATE params struct without redeclaring it: a name
-// typo or an upstream field removal surfaces as a NULL return here (logged, and
-// the setter bails) instead of a silently-shifted struct offset. See the note
-// in dt_backend.h for why this replaces verbatim struct redeclarations.
+// DT_MODULE_INTROSPECTION() gives every IOP module get_p(params, "name") (byte
+// address of a named field inside the opaque params blob) and get_f("name")
+// (its runtime descriptor: type, size, offset, enum value table). A name typo
+// surfaces as a NULL return (setter bails), never a shifted struct offset.
 
-// Live-params field address by name (for writes). NULL (with a log line) if the
-// module or field is missing.
+// Live-params field address by name (for writes); NULL (logged) if missing.
 void *dt_iop_field(dt_iop_module_t *m, const char *name)
 {
   if(!m || !m->get_p) return nullptr;
@@ -148,8 +118,7 @@ void *dt_iop_field(dt_iop_module_t *m, const char *name)
   return p;
 }
 
-// Same, but on default_params (for reading as-shot values that darktable
-// resolves into default_params at load, not the live blob).
+// Same, but on default_params (as-shot values resolved at load, see get_white_balance_temperature).
 const void *dt_iop_field_default(dt_iop_module_t *m, const char *name)
 {
   if(!m || !m->get_p) return nullptr;
@@ -159,8 +128,7 @@ const void *dt_iop_field_default(dt_iop_module_t *m, const char *name)
   return p;
 }
 
-// Write a float / int field by name into a module's live params. Return false
-// (logging via dt_iop_field) if the field is missing.
+// Returns false (logging) if the field is unknown.
 bool dt_iop_set_float(dt_iop_module_t *m, const char *name, float value)
 {
   float *p = (float *)dt_iop_field(m, name);
@@ -169,6 +137,7 @@ bool dt_iop_set_float(dt_iop_module_t *m, const char *name, float value)
   return true;
 }
 
+// Returns false (logging) if the field is unknown.
 bool dt_iop_set_int(dt_iop_module_t *m, const char *name, int value)
 {
   int *p = (int *)dt_iop_field(m, name);
@@ -177,10 +146,9 @@ bool dt_iop_set_int(dt_iop_module_t *m, const char *name, int value)
   return true;
 }
 
-// Write an enum field by resolving its symbolic C value name (e.g.
-// "DT_ILLUMINANT_D") to the integer code via the generated introspection, then
-// store that code. Returns false (logging) if the field or the named value is
-// unknown. Enum fields are int-sized in every module this backend touches.
+// Write an enum field by resolving its symbolic C name (e.g. "DT_ILLUMINANT_D")
+// via the generated introspection (enum fields are int-sized in all modules here).
+// Returns false (logging) if the field or the named value is unknown.
 bool dt_iop_set_enum(dt_iop_module_t *m, const char *name, const char *value_name)
 {
   if(!m || !m->get_f) return false;
@@ -198,13 +166,10 @@ bool dt_iop_set_enum(dt_iop_module_t *m, const char *name, const char *value_nam
   return true;
 }
 
-// Pin toneequal's mask machinery to the "simple tone curve" preset state
-// (toneequal.c:480-491): details = DT_TONEEQ_NONE (no guided filter -- a plain
-// global tone curve, cheap and free of side effects), method = DT_TONEEQ_NORM_2
-// (RGB euclidean norm), iterations = 1, and the feather/quantization/boost
-// fields at their preset defaults. Both set_blacks and set_whites call this so
-// whichever runs first leaves the params blob in a known state. Returns false
-// (logging) if any field is missing.
+// Pin toneequal's mask machinery to the "simple tone curve" preset
+// (toneequal.c:480-491): details = DT_TONEEQ_NONE (no guided filter, just a
+// global tone curve), method = DT_TONEEQ_NORM_2, iterations = 1, so the blob
+// starts in a known state. Returns false (logging) if any field is missing.
 bool toneequal_pin_preset(dt_iop_module_t *m)
 {
   return dt_iop_set_enum(m, "details", "DT_TONEEQ_NONE")
@@ -220,40 +185,11 @@ bool toneequal_pin_preset(dt_iop_module_t *m)
 
 } // namespace
 
-// Display-sized preview mip (): darktable sizes the DT_MIPMAP_F float preview mip once, inside
-// dt_mipmap_cache_init() (source/src/common/mipmap_cache.c:744-746), from the
-// `highres_preview_mip` conf flag: 1440x900 or 1920x1200. That is below a HiDPI
-// display's device pixel count, so the preview reads soft. dt_mipmap_cache_init()
-// runs inside dt_init(), so a --conf injection from here would be too late and a
-// conf set before dt_init() is impossible (the conf does not exist yet).
-//
-// The supported override is to write the cache's public size fields directly,
-// AFTER dt_init() and BEFORE any DT_MIPMAP_F buffer is requested. Feasibility,
-// traced through mipmap_cache.c:
-//   * `max_width[DT_MIPMAP_F]`/`max_height[DT_MIPMAP_F]` are read at cache-entry
-//     *allocation* time, in _mipmap_cache_allocate_dynamic(), to seed the
-//     descriptor's width/height (:508-509). Entries are allocated lazily on the
-//     first get() of that mip, not at init, so a write before our first
-//     DT_MIPMAP_F get sticks.
-//   * `buffer_size[DT_MIPMAP_F]` is also read at allocation time (:487), to size
-//     the entry's allocation. It must be updated in lockstep with the max fields
-//     or the buffer would be too small for the generated mip. The payload is
-//     4 channels * sizeof(float) = 16 bytes/pixel (init()'s formula at :799-801),
-//     and the header size is derived from darktable's own init-time numbers
-//     rather than redeclaring the (private-to-mipmap_cache.c) descriptor struct:
-//     header = old buffer_size - 16 * old_w * old_h. That self-adjusts if
-//     upstream changes the descriptor.
-//   * Generation itself (_init_f, :1360+) derives the real output dims from the
-//     descriptor's width/height, so it follows the fields.
-//   * The DT_MIPMAP_F mip is NOT disk-cached: the disk read/write paths are
-//     gated on `mip <= DT_MIPMAP_LDR_MAX` (= DT_MIPMAP_10, :527), and
-//     DT_MIPMAP_F is above that. So there is no stale-size disk cache to
-//     invalidate; the mip is regenerated in memory every process.
-// Called with the display's physical pixels. The mip is capped at HALF that
-// size (aspect-fit into width/2 x height/2), so on the 3024x1964 panel the mip
-// is generated at half display resolution (~1512x982 for the 6048x4024
-// fixture) rather than the full panel. Darktable still aspect-fits the image
-// into these bounds, so the real output is min(half-display, image).
+// Display-sized preview mip. darktable fixes DT_MIPMAP_F at cache-init time
+// (1440x900/1920x1200, inside dt_init(), too late for --conf), so we write the
+// cache's public size fields directly after dt_init() and before any DT_MIPMAP_F
+// get. Full mechanics (header derivation, no disk cache, half-display cap):
+// docs/PERF-IMPROVEMENT.md "Preview mip size".
 static void set_preview_mip_size(const int width, const int height) {
   if(!darktable.mipmap_cache || width <= 0 || height <= 0) return;
 
@@ -266,8 +202,7 @@ static void set_preview_mip_size(const int width, const int height) {
                                 * (size_t)cache->max_height[DT_MIPMAP_F];
   const size_t payload = 4 * sizeof(float) * (size_t)mip_width * (size_t)mip_height;
 
-  // Header = existing buffer_size minus its payload; guard against an
-  // unexpectedly small/zero buffer_size by falling back to a safe fixed pad.
+  // Header = buffer_size minus its payload; fall back to a safe fixed pad if buffer_size looks bogus.
   size_t header = sizeof(size_t) * 4; // 32 bytes: a safe lower bound
   if(cache->buffer_size[DT_MIPMAP_F] > 4 * sizeof(float) * old_pixels)
     header = cache->buffer_size[DT_MIPMAP_F] - 4 * sizeof(float) * old_pixels;
@@ -281,41 +216,13 @@ static void set_preview_mip_size(const int width, const int height) {
                           " MB buffer)");
 }
 
-// Computes --datadir/--moduledir at runtime. Tried in order,
-// cheapest/most-dev-friendly first:
-//
-//   1. DT_BACKEND_DATADIR / DT_BACKEND_MODULEDIR env vars, if BOTH are set.
-//      Pure dev convenience -- lets the inner dev loop point at
-//      source/build/share|lib/darktable without any bundle/dladdr logic.
-//   2. Bundle-relative via Godot's own running executable path
-//      (OS::get_executable_path()). Matches the exported .app layout:
-//        MyApp.app/Contents/MacOS/MyApp                (executable_path)
-//        MyApp.app/Contents/Resources/darktable/share/darktable
-//        MyApp.app/Contents/Resources/darktable/lib/darktable
-//      Only accepted if darktable.png actually exists under the computed
-//      datadir -- during in-editor dev runs, get_executable_path() returns
-//      the *Godot editor's* binary path, which has no Resources/darktable
-//      next to it, so this candidate correctly falls through.
-//   3. dladdr() on this extension's own loaded image (works regardless of
-//      host process -- editor or exported app). Two sub-candidates are
-//      tried, both relative to the directory containing
-//      libdt_backend.*.framework/libdt_backend.*:
-//        a. <dir>/../../Resources/darktable/{share,lib}/darktable, i.e. the
-//           same Contents/Resources/darktable layout as step 2, reached from
-//           Contents/Frameworks/libdt_backend.*.framework/libdt_backend.*
-//           instead of Contents/MacOS/MyApp. Useful once Phase 2 places the
-//           framework under Contents/Frameworks/.
-//   4. If nothing resolves, print an error and fail init() outright rather
-//      than silently handing dt_init() a bogus/nonexistent path.
+// Computes --datadir/--moduledir at runtime, in order: (1) DT_BACKEND_DATADIR/
+// DT_BACKEND_MODULEDIR env vars (dev convenience), (2) bundle-relative via Godot's
+// executable path, (3) dladdr() on this extension's own loaded image, (4) fail
+// init() outright rather than hand dt_init() a bogus path.
 bool DtBackend::compute_dt_dirs(std::string &datadir, std::string &moduledir) {
   // --- 1. env var override (dev convenience) --------------------------
-  // Validated with the same datadir_looks_valid() sentinel check as the
-  // bundle-relative candidates below: this branch used to accept the env var
-  // unconditionally, which
-  // meant a wrong-but-existing path (e.g. Main.gd's dev-tree default,
-  // erroneously globalized against an exported .app's bundle path) would be
-  // silently accepted as datadir instead of falling through to the
-  // candidates below that actually know how to find a real bundle datadir.
+  // Same sentinel check as the bundle candidates: this branch used to accept a wrong-but-existing path.
   const char *env_datadir = std::getenv("DT_BACKEND_DATADIR");
   const char *env_moduledir = std::getenv("DT_BACKEND_MODULEDIR");
   if(env_datadir && env_moduledir && env_datadir[0] != '\0' && env_moduledir[0] != '\0') {
@@ -333,8 +240,7 @@ bool DtBackend::compute_dt_dirs(std::string &datadir, std::string &moduledir) {
   // --- 2. bundle-relative via Godot's own executable path -------------
   {
     const godot::String exe_path = godot::OS::get_singleton()->get_executable_path();
-    // .../MyApp.app/Contents/MacOS/MyApp -> get_base_dir() -> .../MacOS
-    // -> get_base_dir() again -> .../Contents
+    // .../MyApp.app/Contents/MacOS/MyApp -> get_base_dir() twice -> .../Contents
     const godot::String contents_dir = exe_path.get_base_dir().get_base_dir();
     const std::string resource_dir = std::string(contents_dir.utf8().get_data()) + "/Resources/darktable";
     const std::string candidate_datadir = resource_dir + "/share/darktable";
@@ -351,8 +257,7 @@ bool DtBackend::compute_dt_dirs(std::string &datadir, std::string &moduledir) {
   {
     Dl_info info;
     if(dladdr(reinterpret_cast<void *>(&dt_backend_dladdr_anchor), &info) != 0 && info.dli_fname) {
-      // info.dli_fname e.g.:
-      //   .../Contents/Frameworks/libdt_backend.*.framework/libdt_backend.*
+      // info.dli_fname e.g. .../Contents/Frameworks/libdt_backend.*.framework/libdt_backend.*
       gchar *lib_dir = g_path_get_dirname(info.dli_fname);       // .../Frameworks/libdt_backend.*.framework
       gchar *frameworks_dir = g_path_get_dirname(lib_dir);       // .../Frameworks
       gchar *contents_dir = g_path_get_dirname(frameworks_dir);  // .../Contents
@@ -402,39 +307,21 @@ DtBackend::~DtBackend() {
   cleanup();
 }
 
-// Section A: dt_init(argc, argv, init_gui, load_data, L). darktable-cli
-// forces --library :memory: and --conf write_sidecar_files=never onto a
-// synthetic argv before calling dt_init (main.c:482-492) so it never
-// touches the user's real config/db -- we mirror that here rather than
-// forwarding Godot's own argv.
+// Mirror darktable-cli's synthetic argv (--library :memory:,
+// --conf write_sidecar_files=never, main.c:482-492) so we never touch the
+// user's real config/db, instead of forwarding Godot's argv.
 bool DtBackend::init(int display_width, int display_height) {
   if(initialized) {
     UtilityFunctions::print("DtBackend::init: already initialized");
     return true;
   }
 
-  // --datadir/--moduledir are required here: darktable normally resolves
-  // these relative to its own executable's path, but here it's loaded as a
-  // shared library inside Godot.app, so that auto-detection resolves to
-  // nonsense paths under Godot.app itself. These used to be compile-time
-  // constants baked in by SConstruct (DT_DATADIR_PATH/DT_MODULEDIR_PATH),
-  // which baked absolute paths into the compiled binary and broke as soon as
-  // the binary moved. They are now computed at runtime by
-  // compute_dt_dirs() (env var override -> bundle-relative via Godot's
-  // executable path -> dladdr()-relative fallback -> hard failure).
+  // --datadir/--moduledir are required: darktable resolves them relative to its
+  // own executable, but here that is Godot's, which lands on nonsense paths.
   //
-  // --configdir/--cachedir are required for the same underlying reason as
-  // --library :memory: above: darktable's config dir holds a SQLite lock
-  // file (data.db) that only one darktable instance can hold at a time. If
-  // we let dt_init() fall back to its default (~/.config/darktable), then
-  // running a headless test/tool while a Godot editor Play session already
-  // has this extension initialized fails with "can't acquire database
-  // lock", because both processes fight over the same real user config dir.
-  // Pointing both at a private directory under the user's cache dir means
-  // every instance of this extension gets its own config/cache sandbox,
-  // fully isolated from ~/.config/darktable and from each other only in the
-  // sense that no two instances share a dir unless intentionally pointed at
-  // the same one.
+  // --configdir/--cachedir: the ~/.config/darktable default holds a SQLite lock
+  // only one instance can hold (a Godot editor Play session would block us), so
+  // use a private sandbox (still not safe for two concurrent instances of ours).
   gchar *configdir = g_build_filename(g_get_user_cache_dir(), "godot-darktable-poc", "config", NULL);
   gchar *cachedir = g_build_filename(g_get_user_cache_dir(), "godot-darktable-poc", "cache", NULL);
   g_mkdir_with_parents(configdir, 0700);
@@ -447,10 +334,7 @@ bool DtBackend::init(int display_width, int display_height) {
     g_free(cachedir);
     return false;
   }
-  // dt_init() needs mutable char* argv entries; the gchar* pointers from
-  // g_build_filename() are already exactly that, so build datadir/moduledir
-  // the same way (consistent with configdir/cachedir just above) rather than
-  // hand-rolling std::vector<char> buffers.
+  // dt_init() needs mutable char* argv entries; the gchar* pointers are exactly that.
   gchar *datadir = g_strdup(datadir_str.c_str());
   gchar *moduledir = g_strdup(moduledir_str.c_str());
 
@@ -467,46 +351,30 @@ bool DtBackend::init(int display_width, int display_height) {
   display_width_ = display_width;
   display_height_ = display_height;
 
-  // argv entries are char*, not const char*, so the gchar* pointers from
-  // g_build_filename()/g_strdup() plug in directly -- but they MUST stay
-  // alive until after dt_init() returns (freed below), since dt_init() reads
-  // argv synchronously during this call.
+  // The gchar* pointers must stay alive until after dt_init() returns: it reads argv synchronously.
   std::vector<char *> argv_vec = { arg0, arg1, arg2, arg3, arg4, arg5, datadir, arg7, moduledir,
                                    arg9, configdir, arg11, cachedir };
   argv_vec.push_back(nullptr);
   int argc = (int)argv_vec.size() - 1;
 
-  // init_gui = FALSE (headless), load_data = TRUE (custom presets, matches
-  // darktable-cli's default), L = NULL (no Lua state).
+  // init_gui = FALSE (headless), load_data = TRUE (matches darktable-cli), no Lua.
   const int rc = dt_init(argc, argv_vec.data(), FALSE, TRUE, NULL);
   g_free(configdir);
   g_free(cachedir);
   g_free(datadir);
   g_free(moduledir);
-  // dt_init() returns non-zero to signal a fatal init failure, so 0 means
-  // success here.
   if(rc != 0) {
     UtilityFunctions::printerr("DtBackend::init: dt_init() failed, rc=", rc);
     return false;
   }
 
-  // We init with `--library :memory:` (an sqlite DB), so edits must be read
-  // back from that DB, not from XMP sidecars. darktable-cli sets this same
-  // flag whenever it was given a --library (main.c:616,
-  // `darktable.prefer_library_history = (library != NULL)`); without it the
-  // fresh dev that dt_imageio_export_with_flags() loads for export would look
-  // for a nonexistent XMP and drop every edit. See export_image().
+  // --library :memory: means edits must be read back from that DB, not XMP
+  // sidecars; without this the export's fresh dev would drop every edit
+  // (see DARKTABLE_API_NOTES.md, section D).
   darktable.prefer_library_history = TRUE;
 
-  // --- display size: size the DT_MIPMAP_F preview mip to half the display --
-  // The preview pipe reads DT_MIPMAP_F (see load_image()); by default darktable
-  // generates that mip at a fixed 1440x900/1920x1200, below a HiDPI display's
-  // device pixel count. set_preview_mip_size() caps it at half the display's
-  // physical pixels here, after dt_init() (so darktable.mipmap_cache exists) and
-  // before any image / mip is requested. Main.gd passes physical (device) pixels;
-  // 0,0 (unknown/headless) leaves darktable's fixed default in place. See
-  // set_preview_mip_size()'s comment for why a direct field write is the
-  // supported mechanism.
+  // Size the DT_MIPMAP_F preview mip to half the display: after dt_init(), before
+  // any mip is requested. 0,0 (headless) keeps darktable's fixed default.
   if(display_width > 0 && display_height > 0) {
     set_preview_mip_size(display_width, display_height);
   } else {
@@ -518,17 +386,13 @@ bool DtBackend::init(int display_width, int display_height) {
   return true;
 }
 
-// Import the file, load it into a dt_develop_t, then stand up a persistent
-// pixelpipe once (not per process() call) so repeated set_exposure()/process()
-// calls are cheap.
+// Import the file, load it into a dt_develop_t, stand up a persistent pixelpipe once so setter/render calls are cheap.
 bool DtBackend::load_image(String path) {
   if(!initialized) {
     UtilityFunctions::printerr("DtBackend::load_image: init() was not called");
     return false;
   }
-  // Replace rather than reject: GDScript's "Open" handler no longer needs to
-  // track whether an image is already loaded before calling this, so opening
-  // a second image just swaps the session.
+  // Replace rather than reject: opening a second image just swaps the session.
   if(image_loaded) {
     unload_image();
   }
@@ -536,9 +400,8 @@ bool DtBackend::load_image(String path) {
   const CharString path_utf8 = path.utf8();
   const char *cpath = path_utf8.get_data();
 
-  // dt_film_t must be zeroed via dt_film_init() before dt_film_new() -- an
-  // uninitialized images_mutex SIGKILLs on macOS. Use dt_film_init() rather
-  // than darktable's main.c inline pattern, which skips it.
+  // dt_film_init() before dt_film_new() or the uninitialized images_mutex
+  // SIGKILLs on macOS (main.c's inline pattern skips it; DARKTABLE_API_NOTES.md B).
   dt_film_t film;
   dt_film_init(&film);
 
@@ -552,7 +415,6 @@ bool DtBackend::load_image(String path) {
     return false;
   }
 
-  // Import into the (in-memory) library DB.
   const dt_imgid_t new_imgid = dt_image_import(filmid, cpath, TRUE, FALSE);
   dt_film_cleanup(&film);
 
@@ -562,12 +424,10 @@ bool DtBackend::load_image(String path) {
   }
   imgid = new_imgid;
 
-  // dt_dev_init(&dev, FALSE) -> dt_dev_load_image(&dev, imgid).
   dt_dev_init(&dev, FALSE);
   dt_dev_load_image(&dev, imgid);
 
-  // Pull the full-res buffer from the mipmap cache. Kept alive as member state
-  // (mipmap_buf) until cleanup(), since it backs the pipe's input buffer.
+  // Full-res input buffer, kept alive as member state until cleanup(): it backs the pipe's input.
   dt_mipmap_cache_get(&mipmap_buf, imgid, DT_MIPMAP_FULL, DT_MIPMAP_BLOCKING, 'r');
   if(!mipmap_buf.buf || !mipmap_buf.width || !mipmap_buf.height) {
     UtilityFunctions::printerr("DtBackend::load_image: dt_mipmap_cache_get() returned an invalid buffer");
@@ -584,10 +444,7 @@ bool DtBackend::load_image(String path) {
   raw_width = wd;
   raw_height = ht;
 
-  // dt_dev_pixelpipe_init_full() does NOT exist -- only dt_dev_pixelpipe_init(),
-  // _init_preview(), _init_preview2(), _init_export(), _init_thumbnail(),
-  // _init_dummy(). Use plain dt_dev_pixelpipe_init() for this live/full
-  // preview pipe.
+  // dt_dev_pixelpipe_init_full() does NOT exist: only _init/_init_preview/_init_preview2/_init_export/_init_thumbnail/_init_dummy.
   if(!dt_dev_pixelpipe_init(&pipe)) {
     UtilityFunctions::printerr("DtBackend::load_image: dt_dev_pixelpipe_init() failed");
     dt_mipmap_cache_release(&mipmap_buf);
@@ -597,44 +454,26 @@ bool DtBackend::load_image(String path) {
     return false;
   }
 
-  // Point the pipe at its input, choose the output colorspace, then build the
-  // module node list and commit the current params/history into it.
-  // dt_dev_pixelpipe_set_input() records the buffer plus its dimensions and
-  // scale (and derives a starting output descriptor via get_output_format());
-  // DT_COLORSPACE_DISPLAY with a NULL profile means "convert the output into
-  // the user's configured display profile", and DT_INTENT_LAST is darktable's
-  // sentinel for "no explicit rendering intent" (colorout.c leaves the intent
-  // at the module default in that case) -- both are the values darktable's own
-  // display-referred export path uses. create_nodes() then materializes one
-  // node per active module and synch_all() commits each module's params (and
-  // this image's history) into those nodes.
+  // Input, output colorspace, node list, params/history commit.
+  // DT_COLORSPACE_DISPLAY with a NULL profile = "convert to the user's display
+  // profile"; DT_INTENT_LAST is a sentinel ("no explicit override"), not a real
+  // ICC intent: colorout.c leaves the rendering intent at the module's own default.
   dt_dev_pixelpipe_set_input(&pipe, &dev, (float *)mipmap_buf.buf,
                               mipmap_buf.width, mipmap_buf.height, mipmap_buf.iscale);
   dt_dev_pixelpipe_set_icc(&pipe, DT_COLORSPACE_DISPLAY, NULL, DT_INTENT_LAST);
   dt_dev_pixelpipe_create_nodes(&pipe, &dev);
   dt_dev_pixelpipe_synch_all(&pipe, &dev);
 
-  // --- Fix #5: separate fast preview pipe, fed the display-sized DT_MIPMAP_F --
-  // dt_dev_pixelpipe_init_preview() (pixelpipe_hb.c:251-257) makes a PREVIEW-type
-  // pipe with its own cache; the GUI feeds its preview pipe the downscaled
-  // DT_MIPMAP_F mip (develop.c:705-723, develop_jobs.c:25). This build does the
-  // same, but the mip was regenerated at the display's physical resolution by
-  // init() -> set_preview_mip_size(), so it is both fast (demosaic runs at the
-  // mip's resolution, not native) and sharp (at the display's real pixel count).
-  //
-  // This mip is fetched once and held open (preview_mipmap_buf) for the preview
-  // pipe's lifetime, exactly like mipmap_buf backs the full pipe.
+  // --- Fast preview pipe, fed the display-sized DT_MIPMAP_F ---------------
+  // dt_dev_pixelpipe_init_preview() makes a PREVIEW-type pipe with its own
+  // cache; the GUI feeds it the downscaled DT_MIPMAP_F mip (develop.c:705-723),
+  // same as here, but init() regenerated that mip at display resolution.
   dt_mipmap_cache_get(&preview_mipmap_buf, imgid, DT_MIPMAP_F, DT_MIPMAP_BLOCKING, 'r');
   if(preview_mipmap_buf.buf && preview_mipmap_buf.width && preview_mipmap_buf.height
      && dt_dev_pixelpipe_init_preview(&preview_pipe)) {
-    // DT_DEV_PIXELPIPE_FAST is darktable's "non-final quality" marker. It is
-    // effectively a no-op headless: _dev_pixelpipe_process_rec()
-    // (pixelpipe_hb.c:2030-2041) re-derives it on every recursion from the
-    // *focused GUI module* (dt_dev_gui_module() -> darktable.develop->gui_module,
-    // NULL here) and clears it on the first pass. The real fast paths come from
-    // dt_pipe_is_preview() (type == PREVIEW), which demosaic, denoiseprofile, and
-    // friends already honor. Set anyway to match the GUI, and in case that
-    // derivation changes upstream.
+    // DT_DEV_PIXELPIPE_FAST is a no-op headless: _dev_pixelpipe_process_rec()
+    // re-derives it from the *focused GUI module* (NULL here) and clears it;
+    // the real fast paths key off pipe type == PREVIEW. Set anyway to match the GUI.
     preview_pipe.type = (dt_dev_pixelpipe_type_t)(preview_pipe.type | DT_DEV_PIXELPIPE_FAST);
     dt_dev_pixelpipe_set_input(&preview_pipe, &dev, (float *)preview_mipmap_buf.buf,
                                preview_mipmap_buf.width, preview_mipmap_buf.height,
@@ -655,16 +494,13 @@ bool DtBackend::load_image(String path) {
     }
   }
 
-  // both pipes committed their pieces from defaults/history above, so neither
-  // has a pending change to dispatch (see the dispatch members in dt_backend.h)
+  // both pipes committed their pieces from defaults/history above: nothing to dispatch
   pipe_needs_full_synch = false;
   pipe_change_pending = false;
   pipe_change_multi = false;
   pipe_change_module = nullptr;
 
-  // Cache both pipes' native (scale=1.0) dimensions now, before any render. The
-  // UI needs the full pipe's native dims for its display-zoom math even when the
-  // first render is a fast preview render (which refreshes only the preview dims).
+  // Cache both pipes' native (scale=1.0) dims before any render: the UI's zoom math needs the full pipe's dims even when the first render is a preview.
   dt_dev_pixelpipe_get_dimensions(&pipe, &dev, pipe.iwidth, pipe.iheight,
                                   &pipe.processed_width, &pipe.processed_height);
   native_width = pipe.processed_width;
@@ -693,10 +529,9 @@ bool DtBackend::load_image(String path) {
   return true;
 }
 
-// Section F: locate the exposure module once, clamp EV, write directly into
-// its live params blob, mark enabled, record a history item via the
-// headless _ext variant (the GUI-only dt_dev_add_history_item() no-ops
-// without darktable.gui).
+// Shared setter pattern: locate the module once, clamp, write directly into its
+// live params blob, mark enabled, record a headless history item (the _ext
+// variant; dt_dev_add_history_item() no-ops without darktable.gui).
 void DtBackend::set_exposure(float ev) {
   if(!image_loaded) {
     UtilityFunctions::printerr("DtBackend::set_exposure: no image loaded");
@@ -721,14 +556,8 @@ void DtBackend::set_exposure(float ev) {
   note_pipe_change(exposure_module);
 }
 
-// Section F, same pattern as set_exposure(): locate the colorbalancergb ("color
-// balance rgb") module once, clamp to the contrast field's $MIN/$MAX
-// (-1.0..1.0), write only that field directly into its live params blob, enable
-// it, and record a headless history item. This is a scene-referred, pivoted
-// contrast (grey_fulcrum), unlike colisa's asymmetric Lab curve. All other
-// params keep the module's introspection defaults already sitting in the blob
-// (e.g. grey_fulcrum 0.1845, saturation_formula DTUCS) -- we never zero them,
-// exactly like set_exposure() only touches one field of a multi-field struct.
+// Same pattern, on colorbalancergb's `contrast`: a scene-referred pivoted
+// contrast (grey_fulcrum), unlike colisa's Lab curve. Clamped to the field's $MIN/$MAX.
 void DtBackend::set_contrast(float value) {
   if(!image_loaded) {
     UtilityFunctions::printerr("DtBackend::set_contrast: no image loaded");
@@ -753,12 +582,8 @@ void DtBackend::set_contrast(float value) {
   note_pipe_change(colorbalance_module);
 }
 
-// Section F, same pattern as set_exposure()/set_contrast(): locate the shadhi
-// ("shadows and highlights") module once, clamp to -70.0..70.0 (tighter than
-// the module's own $MIN/$MAX of -100.0..100.0 since the full range is too
-// extreme), write only that field directly into its live params blob,
-// enable it, and record a headless history item. shadows and highlights are
-// looked up via the same cached module pointer since they live in one module.
+// Same pattern, on shadhi ("shadows and highlights"); clamped -70..70, tighter
+// than the module's $MIN/$MAX -100..100 (too extreme).
 void DtBackend::set_shadows(float value) {
   if(!image_loaded) {
     UtilityFunctions::printerr("DtBackend::set_shadows: no image loaded");
@@ -807,23 +632,13 @@ void DtBackend::set_highlights(float value) {
   note_pipe_change(shadhi_module);
 }
 
-// Blacks/Whites: same Section F pattern, driving toneequal ("tone
-// equalizer") band gains rather than endpoint points. The UI passes a
-// two-sided -1..1 (0 = neutral). Blacks maps to the FULL ±2 EV band gain
-// (at ±1 EV it felt weaker than the shadhi-backed Shadows slider; ±2 EV
-// matches its punch), Whites stays at ±1 EV (the module allows ±2 EV per
-// band, but full range proved too extreme on the whites side). Band
-// mapping: Blacks -> `blacks` (the -5 EV
-// band), Whites -> `whites` (the -1 EV band), toneequal.c:176/180. SIGN
-// INVERSION on Blacks: a positive toneequal gain LIFTS its band, but
-// Lightroom's positive Blacks DEEPENS blacks, so set_blacks writes -value
-// (UI +1 -> module gain -1 EV -> darker shadows; UI -1 -> +1 EV -> lifted,
-// washed-out blacks). Whites passes straight through (+1 -> brighter whites).
-// Mask machinery is pinned to the "simple tone curve" preset
-// (toneequal.c:480-491) with details = DT_TONEEQ_NONE so the module is a
-// plain global tone curve: no guided filter, no ROI padding, no detail
-// preservation side effects. Both setters disable toneequal at neutral so
-// it costs nothing in the pipe, mirroring set_crop()'s full-frame case.
+// Blacks/Whites: same pattern, driving toneequal band gains rather than
+// endpoint points. UI -1..1 (0 = neutral). Blacks -> the `blacks` field (the
+// -5 EV band) at full ±2 EV gain (±1 EV felt weaker than the shadhi-backed
+// Shadows slider); Whites -> `whites` (the -1 EV band) at ±1 EV (toneequal.c:
+// 176/180); the module's own ±2 EV per band proved too extreme on whites.
+// Blacks is SIGN-INVERTED: a positive toneequal gain LIFTS its band, but
+// Lightroom's positive Blacks DEEPENS blacks; Whites passes straight through.
 void DtBackend::set_blacks(float value) {
   if(!image_loaded) {
     UtilityFunctions::printerr("DtBackend::set_blacks: no image loaded");
@@ -841,12 +656,9 @@ void DtBackend::set_blacks(float value) {
     }
   }
 
-  // Pin the mask machinery to the "simple tone curve" preset state so a
-  // fresh params blob is always in a known state.
   if(!toneequal_pin_preset(toneequal_module)) return;
 
-  // Sign-inverted, full ±2 EV: see the comment above.
-  // UI -1..1 -> module gain +2..-2 EV.
+  // Sign-inverted, full ±2 EV (UI -1..1 -> module gain +2..-2 EV): see above.
   if(!dt_iop_set_float(toneequal_module, "blacks", -value * 2.0f)) return;
 
   toneequal_module->enabled = (value != 0.0f) ? TRUE : FALSE;
@@ -871,8 +683,6 @@ void DtBackend::set_whites(float value) {
     }
   }
 
-  // Same preset pinning as set_blacks (whichever setter runs first puts the
-  // blob in a known state; the other re-asserts it).
   if(!toneequal_pin_preset(toneequal_module)) return;
 
   // Straight through: UI +1 -> +1 EV on the whites band (brighter whites).
@@ -883,9 +693,8 @@ void DtBackend::set_whites(float value) {
   note_pipe_change(toneequal_module);
 }
 
-// Section F, same pattern as set_exposure(): locate the velvia ("saturation
-// boost") module once, clamp to `strength`'s $MIN/$MAX (0.0..100.0), write
-// only that field, enable, record a headless history item.
+// Same pattern, on velvia ("saturation boost"), which is boost-only: the below-
+// neutral saturation half is set_desaturation()'s job. Clamped to $MIN/$MAX.
 void DtBackend::set_saturation(float value) {
   if(!image_loaded) {
     UtilityFunctions::printerr("DtBackend::set_saturation: no image loaded");
@@ -910,23 +719,11 @@ void DtBackend::set_saturation(float value) {
   note_pipe_change(velvia_module);
 }
 
-// The saturation slider's below-neutral half. velvia (above) can only BOOST
-// saturation (its $MIN is 0.0 = neutral), so dragging the slider below neutral
-// needs a different mechanism: this setter drives the "monochrome" module's
-// blend parameters instead of any of its own fields. The module's params blob
-// is left at its introspection defaults (a=0, b=0, size=2, highlights=0 --
-// already a plain neutral grayscale conversion), while the blend params get a
-// uniform-mask mode (DEVELOP_MASK_ENABLED, "uniformly" = no mask, just the
-// opacity slider darktable's GUI exposes on every module) with opacity =
-// amount * 100%. dt_dev_add_history_item_ext() snapshots module->blend_params
-// into the history item (develop.c ~1390) and _dev_pixelpipe_synch() commits
-// them back through dt_iop_commit_params() (pixelpipe_hb.c ~660), so opacity
-// changes replay exactly like params changes across both pipes.
-//
-// amount == 0.0 (the neutral point) DISABLES the module outright, same policy
-// as set_crop()'s full-frame case: a disabled piece costs nothing in the pipe,
-// whereas an enabled-but-0%-opacity piece still pays monochrome's process()
-// and blend every render.
+// The saturation slider's below-neutral half. velvia can only BOOST saturation
+// (its $MIN is 0.0 = neutral), so below neutral drives the "monochrome"
+// module's BLEND parameters instead: uniform-mask mode (just the opacity slider
+// every darktable module has) with opacity = amount*100%. blend_params ride
+// history items like params changes (see DARKTABLE_API_NOTES.md F.2).
 void DtBackend::set_desaturation(float amount) {
   if(!image_loaded) {
     UtilityFunctions::printerr("DtBackend::set_desaturation: no image loaded");
@@ -944,15 +741,13 @@ void DtBackend::set_desaturation(float amount) {
     }
   }
 
-  // Params blob untouched: its defaults are already a neutral grayscale
-  // conversion. Only the blend decides how much of it lands on the image.
   dt_develop_blend_params_t *bp =
       (dt_develop_blend_params_t *)monochrome_module->blend_params;
   if(amount <= 0.0f) {
     monochrome_module->enabled = FALSE;
-    // Reset to the module's own defaults so a later re-enable starts from a
-    // clean blend state, not a stale fractional opacity. DEVELOP_BLEND_CS_
-    // RGB_DISPLAY is monochrome's own blend color space (monochrome.c:155).
+    // Reset blend to defaults so a later re-enable starts clean (an enabled-but-0%
+    // piece would still pay process() every render). RGB_DISPLAY is monochrome's
+    // own blend color space (monochrome.c:155).
     dt_develop_blend_init_blend_parameters(bp, DEVELOP_BLEND_CS_RGB_DISPLAY);
   } else {
     bp->mask_mode = DEVELOP_MASK_ENABLED; // uniform: no mask, just opacity
@@ -964,9 +759,7 @@ void DtBackend::set_desaturation(float amount) {
   note_pipe_change(monochrome_module);
 }
 
-// Section F, same pattern as set_exposure(): locate the vibrance module once,
-// clamp to `amount`'s $MIN/$MAX (0.0..100.0), write the field, enable, record
-// a headless history item.
+// Same pattern, on vibrance: clamped 0..100, the `amount` field's $MIN/$MAX.
 void DtBackend::set_vibrance(float value) {
   if(!image_loaded) {
     UtilityFunctions::printerr("DtBackend::set_vibrance: no image loaded");
@@ -991,27 +784,11 @@ void DtBackend::set_vibrance(float value) {
   note_pipe_change(vibrance_module);
 }
 
-// Dehaze is OUR OWN post-pipe stage, not the darktable "hazeremoval" module.
-// That module estimates a per-channel ambient light A0 from the haziest pixels
-// with no chroma constraint, so on scenes whose haziest region is tinted (green
-// window blinds, warm sky) it divides each channel by a different factor and
-// casts the whole frame teal or pink; the cast is spatial (it varies with the
-// per-pixel transmission t), so no global correction can undo it. Ours instead:
-//
-//   1. Estimate a SINGLE achromatic ambient light A from the image's dark
-//      channel prior (classic He et al., but with A forced to gray).
-//   2. Per pixel, t = 1 - strength * min_c(pixel_c / A), clamped.
-//   3. out = (in - A)/t + A -- the SAME scalar t for all three channels.
-//
-// Because t is a scalar per pixel (not per channel), channel ratios survive
-// exactly: hue is mathematically preserved at every strength, on any scene.
-// The slider value is -1..1 with 0 = neutral; positive removes haze, negative
-// adds it. Applied in display (gamma-encoded) space on the 8-bit backbuf;
-// the affine map commutes with the monotone gamma, so hue preservation holds
-// there too.
-//
-// value == 0 is an exact passthrough (the stage is skipped entirely, so the
-// neutral point costs nothing).
+// Dehaze is OUR OWN post-pipe stage, not the darktable "hazeremoval" module
+// (see dt_backend.h and DARKTABLE_API_NOTES.md F.8 for why). Ours: single
+// achromatic ambient A from the dark-channel prior; per pixel
+// t = 1 - strength * min_c(pixel_c / A); out = (in - A)/t + A with the SAME
+// scalar t for all channels, so hue is preserved at every strength.
 void DtBackend::set_dehaze(float value) {
   if(!image_loaded) {
     UtilityFunctions::printerr("DtBackend::set_dehaze: no image loaded");
@@ -1020,33 +797,25 @@ void DtBackend::set_dehaze(float value) {
   if(value < -1.0f) value = -1.0f;
   if(value > 1.0f) value = 1.0f;
   dehaze_value = value;
-  // A depends on the current render (other modules' output), so any change
-  // elsewhere in the pipe invalidates it; re-estimated lazily on the next
-  // non-neutral render. A change of dehaze strength itself does NOT
-  // invalidate: the ambient estimate is strength-independent by design (the
-  // min-channel ranking of haze opacity barely moves with strength).
+  // A depends on the current render, so any other module's change invalidates
+  // it. Strength changes do NOT: the min-channel haze ranking barely moves.
   if(value == 0.0f) _dehaze_ambient = 0.0f;
 }
 
-// Run the dehaze stage over an RGBA8 gamma-encoded buffer in place. Skipped
-// entirely at strength 0. _dehaze_ambient/_estimate are const-cached via
-// mutable members (see dt_backend.h).
 void DtBackend::_apply_dehaze(uint8_t *rgba8, int width, int height) const {
   if(dehaze_value == 0.0f) return;
   if(!rgba8 || width <= 0 || height <= 0) return;
 
-  // Lazy per-image ambient estimate: measure on the first non-neutral render,
-  // reuse after. note_pipe_change() resets _dehaze_ambient to 0 whenever any
-  // other module changes, so we always re-estimate against the current render.
+  // Lazy per-image ambient estimate: measured on the first non-neutral render,
+  // reused after. note_pipe_change() resets it on any other module's change.
   if(_dehaze_ambient <= 0.0f) {
     _dehaze_ambient = _estimate_dehaze_ambient(rgba8, width, height);
     if(_dehaze_ambient <= 0.0f) return; // degenerate (pure black) frame
   }
   const float A = _dehaze_ambient;
 
-  // Strength mapping: the UI's -1..1 maps to haze-removal amount -0.5..+0.5.
-  // The raw dark-channel formulation saturates well before 1.0 (t would hit
-  // its floor and posterize), so the soft cap is deliberate.
+  // UI -1..1 -> strength -0.5..+0.5: the raw dark-channel formulation saturates
+  // before 1.0 (t floors and posterizes); soft cap is deliberate.
   const float strength = dehaze_value * 0.5f;
 
   const size_t n = (size_t)width * height;
@@ -1065,9 +834,8 @@ void DtBackend::_apply_dehaze(uint8_t *rgba8, int width, int height) const {
     float t = 1.0f - strength * m;
     if(t < 1.0f / 32.0f) t = 1.0f / 32.0f; // floor: keep the map invertible
     const float inv = 1.0f / t;
-    // out = (in - A)/t + A, same scalar t for all three channels: this is
-    // what preserves hue. A bright haze-removal pass can push channels above
-    // 1.0; the encode table saturates there.
+    // out = (in - A)/t + A, same scalar t for all three channels: what preserves
+    // hue. A bright pass can push above 1.0; the encode table saturates there.
     const int ir = (int)(((r - A) * inv + A) * 4095.0f);
     const int ig = (int)(((g - A) * inv + A) * 4095.0f);
     const int ib = (int)(((b - A) * inv + A) * 4095.0f);
@@ -1078,16 +846,13 @@ void DtBackend::_apply_dehaze(uint8_t *rgba8, int width, int height) const {
   }
 }
 
-// Dark-channel-prior ambient estimate, achromatic. A = mean luma of the
-// brightest half among the most-hazy 5% of pixels (dark channel near its
-// maximum). No color assumption anywhere: only brightness ranking among hazy
-// regions, so it adapts to any scene. Returns linear-space luma in 0..1.
+// Dark-channel-prior ambient estimate, achromatic: mean luma of the brightest
+// half among the most-hazy 5% of pixels. Returns linear luma in 0..1.
 float DtBackend::_estimate_dehaze_ambient(const uint8_t *rgba8, int width, int height) const {
   const size_t n = (size_t)width * height;
   if(n == 0) return 0.0f;
-  // Dark channel = min over R,G,B of the gamma-decoded pixel. Sample every
-  // 4th pixel for the percentile cut: the 95th percentile is stable under
-  // decimation and this halves the sort cost.
+  // Dark channel = min over R,G,B of the gamma-decoded pixel. Sample every 4th
+  // pixel for the percentile cut (stable under decimation, cheaper sort).
   std::vector<float> mins;
   mins.reserve(n / 4 + 1);
   for(size_t k = 0; k < n; k += 4) {
@@ -1103,8 +868,7 @@ float DtBackend::_estimate_dehaze_ambient(const uint8_t *rgba8, int width, int h
   if(pivot >= mins.size()) return 0.0f;
   std::nth_element(mins.begin(), mins.begin() + pivot, mins.end());
   const float crit_haze = mins[pivot];
-  // Mean luma of the (full-resolution) hazy+bright pixel set, scalar so it is
-  // achromatic by construction.
+  // Mean luma of the full-resolution hazy+bright set; scalar, so achromatic by construction.
   float sum = 0.0f;
   int64_t counted = 0;
   for(size_t k = 0; k < n; k++) {
@@ -1123,15 +887,9 @@ float DtBackend::_estimate_dehaze_ambient(const uint8_t *rgba8, int width, int h
   return sum / (float)counted;
 }
 
-
-// Drives the tonecurve module's L-channel spline. Unlike every scalar setter
-// above, `params` here is a curve: we overwrite the whole L-channel node
-// array/count from `points` (clamped/ordered by the caller -- see the
-// dt_backend.h comment on set_tonecurve()) and leave the a/b channels and
-// every other field (autoscale, preset, unbound_ab, preserve_colors) exactly
-// as introspection defaults left them. Interpolation type is forced to
-// MONOTONE_HERMITE to match the module's own default and this backend's
-// curve widget, which draws the same monotone-hermite spline.
+// Unlike every scalar setter above, `params` here is a curve: overwrite the
+// whole L-channel node array/count from `points` and leave everything else at
+// introspection defaults.
 void DtBackend::set_tonecurve(PackedVector2Array points) {
   if(!image_loaded) {
     UtilityFunctions::printerr("DtBackend::set_tonecurve: no image loaded");
@@ -1158,13 +916,9 @@ void DtBackend::set_tonecurve(PackedVector2Array points) {
 
   dt_iop_module_t *m = tonecurve_module;
 
-  // The L-channel spline is tonecurve[0][0..n-1]: a counted sub-range of a
-  // fixed dt_iop_tonecurve_node_t[DT_BACKEND_TONECURVE_MAXNODES] array, plus
-  // tonecurve_nodes[0] (the live count) and tonecurve_type[0] (the
-  // interpolation kind). Resolve the array base and the node layout from the
-  // generated introspection (get_p returns the base address; get_f gives the
-  // node {x,y} stride/offsets), so no private struct is redeclared and a future
-  // node-field reorder can't silently shift the curve.
+  // The L-channel spline is tonecurve[0][0..n-1], plus tonecurve_nodes[0] (the
+  // live count) and tonecurve_type[0] (interpolation kind). Offsets come from
+  // the generated introspection so a node-field reorder can't silently shift the curve.
   float *nodes = (float *)dt_iop_field(m, "tonecurve"); // &tonecurve[0][0].x
   int *node_count = (int *)dt_iop_field(m, "tonecurve_nodes"); // &tonecurve_nodes[0]
   int *node_type = (int *)dt_iop_field(m, "tonecurve_type");   // &tonecurve_type[0]
@@ -1197,19 +951,11 @@ void DtBackend::set_tonecurve(PackedVector2Array points) {
   note_pipe_change(tonecurve_module);
 }
 
-// White balance via channelmixerrgb's chromatic adaptation. This targets
-// channelmixerrgb ("color calibration") instead of temperature because in the
-// modern scene-referred workflow `temperature` is pinned to a neutral D65_LATE
-// preset and the real chromatic adaptation is channelmixerrgb's job. Locates
-// the module once (op name "channelmixerrgb"), clamps to TEMP_MIN/TEMP_MAX,
-// sets illuminant = "DT_ILLUMINANT_D" (daylight) and adaptation =
-// "DT_ADAPTATION_CAT16" so `temperature` alone drives the CAT (commit_params()
-// derives x/y from illuminant+temperature for DT_ILLUMINANT_D; see
-// channelmixerrgb.c:3092-3098), enables the module, and records a headless
-// history item -- same pattern as every other setter here. Does NOT touch
-// `temperature` (source/src/iop/temperature.c); that module is left exactly as
-// darktable itself initialized it. The illuminant/adaptation enums are resolved
-// by name via dt_iop_set_enum(), not hardcoded numbers.
+// White balance via channelmixerrgb's chromatic adaptation, not the temperature
+// module: in the scene-referred workflow `temperature` is pinned to a neutral
+// D65_LATE preset and the real adaptation is channelmixerrgb's job. Illuminant
+// DT_ILLUMINANT_D + adaptation DT_ADAPTATION_CAT16 so `temperature` alone drives
+// the CAT (commit_params() derives x/y, channelmixerrgb.c:3092ff).
 void DtBackend::set_white_balance_temperature(float kelvin) {
   if(!image_loaded) {
     UtilityFunctions::printerr("DtBackend::set_white_balance_temperature: no image loaded");
@@ -1236,11 +982,7 @@ void DtBackend::set_white_balance_temperature(float kelvin) {
   note_pipe_change(channelmixer_rgb_module);
 }
 
-// Read-only: returns channelmixerrgb's current `temperature` without
-// touching enabled/history, so the UI can seed its White Balance slider from
-// the real per-image as-shot default (see set_white_balance_temperature()
-// comment above, and the reload_defaults() note in dt_backend.h). Returns
-// 0.0f if no image is loaded or the module can't be found.
+// Read-only: seeds the UI's White Balance slider from the as-shot value.
 float DtBackend::get_white_balance_temperature() {
   if(!image_loaded) {
     UtilityFunctions::printerr("DtBackend::get_white_balance_temperature: no image loaded");
@@ -1255,28 +997,16 @@ float DtBackend::get_white_balance_temperature() {
     }
   }
 
-  // The image's as-shot Kelvin is computed by channelmixerrgb's reload_defaults()
-  // -> _check_if_close_to_daylight() into DEFAULT params, not the live params.
-  // For a normal color raw the live params use illuminant=DT_ILLUMINANT_CAMERA
-  // with an x/y chromaticity, leaving params->temperature at the flat ~5003
-  // introspection default; the meaningful as-shot CCT lands in
-  // default_params->temperature (channelmixerrgb.c reload_defaults ~3883-3886).
-  // This getter exists solely to seed the UI slider at load, so read the
-  // as-shot value from default_params.
+  // The as-shot Kelvin lands in DEFAULT params, not live params: a normal color
+  // raw leaves live params->temperature at the flat ~5003 default
+  // (channelmixerrgb.c ~3883-3886); see DARKTABLE_API_NOTES.md F.4.
   const float *t = (const float *)dt_iop_field_default(channelmixer_rgb_module, "temperature");
   return t ? *t : 0.0f;
 }
 
-// Section F, same pattern as set_exposure()/set_tonecurve(): locate the
-// clipping module ("crop & rotate") once, clamp the four crop edges to the
-// module's own commit_params() ranges (cx/cy to 0..0.9, |cw|/|ch| to
-// 0.1..1.0; clipping.c:1325-1328), write them into the live params blob,
-// enable the module, and record a headless history item. (left, top) is one
-// corner of the crop box and (right, bottom) the opposite corner, all as
-// normalized 0..1 fractions of the whole image. (left, top) is one corner and
-// (right, bottom) the opposite corner -- cx/cy/cw/ch are edges, NOT x/y/w/h. Passing the full frame (0, 0, 1, 1) disables the module instead,
-// so a cleared crop costs nothing in the pipe. angle and all keystone/ratio
-// fields are left exactly as the module's introspection defaults left them.
+// Same pattern, on the clipping module ("crop & rotate"). cx/cy/cw/ch are crop
+// EDGES, NOT x/y/w/h: (left, top) one corner, (right, bottom) the opposite,
+// normalized 0..1 of the whole image. angle/keystone/ratio stay at defaults.
 void DtBackend::set_crop(float left, float top, float right, float bottom) {
   if(!image_loaded) {
     UtilityFunctions::printerr("DtBackend::set_crop: no image loaded");
@@ -1306,8 +1036,7 @@ void DtBackend::set_crop(float left, float top, float right, float bottom) {
   if(!dt_iop_set_float(clipping_module, "cw", right)) return;
   if(!dt_iop_set_float(clipping_module, "ch", bottom)) return;
 
-  // Full frame == no crop: disable the module entirely (its own process()
-  // fast path would degenerate to a copy anyway). Any tighter box re-enables.
+  // Full frame == no crop: disable the module (its process() would just copy). Tighter box re-enables.
   const bool no_crop = (left <= 0.0f && top <= 0.0f && right >= 1.0f && bottom >= 1.0f);
   clipping_module->enabled = no_crop ? FALSE : TRUE;
 
@@ -1315,28 +1044,20 @@ void DtBackend::set_crop(float left, float top, float right, float bottom) {
   note_pipe_change(clipping_module);
 }
 
-// Records `module` as changed since the last pipe synch. See the note on the
-// dispatch members in dt_backend.h for why this bridge cannot lean on
-// darktable's own change signalling (dev->full.pipe/preview_pipe are NULL
-// headless). `module->enabled` was already set to TRUE by the setter before
-// this runs, so comparing it against the piece's committed enabled flag tells
-// us whether this is the module's first activation; that is the one case a
-// TOP_CHANGED re-commit is on its own too narrow for, so fall back to a full
-// replay. Every module owns a piece after create_nodes() whether enabled or
-// not, so the piece lookup always succeeds for a module in dev.iop.
+// Records `module` as changed since the last pipe synch. See the dispatch
+// members in dt_backend.h for why this bridge cannot lean on darktable's own
+// change signalling (dev->full.pipe/preview_pipe are NULL headless). The piece
+// lookup below detects a first activation (enabled flag vs committed piece),
+// the one case a TOP_CHANGED re-commit is too narrow for; use a full replay.
 void DtBackend::note_pipe_change(dt_iop_module_t *module) {
-  // Any edit outside the dehaze pair invalidates the cached neutral-mean
-  // reference the dehaze cast corrector drives toward (see set_dehaze()):
-  // exposure/WB/contrast changes move the channel means the corrector would
-  // otherwise treat as dehaze-induced cast and counteract on the next dehaze
-  // move. Re-measured lazily on the next non-neutral set_dehaze().
+  // Any edit outside the dehaze stage invalidates the cached ambient: exposure/
+  // WB/contrast move the channel means the next dehaze render re-estimates against.
   if(module) {
     _dehaze_ambient = 0.0f;
   }
 
-  // two distinct modules before one render cannot be expressed as TOP_CHANGED:
-  // synch_top only re-commits the last history item, silently skipping the
-  // earlier one, which is exactly the stale-pixel failure this must avoid.
+  // Two distinct modules before one render cannot be expressed as TOP_CHANGED:
+  // synch_top only re-commits the last history item, skipping the earlier one.
   if(pipe_change_pending && pipe_change_module != module)
     pipe_change_multi = true;
 
@@ -1352,21 +1073,12 @@ void DtBackend::note_pipe_change(dt_iop_module_t *module) {
   }
 }
 
-// Applies any pending change to both pipes. See the note above on
-// note_pipe_change(): the blanket dt_dev_pixelpipe_synch_all() that used to run
-// before every render reset every piece hash and replayed the whole history,
-// discarding the pixelpipe cache and making per-render cost grow with history
-// length. An ordinary single-module edit now goes through darktable's own
-// incremental dispatch instead: dt_dev_pixelpipe_synch_top() re-commits only the
-// top history item (the module the setter just touched), so every upstream cache
-// line survives and only the changed node and its derivatives reprocess. A
-// multi-module batch (or a module whose enabled state flips) still falls back to
-// a full replay, which is the only correct choice there.
-//
-// Both pipes need the same change applied: they have separate node lists and
-// caches, so syncing only the pipe about to render would leave the other serving
-// stale pixels on its next run. synch_top/synch_all are per-pipe and read only
-// dev->history, so calling them once per pipe is safe.
+// A blanket synch_all() before every render discards the pixelpipe cache and
+// makes per-render cost grow with history length; a single-module edit uses
+// synch_top() instead so upstream cache lines survive. Multi-module batches and
+// enabled-state flips still fall back to a full replay. Both pipes need the
+// change (separate node lists/caches); synch_top/synch_all only read
+// dev->history, so this is safe per pipe. See docs/PERF-IMPROVEMENT.md fix 2.
 void DtBackend::dispatch_pipe_changes() {
   if(!(pipe_needs_full_synch || pipe_change_multi || pipe_change_pending))
     return;
@@ -1390,12 +1102,10 @@ void DtBackend::dispatch_pipe_changes() {
   pipe_change_module = nullptr;
 }
 
-// Dispatches pending changes then refreshes the FULL pipe's native dims. Note:
-// dt_dev_pixelpipe_get_dimensions() is scale-independent -- it always reports the
-// pipe's native (scale=1.0) processed_width/processed_height regardless of what
-// scale process() is later called with (imageio.c:1251-1253 calls it once, before
-// picking any scale) -- so caching native_width/native_height here is safe to
-// reuse across repeated renders.
+// Dispatches pending changes then refreshes the FULL pipe's native dims.
+// dt_dev_pixelpipe_get_dimensions() is scale-independent (reports native
+// scale=1.0 dims regardless of the scale process() later uses,
+// imageio.c:1251-1253), so caching across renders is safe.
 bool DtBackend::refresh_native_dimensions() {
   if(!image_loaded || !pipe_ready) {
     UtilityFunctions::printerr("DtBackend::refresh_native_dimensions: no image loaded / pipe not ready");
@@ -1417,10 +1127,8 @@ bool DtBackend::refresh_native_dimensions() {
   return true;
 }
 
-// Same as refresh_native_dimensions() but for the preview pipe. The dispatch it
-// triggers is shared, so a render_preview() followed by a render_view() in the
-// same cycle only re-syncs each pipe once (the second dispatch sees no pending
-// change and returns immediately).
+// Same as refresh_native_dimensions() but for the preview pipe; the dispatch is
+// shared, so a preview + full render in one cycle re-syncs each pipe once.
 bool DtBackend::refresh_preview_dimensions() {
   if(!image_loaded || !preview_pipe_ready) {
     return false;
@@ -1439,20 +1147,10 @@ bool DtBackend::refresh_preview_dimensions() {
 }
 
 // The one ROI-process-read implementation behind render_view() and
-// render_preview(): darktable's own darkroom scale/ROI math,
-// source/src/develop/develop.c:874-890, verbatim:
-//   scale = zoom_scale * ppd;                 // ppd (HiDPI) fixed at 1.0 here
-//   pipe_width  = scale * pipe->processed_width;
-//   pipe_height = scale * pipe->processed_height;
-//   wd = MIN(window_width,  pipe_width);      // clip render region to viewport
-//   ht = MIN(window_height, pipe_height);
-//   x  = CLAMP(pipe_width  * (.5 + zoom_x) - wd/2, 0, pipe_width  - wd);
-//   y  = CLAMP(pipe_height * (.5 + zoom_y) - ht/2, 0, pipe_height - ht);
-//   dt_dev_pixelpipe_process(pipe, dev, x, y, wd, ht, scale, devid);
-// center_x/center_y are develop.c's zoom_x/zoom_y, range [-0.5, 0.5], (0,0) =
-// centered. When scale <= fit-scale, pipe_w/pipe_h <= viewport, so wd=pipe_w,
-// x=0 (whole image renders). When scale > fit-scale (e.g. 100% on a large
-// image), only a viewport-sized ROI renders, positioned by center_x/center_y.
+// render_preview(): darktable's own darkroom scale/ROI math (develop.c:874-890,
+// ppd fixed at 1.0). center_x/center_y are develop.c's zoom_x/zoom_y, [-0.5, 0.5],
+// (0,0) = centered. At or below fit-scale the whole image renders; above it, only
+// a viewport ROI positioned by center. Returns exactly wd*ht RGBA8.
 PackedByteArray DtBackend::render_pipe_roi(dt_dev_pixelpipe_t *p, int native_w, int native_h,
                                            int viewport_w, int viewport_h, double scale,
                                            double center_x, double center_y) {
@@ -1467,19 +1165,13 @@ PackedByteArray DtBackend::render_pipe_roi(dt_dev_pixelpipe_t *p, int native_w, 
     return out;
   }
 
-  // pipe_w/pipe_h = scale * native dims (develop.c:875-876).
   const int pipe_w = std::max(1, (int)std::lround(scale * native_w));
   const int pipe_h = std::max(1, (int)std::lround(scale * native_h));
-
-  // wd/ht = MIN(viewport, pipe_dim) (develop.c:877-878): never render more
-  // than either the viewport or the full scaled image, whichever is smaller.
   const int wd = std::min(viewport_w, pipe_w);
   const int ht = std::min(viewport_h, pipe_h);
 
-  // x/y = CLAMP(pipe_dim*(.5+center) - half_viewport, 0, pipe_dim - viewport)
-  // (develop.c:879-882). When wd==pipe_w (fit or smaller), pipe_w-wd==0 so
-  // the clamp forces x=0 regardless of center_x -- panning is a no-op
-  // whenever the image already fits, exactly as it should be.
+  // When wd==pipe_w (fit or smaller), pipe_w-wd==0 forces x=0 regardless of
+  // center_x: panning is a no-op whenever the image already fits.
   const long x_hi = (long)(pipe_w - wd);
   const long y_hi = (long)(pipe_h - ht);
   const int x = (int)std::clamp(std::lround((double)pipe_w * (0.5 + center_x) - (double)wd / 2.0),
@@ -1487,14 +1179,11 @@ PackedByteArray DtBackend::render_pipe_roi(dt_dev_pixelpipe_t *p, int native_w, 
   const int y = (int)std::clamp(std::lround((double)pipe_h * (0.5 + center_y) - (double)ht / 2.0),
                                  (long)0, y_hi);
 
-  // 8-bit/gamma display path (as process_fit() used), not the float
-  // _no_gamma() path -- simplest for a PoC preview.
+  // 8-bit/gamma display path, not the float _no_gamma() path.
   dt_dev_pixelpipe_process(p, &dev, x, y, wd, ht, (float)scale, DT_DEVICE_NONE);
 
-  // Lock backbuf_mutex around the read, mirroring darktable's own display
-  // path. dtpthread.h (source/src/common/dtpthread.h) declares
-  // dt_pthread_mutex_lock()/dt_pthread_mutex_unlock() in both release and
-  // _DEBUG builds.
+
+  // Lock backbuf_mutex around the read, mirroring darktable's own display path.
   dt_pthread_mutex_lock(&p->backbuf_mutex);
 
   uint8_t *backbuf = p->backbuf;
@@ -1504,27 +1193,17 @@ PackedByteArray DtBackend::render_pipe_roi(dt_dev_pixelpipe_t *p, int native_w, 
     return out;
   }
 
-  // Size the copy/swap loop to wd * ht (the ROI just rendered), NOT
-  // native_w/native_h or pipe_w/pipe_h -- pipe.backbuf only holds wd * ht
-  // pixels' worth of valid data after the process() call above.
+  // Size the copy/swap loop to wd * ht (the ROI just rendered): backbuf only
+  // holds that many valid pixels after process().
   const int64_t pixel_count = (int64_t)wd * (int64_t)ht;
   const int64_t byte_count = pixel_count * 4;
 
   out.resize(byte_count);
   uint8_t *dst = out.ptrw();
 
-  // darktable's 8-bit backbuf is BGRx-ordered (see imageio.c's byte-swap
-  // code); Godot's FORMAT_RGBA8 wants R,G,B,A. Swap byte 0 <-> byte 2 per
-  // pixel and force alpha to 0xFF, since darktable does not reliably write a
-  // usable alpha byte here.
-  //
-  // Godot 4 dropped FORMAT_BGRA8 from Image::Format (the enum jumps RGB8 ->
-  // RGBA8 -> RGBA4444), so there is no format we could hand the BGRx buffer
-  // to unconverted; the swap stays. Each pixel is independent, so parallelize
-  // it the way darktable parallelizes its own swap (imageio.c:1437's
-  // DT_OMP_FOR). _OPENMP is defined only when the build enables OpenMP (see
-  // SConstruct/-Xclang -fopenmp); without it this compiles to the same serial
-  // loop as before.
+  // darktable's 8-bit backbuf is BGRx-ordered (see imageio.c's byte-swap code);
+  // Godot 4 dropped FORMAT_BGRA8, so swap R/B and force opaque alpha. Parallelized
+  // like darktable's own swap (imageio.c:1437's DT_OMP_FOR).
 #ifdef _OPENMP
 #pragma omp parallel for default(firstprivate) schedule(static)
 #endif
@@ -1539,14 +1218,11 @@ PackedByteArray DtBackend::render_pipe_roi(dt_dev_pixelpipe_t *p, int native_w, 
 
   dt_pthread_mutex_unlock(&p->backbuf_mutex);
 
-  // Dehaze post-stage: runs over the decoded RGBA8 buffer, identically on
-  // preview and full pipes, so what the user sees is what set_dehaze stored.
-  // A no-op at strength 0. Outside the backbuf_mutex: it mutates the copy
-  // we just made, not the pipe.
+  // Dehaze post-stage, identically on both pipes so exports/preview match.
+  // Outside the backbuf_mutex: it mutates our copy, not the pipe.
   _apply_dehaze(dst, wd, ht);
 
-  // get_width()/get_height() report the actual *rendered* (ROI) dims, not
-  // the native sensor dims, so Main.gd builds its Image at the right size.
+  // get_width()/get_height() report the actual *rendered* (ROI) dims.
   processed_width = wd;
   processed_height = ht;
 
@@ -1564,16 +1240,8 @@ PackedByteArray DtBackend::render_view(int viewport_w, int viewport_h, double sc
 }
 
 // Fast interactive render on the preview pipe. `scale` is a fraction of the
-// preview mip's dimensions (the mip is sized to the display's physical pixels by
-// init(); its dims are preview_native_width/height). There is no cap/clamp: the
-// mip is itself the ceiling, and scale 1.0 renders the whole mip. `scale` is
-// handed to dt_dev_pixelpipe_process() as the pipe's roi_out scale (see
-// render_pipe_roi()), which darktable propagates into every module's input ROI
-// via modify_roi_in (pixelpipe_hb.c:2263), so intermediate work and cache lines
-// shrink with it, not just the final output. The actual rendered size is
-// reported back through get_width()/get_height() (render_pipe_roi() sets them to
-// the rendered ROI). If the preview pipe is unavailable this transparently falls
-// back to the full pipe, so callers can always route live edits here.
+// preview mip's dimensions (see dt_backend.h); darktable propagates it into
+// every module's input ROI via modify_roi_in (pixelpipe_hb.c:2263).
 PackedByteArray DtBackend::render_preview(int viewport_w, int viewport_h, double scale,
                                           double center_x, double center_y) {
   if(!refresh_preview_dimensions())
@@ -1583,13 +1251,9 @@ PackedByteArray DtBackend::render_preview(int viewport_w, int viewport_h, double
                          viewport_w, viewport_h, scale, center_x, center_y);
 }
 
-// process_fit() is now a thin wrapper around render_view(): compute the "fit"
-// scale (develop.c:1066-1076's scale_fit formula, min(target/native), clamped
-// to 1.0 so this proxy never upscales past native resolution, matching
-// export_image()'s own upscale=FALSE) and delegate with center=(0,0). Kept as
-// its own public method since Main.gd's "Fit" zoom mode calls it directly;
-// there is now exactly one render implementation (render_view()) behind both
-// entry points.
+// Thin wrapper around render_view(): "fit" scale (develop.c:1066-1076's
+// scale_fit formula, clamped to 1.0 so this never upscales past native, matching
+// export_image()'s upscale=FALSE), center (0,0).
 PackedByteArray DtBackend::process_fit(int max_width, int max_height) {
   PackedByteArray out;
 
@@ -1614,18 +1278,11 @@ PackedByteArray DtBackend::process_fit(int max_width, int max_height) {
 }
 
 // Export the currently-loaded image, with all in-memory edits applied, to a
-// real file on disk (JPEG/PNG/TIFF). This reuses darktable's own export
-// engine -- dt_imageio_export_with_flags() -- rather than re-encoding the
-// 8-bit preview backbuf, so the output is full-resolution and goes through
-// the float/high-quality export pipe (the same path darktable-cli uses).
-//
-// Key subtlety: dt_imageio_export_with_flags() does NOT use our live `dev`.
-// It stands up a *fresh* dt_develop_t from `imgid` internally
-// (imageio.c:1066-1068) and replays that image's history from the library DB.
-// So we must first flush our in-memory history stack to the DB with
-// dt_dev_write_history_ext() before exporting. init() set
-// darktable.prefer_library_history so the
-// export reads that DB history rather than an (absent) XMP sidecar.
+// real file on disk (JPEG/PNG/TIFF). Reuses darktable's own export engine
+// (dt_imageio_export_with_flags()) rather than re-encoding the 8-bit preview
+// backbuf, so the output is full-resolution through the float export pipe.
+// Subtlety: that function builds a FRESH dev and replays library-DB history,
+// so flush our in-memory history first (see DARKTABLE_API_NOTES.md, section D).
 bool DtBackend::export_image(String path) {
   if(!initialized || !image_loaded) {
     UtilityFunctions::printerr("DtBackend::export_image: no image loaded");
@@ -1635,10 +1292,8 @@ bool DtBackend::export_image(String path) {
   const CharString path_utf8 = path.utf8();
   const char *cpath = path_utf8.get_data();
 
-  // Map the file extension to darktable's format-module plugin name. The
-  // plugin names come from the module source filenames (jpeg.c -> "jpeg",
-  // png.c -> "png", tiff.c -> "tiff"); the "jpg"->"jpeg" / "tif"->"tiff"
-  // aliasing mirrors darktable-cli (main.c:773-783).
+  // Map the file extension to darktable's format-module plugin name (named
+  // after the module source files); jpg/tif aliasing mirrors main.c:773-783.
   String ext = path.get_extension().to_lower();
   const char *fmt_name = nullptr;
   if(ext == "jpg" || ext == "jpeg") fmt_name = "jpeg";
@@ -1650,8 +1305,7 @@ bool DtBackend::export_image(String path) {
     return false;
   }
 
-  // Persist the live edit history to the in-memory DB so the export's fresh
-  // dev picks it up.
+  // Persist the live edit history to the in-memory DB so the export's fresh dev picks it up.
   dt_dev_write_history_ext(&dev, imgid);
 
   dt_imageio_module_format_t *format = dt_imageio_get_format_by_name(fmt_name);
@@ -1674,13 +1328,8 @@ bool DtBackend::export_image(String path) {
   fdata->style_append = FALSE;
 
   // dt_imageio_export_with_flags() returns FALSE on SUCCESS (a footgun worth
-  // calling out). Flags mirror darktable-cli's dt_imageio_export()
-  // wrapper (imageio.c:1013-1018): ignore_exif=FALSE, display_byteorder=FALSE,
-  // high_quality=TRUE, upscale=FALSE, is_scaling=FALSE, scale=1.0,
-  // thumbnail=FALSE, filter=NULL, copy_metadata=TRUE, export_masks=FALSE.
-  // sRGB output, no storage module (storage is only used for Lua/hooks, which
-  // this headless embed doesn't need -- imageio.c guards every use with
-  // `if(storage)`). history_end=-1 -> apply the full DB history.
+  // calling out). Flags mirror darktable-cli's dt_imageio_export() wrapper
+  // (imageio.c:1013-1018); history_end=-1: full history.
   const gboolean failed = dt_imageio_export_with_flags(
       imgid, cpath, format, fdata,
       FALSE /*ignore_exif*/, FALSE /*display_byteorder*/, TRUE /*high_quality*/,
@@ -1696,13 +1345,9 @@ bool DtBackend::export_image(String path) {
     return false;
   }
 
-  // The dehaze post-stage lives outside darktable's pipe, so the exported
-  // file doesn't have it yet. Apply it in place: load the exported image,
-  // run the same _apply_dehaze math (with a fresh A estimated on THIS frame
-  // at full resolution -- more accurate than reusing the preview-pipe A),
-  // and re-encode. JPEG re-encode at quality 0.92 keeps the generational
-  // loss negligible; PNG/TIFF are lossless formats so re-saving them is
-  // bit-exact modulo the dehaze itself.
+  // The dehaze post-stage lives outside darktable's pipe, so apply it in place
+  // on the full-resolution frame (fresh A, more accurate than the preview-pipe
+  // A) and re-encode: JPEG at 0.92 keeps generational loss negligible; PNG is lossless.
   if(dehaze_value != 0.0f) {
     Ref<Image> img = Image::load_from_file(path);
     if(img.is_null()) {
@@ -1735,10 +1380,6 @@ int DtBackend::get_height() {
   return processed_height;
 }
 
-// Native (scale=1.0) processed dimensions, cached by refresh_native_dimensions()
-// (called by process_fit()/render_view()). GDScript uses these to decide, for
-// a chosen zoom percentage, whether the scaled image exceeds the viewport
-// (and thus needs ROI/panning) without having to render first.
 int DtBackend::get_native_width() {
   return native_width;
 }
@@ -1747,9 +1388,6 @@ int DtBackend::get_native_height() {
   return native_height;
 }
 
-// Raw file dimensions, captured at load_image() time -- see raw_width/
-// raw_height above. Available immediately after a successful load_image(),
-// unlike get_native_width()/get_native_height() which need a render first.
 int DtBackend::get_raw_width() {
   return raw_width;
 }
@@ -1758,9 +1396,9 @@ int DtBackend::get_raw_height() {
   return raw_height;
 }
 
-// Section H: pixelpipe -> dev -> mipmap buffer -> process-wide dt_cleanup(),
-// in that exact order. Guarded against double-cleanup since GDScript may
-// call this from both a close handler and object destruction.
+// Pipe -> dev -> mipmap buffer -> process-wide dt_cleanup(), in that exact
+// order. Guarded against double-cleanup: GDScript may call this from both a
+// close handler and object destruction.
 void DtBackend::cleanup() {
   if(cleaned_up) {
     return;
@@ -1806,10 +1444,9 @@ void DtBackend::cleanup() {
   }
 }
 
-// Per-image teardown only: pipe -> dev -> mipmap buffer, in that order
-// (mirrors cleanup()'s image_loaded branch above) but leaves `initialized`
-// and `cleaned_up` untouched so the backend stays usable for a subsequent
-// load_image() call. No-op if no image is currently loaded.
+// Per-image teardown only: pipe -> dev -> mipmap buffer, in that order, but
+// leaves `initialized` and `cleaned_up` untouched so the backend stays usable
+// for a subsequent load_image(). No-op if nothing is loaded.
 void DtBackend::unload_image() {
   if(!image_loaded) {
     return;

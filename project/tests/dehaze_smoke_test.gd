@@ -1,19 +1,10 @@
 extends SceneTree
 
-# Dehaze verification: load the fixture RAW, render the neutral frame, then
-# exercise the backend's OWN hue-safe dehaze post-stage (see set_dehaze and
-# _apply_dehaze in dt_backend.cpp; no darktable module is involved).
-# set_dehaze(1.0) removes haze, set_dehaze(-1.0) adds it. Hue safety is the
-# core property: for each pixel the per-channel RANK ORDER of channel values
-# (which determines hue) must be unchanged -- the stage applies the same
-# scalar affine map to all three channels. Asserts:
-#   1) dehaze=1.0 visibly changes the frame vs. neutral
-#   2) dehaze=-1.0 differs from the +1.0 frame (negative direction wired)
-#   3) dehaze=0 restores the neutral frame (mean within tolerance)
-# Run:
-#   Godot --headless --path godot-poc/project --script res://tests/dehaze_smoke_test.gd \
-#         -- <input_raw>
-# with DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR exported.
+# Dehaze: exercise the backend's OWN hue-safe dehaze post-stage (set_dehaze and
+# _apply_dehaze in dt_backend.cpp; no darktable module involved). set_dehaze(1.0)
+# removes haze, -1.0 adds it. Core property: the stage applies the same scalar
+# affine map to all channels, so per-pixel channel RANK ORDER (hue) is unchanged.
+# Run: Godot --headless --path godot-poc/project --script res://tests/dehaze_smoke_test.gd -- <input_raw>  (DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR must be exported)
 
 func _mean_luma(data: PackedByteArray, w: int, h: int) -> float:
 	var sum: float = 0.0
@@ -30,10 +21,8 @@ func _mean_luma(data: PackedByteArray, w: int, h: int) -> float:
 	return sum / n
 
 
-# Compare the channel ranking (which channel is largest/middle/smallest) for
-# sampled pixels between two same-size frames. The dehaze map out =
-# (in - A)/t + A with scalar t preserves strict orderings; ties (within a
-# small epsilon) are treated as wildcard.
+# Compare channel ranking (largest/middle/smallest) for sampled pixels between
+# two same-size frames; the scalar-t dehaze map preserves strict orderings, ties are wildcard.
 func _channel_orders_preserved(a: PackedByteArray, b: PackedByteArray, w: int, h: int) -> bool:
 	var n: int = w * h
 	if a.size() < n * 4 or b.size() < n * 4:
@@ -45,9 +34,8 @@ func _channel_orders_preserved(a: PackedByteArray, b: PackedByteArray, w: int, h
 		var br: float = b[k * 4]
 		var bg: float = b[k * 4 + 1]
 		var bb: float = b[k * 4 + 2]
-		# channel with max value must agree when the neutral pixel's max
-		# channel is strictly dominant (>= 8/255 above the runner-up), same
-		# for min. Near-neutral pixels (all channels within 8) are skipped.
+		# Max/min channel must agree when the neutral pixel's extreme is strictly
+		# dominant (>= 8/255 above the runner-up); near-neutral pixels skipped.
 		var avals: Array = [ar, ag, ab]
 		var bvals: Array = [br, bg, bb]
 		var amax: float = max(ar, max(ag, ab))
@@ -99,7 +87,6 @@ func _initialize() -> void:
 		_die("load_image failed")
 		return
 
-	# Neutral frame (no edits beyond darktable's own defaults).
 	var neutral: PackedByteArray = backend.render_view(1000000, 1000000, 0.5, 0.0, 0.0)
 	var nw: int = backend.get_width()
 	var nh: int = backend.get_height()
@@ -109,30 +96,27 @@ func _initialize() -> void:
 	var neutral_luma: float = _mean_luma(neutral, nw, nh)
 	print("DEHAZE_SMOKE: neutral frame %dx%d, mean luma %.3f" % [nw, nh, neutral_luma])
 
-	# Full dehaze: strength 1.0. The fixture is not guaranteed hazy, so only
-	# assert the frame VISIBLY changes, not the direction of the mean.
+	# The fixture is not guaranteed hazy: only assert the frame VISIBLY changes,
+	# not the direction of the mean.
 	backend.set_dehaze(1.0)
 	var dehazed: PackedByteArray = backend.render_view(1000000, 1000000, 0.5, 0.0, 0.0)
 	var dehazed_luma: float = _mean_luma(dehazed, nw, nh)
 	print("DEHAZE_SMOKE: dehaze=1.0 frame, mean luma %.3f" % dehazed_luma)
 
-	# Full haze ADD: strength -1.0. Must differ from the +1.0 frame, proving
-	# the negative direction is wired (not clamped to 0).
+	# Haze ADD (-1.0) must differ from the +1.0 frame: proves the negative
+	# direction is wired, not clamped to 0.
 	backend.set_dehaze(-1.0)
 	var hazed: PackedByteArray = backend.render_view(1000000, 1000000, 0.5, 0.0, 0.0)
 	var hazed_luma: float = _mean_luma(hazed, nw, nh)
 	print("DEHAZE_SMOKE: dehaze=-1.0 frame, mean luma %.3f" % hazed_luma)
 
-	# Reset: strength 0 is an exact no-op and disables the module, so this
-	# must match the neutral frame.
+	# Strength 0 is an exact no-op and disables the module: must match neutral.
 	backend.set_dehaze(0.0)
 	var reset: PackedByteArray = backend.render_view(1000000, 1000000, 0.5, 0.0, 0.0)
 	var reset_luma: float = _mean_luma(reset, nw, nh)
 	print("DEHAZE_SMOKE: reset frame, mean luma %.3f" % reset_luma)
 
-	# Hue-preservation probe: sample pixels and assert the channel order
-	# (R>=G>=B or permutations) is identical between neutral and dehazed
-	# frames. A hue rotation or cast would flip some pair.
+	# Hue-preservation probe: a hue rotation or cast would flip a channel pair.
 	if not _channel_orders_preserved(neutral, dehazed, nw, nh):
 		_die("dehaze=1.0 changed pixel hue (channel order flipped)")
 		return

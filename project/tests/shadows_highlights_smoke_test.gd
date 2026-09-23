@@ -1,27 +1,18 @@
 extends SceneTree
 
-# Shadows/Highlights verification: load the fixture RAW, render the neutral
-# frame, then sweep set_shadows()/set_highlights() via the
-# introspection-resolved shadhi "shadows"/"highlights" fields (see
-# dt_iop_set_float() in dt_backend.cpp). shadhi.c's own convention: positive
-# `shadows` lifts shadow tones (frame BRIGHTENS), positive `highlights` lifts
-# highlight tones too (also brightens; negative highlights pulls them down).
-# `shadows` is checked against WHOLE-FRAME mean luma (the fixture, even
-# lifted, is still overwhelmingly shadow-toned, so the shadows band dominates
-# the mean). `highlights` only acts on already-bright pixels, which are a
-# small minority of this frame -- moving them barely shifts the WHOLE-frame
-# mean, so `highlights` is instead checked against the mean of the BRIGHTEST
-# QUARTILE of sampled pixels, where the band's effect is concentrated.
-# Asserts:
-#   1) shadows=+70 brightens the frame vs. neutral (whole-frame mean)
-#   2) shadows=-70 darkens the frame vs. neutral (whole-frame mean)
-#   3) highlights=+70 brightens the brightest pixels vs. neutral
-#   4) highlights=-70 darkens the brightest pixels vs. neutral
-#   5) resetting both to 0 restores the neutral frame (mean within tolerance)
-# Run:
-#   Godot --headless --path godot-poc/project --script res://tests/shadows_highlights_smoke_test.gd \
-#         -- <input_raw>
-# with DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR exported.
+# Shadows/Highlights: sweep set_shadows()/set_highlights() via the
+# introspection-resolved shadhi "shadows"/"highlights" fields
+# (dt_iop_set_float() in dt_backend.cpp). shadhi convention: positive `shadows`
+# lifts shadow tones (frame BRIGHTENS); positive `highlights` also brightens,
+# negative pulls highlights down. Shadows is checked against WHOLE-FRAME mean
+# luma (the lifted fixture is still mostly shadow-toned, so the shadows band
+# dominates the mean), but highlights only acts on the small bright minority,
+# which barely moves the whole-frame mean, so it is checked against the
+# BRIGHTEST QUARTILE of sampled pixels.
+# Asserts: shadows=+70 brightens the whole-frame mean, shadows=-70 darkens it,
+# highlights=+70/-70 brighten/darken the brightest-quartile mean, and resetting
+# both to 0 restores the neutral frame within tolerance.
+# Run: Godot --headless --path godot-poc/project --script res://tests/shadows_highlights_smoke_test.gd -- <input_raw>  (DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR must be exported)
 
 func _mean_luma(data: PackedByteArray, w: int, h: int) -> float:
 	var sum: float = 0.0
@@ -37,8 +28,8 @@ func _mean_luma(data: PackedByteArray, w: int, h: int) -> float:
 	return sum / n
 
 
-# Mean luma of the brightest ~25% of sampled pixels -- where shadhi's
-# highlights band has most of its effect, unlike the whole-frame mean.
+# Mean luma of the brightest ~25% of sampled pixels, where shadhi's highlights
+# band has most of its effect (unlike the whole-frame mean).
 func _bright_quartile_mean_luma(data: PackedByteArray, w: int, h: int) -> float:
 	var lumas: Array = []
 	for y in h:
@@ -81,8 +72,8 @@ func _initialize() -> void:
 		return
 
 	# Lift the frame well past set_shadows()'s +4.0 EV: the fixture RAW is
-	# nearly black, and shadhi's highlights band needs real bright-pixel
-	# content to act on, not just a lifted-but-still-dark frame.
+	# nearly black, and shadhi's highlights band needs real bright-pixel content
+	# to act on, not just a lifted-but-still-dark frame.
 	backend.set_exposure(6.0)
 
 	var neutral: PackedByteArray = backend.render_view(1000000, 1000000, 0.5, 0.0, 0.0)

@@ -1,15 +1,10 @@
 extends Node
 
-# Autoload. Owns the light/dark Theme resources, applies the active one to the
-# scene root, and persists the choice across launches. The root Control's
-# `theme` property cascades to every child automatically (see main_theme.tres),
-# so switching is a single assignment -- no per-node overrides needed.
-#
-# Font sizes: Theme resources only store baked pixel values, so there's no
-# "em" unit to lean on. FONT_RATIOS recreates that relationship -- every
-# style's size is expressed as a ratio of BASE_FONT_SIZE (the "1em" role,
-# matching Label/Button/default). Bumping font_scale rescales all of them
-# together, same as changing a root font-size in CSS.
+# Autoload. Owns the light/dark Theme resources and persists the choice. The
+# root Control's `theme` property cascades to every child, so switching is one
+# assignment. Themes only store baked pixel font sizes (no "em" unit), so
+# FONT_RATIOS recreates that: each style's size is a ratio of BASE_FONT_SIZE,
+# rescaled together by font_scale (like a CSS root font-size).
 
 signal theme_changed(is_dark: bool)
 signal font_scale_changed(scale: float)
@@ -22,8 +17,7 @@ const BASE_FONT_SIZE := 22
 const MIN_FONT_SCALE := 0.75
 const MAX_FONT_SCALE := 2.0
 
-# theme_type -> size relative to BASE_FONT_SIZE, taken from the ratios
-# already baked into main_theme.tres/light_theme.tres.
+# theme_type -> size ratio vs BASE_FONT_SIZE, from the values in the .tres files.
 const FONT_RATIOS := {
 	"": 1.0, # default_font_size
 	"Button": 1.0,
@@ -86,6 +80,6 @@ func _apply() -> void:
 
 func _save_settings() -> void:
 	var config := ConfigFile.new()
-	config.load(SETTINGS_PATH) # ok to ignore error -- missing file just starts empty
+	config.load(SETTINGS_PATH) # ok to ignore error: missing file just starts empty
 	config.set_value("ui", "dark_mode", is_dark)
 	config.save(SETTINGS_PATH)

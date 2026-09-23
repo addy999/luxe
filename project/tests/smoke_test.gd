@@ -1,22 +1,13 @@
 extends SceneTree
-#
 # Headless functional smoke test for the darktable pixel pipeline, driven
-# through the *real* Godot consumer (the DtBackend GDExtension) rather than
-# darktable-cli. This is the shared acceptance oracle: RAW -> two EV values -> two
-# different-content PNGs. Run it before and after the GTK-free work; a broken
-# IOP .so that dlopens but fails mid-render is only caught by a real functional
-# run like this one, not by the dependency/leak audits.
-#
-# It is intentionally NOT wired into Main.tscn: it constructs DtBackend directly
-# so nothing about the UI can mask a pipeline failure.
-#
-# Invoked by scripts/smoke_test.sh as:
-#   Godot --headless --path <project> --script res://tests/smoke_test.gd \
-#         -- <input_raw> <output_dir> <ev1> <ev2>
-#
-# The backend reads DT_BACKEND_DATADIR / DT_BACKEND_MODULEDIR from the real
-# process environment (see dt_backend.cpp compute_dt_dirs); smoke_test.sh
-# exports both before launching Godot, so this script does not touch them.
+# through the *real* Godot consumer (DtBackend GDExtension) rather than
+# darktable-cli. Shared acceptance oracle: RAW -> EV list -> PNGs. An IOP .so
+# that dlopens but fails mid-render is only caught by a real functional run,
+# not the dependency/leak audits. Intentionally not wired into Main.tscn: it
+# constructs DtBackend directly so nothing about the UI can mask a pipeline
+# failure. Invoked by scripts/smoke_test.sh, which exports
+# DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR (read from the environment by
+# compute_dt_dirs in dt_backend.cpp).
 
 func _initialize() -> void:
 	var args: PackedStringArray = OS.get_cmdline_user_args()
@@ -53,8 +44,7 @@ func _initialize() -> void:
 	var wrote: PackedStringArray = PackedStringArray()
 	for ev in evs:
 		backend.set_exposure(ev)
-		# tag the filename with the EV so two runs never collide, and negatives
-		# stay legible ("-1.0" -> "m1_0").
+		# tag with the EV so runs never collide and negatives stay legible ("-1.0" -> "m1_0").
 		var tag: String = ("%+.2f" % ev).replace("+", "p").replace("-", "m").replace(".", "_")
 		var out_path: String = out_dir.path_join("smoke_ev_%s.png" % tag)
 		if not backend.export_image(out_path):
@@ -66,8 +56,7 @@ func _initialize() -> void:
 
 	backend.cleanup()
 
-	# Emit the written paths on their own lines so the shell wrapper can collect
-	# them without parsing prose.
+	# Own lines so the shell wrapper can collect paths without parsing prose.
 	for p in wrote:
 		print("SMOKE_FILE: ", p)
 	print("SMOKE_RESULT: PASS")

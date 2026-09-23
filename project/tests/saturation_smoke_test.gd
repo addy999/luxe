@@ -1,21 +1,13 @@
 extends SceneTree
 
-# Saturation verification: load the fixture RAW, render the neutral frame,
-# then sweep the saturation axis across BOTH modules that implement it (see
-# set_saturation()/set_desaturation() in dt_backend.cpp):
-#   - set_saturation() drives velvia's introspection-resolved "strength" field
-#     (boost-only, 0..100) for the ABOVE-neutral half.
-#   - set_desaturation() drives monochrome's BLEND opacity (not a params
-#     field) for the BELOW-neutral half, fading the frame toward grayscale.
-# Chroma spread (mean |channel - luma| per pixel) is the signal: velvia
-# boosts it, monochrome's blend collapses it toward zero. Asserts:
-#   1) saturation=100 increases mean chroma vs. neutral
-#   2) desaturation=1.0 (full B&W) drives mean chroma near zero
-#   3) resetting both restores the neutral frame (mean luma within tolerance)
-# Run:
-#   Godot --headless --path godot-poc/project --script res://tests/saturation_smoke_test.gd \
-#         -- <input_raw>
-# with DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR exported.
+# Saturation: sweep both modules implementing the axis (set_saturation()/
+# set_desaturation() in dt_backend.cpp). set_saturation() drives velvia's
+# introspection-resolved "strength" field (boost-only, 0..100) for the
+# ABOVE-neutral half; set_desaturation() drives monochrome's BLEND opacity
+# (not a params field) for the BELOW-neutral half, fading toward grayscale.
+# Signal is mean chroma (|channel - luma| per pixel): velvia boosts it,
+# monochrome's blend collapses it toward zero.
+# Run: Godot --headless --path godot-poc/project --script res://tests/saturation_smoke_test.gd -- <input_raw>  (DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR must be exported)
 
 func _mean_chroma(data: PackedByteArray, w: int, h: int) -> float:
 	var sum: float = 0.0

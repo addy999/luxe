@@ -1,22 +1,13 @@
 extends SceneTree
 
-# Blacks/Whites verification: load the fixture RAW, render the neutral frame,
-# then render with the two-sided toneequal band gains (see dt_backend.h's
-# dt_iop_toneequalizer_params_t note). set_blacks(1.0) writes -1 EV on the
-# -5 EV band (deepens blacks, frame DARKENS), set_blacks(-1.0) writes +1 EV
-# (lifts washed blacks, frame BRIGHTENS), set_whites(1.0) writes +1 EV on
-# the -1 EV band (boosts whites, frame BRIGHTENS), set_whites(-1.0) writes
-# -1 EV (lowers whites, frame DARKENS). Asserts:
-#   1) blacks=1.0 darkens the frame (mean luma drops)
-#   2) blacks=-1.0 brightens the frame (mean luma rises)
-#   3) whites=1.0 brightens the frame (mean luma rises)
-#   4) whites=-1.0 darkens the frame (mean luma drops)
-#   5) both at full positive strength renders without crashing
-#   6) resetting to 0 restores the neutral frame (mean within tolerance)
-# Run:
-#   Godot --headless --path godot-poc/project --script res://tests/blacks_whites_smoke_test.gd \
-#         -- <input_raw>
-# with DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR exported.
+# Blacks/Whites: exercise the two-sided toneequal band gains (see dt_backend.h's
+# dt_iop_toneequalizer_params_t note). set_blacks(+/-1.0) writes +/-1 EV on the
+# -5 EV band SIGN-INVERTED (+1.0 darkens); set_whites(+/-1.0) writes +/-1 EV on
+# the -1 EV band straight through (+1.0 brightens). Asserts each direction moves
+# mean luma the right way, both bands at full strength render without crashing,
+# and reset restores the neutral frame.
+# Run: Godot --headless --path godot-poc/project --script res://tests/blacks_whites_smoke_test.gd \
+#         -- <input_raw>  (DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR must be exported)
 
 func _mean_luma(data: PackedByteArray, w: int, h: int) -> float:
 	var sum: float = 0.0
@@ -60,7 +51,6 @@ func _initialize() -> void:
 	# the band gains against THAT as the neutral baseline.
 	backend.set_exposure(4.0)
 
-	# Neutral frame (no edits beyond darktable's own defaults).
 	var neutral: PackedByteArray = backend.render_view(1000000, 1000000, 0.5, 0.0, 0.0)
 	var nw: int = backend.get_width()
 	var nh: int = backend.get_height()
@@ -70,39 +60,34 @@ func _initialize() -> void:
 	var neutral_luma: float = _mean_luma(neutral, nw, nh)
 	print("BLACKS_WHITES_SMOKE: neutral frame %dx%d, mean luma %.3f" % [nw, nh, neutral_luma])
 
-	# Blacks at full positive strength: -1 EV on the blacks band -> darker.
 	backend.set_blacks(1.0)
 	var blacks: PackedByteArray = backend.render_view(1000000, 1000000, 0.5, 0.0, 0.0)
 	var blacks_luma: float = _mean_luma(blacks, nw, nh)
 	print("BLACKS_WHITES_SMOKE: blacks=1.0 frame, mean luma %.3f" % blacks_luma)
 
-	# Blacks at full negative strength: +1 EV on the blacks band -> brighter.
 	backend.set_blacks(-1.0)
 	var neg_blacks: PackedByteArray = backend.render_view(1000000, 1000000, 0.5, 0.0, 0.0)
 	var neg_blacks_luma: float = _mean_luma(neg_blacks, nw, nh)
 	print("BLACKS_WHITES_SMOKE: blacks=-1.0 frame, mean luma %.3f" % neg_blacks_luma)
 
-	# Whites at full positive strength: +1 EV on the whites band -> brighter.
 	backend.set_blacks(0.0)
 	backend.set_whites(1.0)
 	var whites: PackedByteArray = backend.render_view(1000000, 1000000, 0.5, 0.0, 0.0)
 	var whites_luma: float = _mean_luma(whites, nw, nh)
 	print("BLACKS_WHITES_SMOKE: whites=1.0 frame, mean luma %.3f" % whites_luma)
 
-	# Whites at full negative strength: -1 EV on the whites band -> darker.
 	backend.set_whites(-1.0)
 	var neg_whites: PackedByteArray = backend.render_view(1000000, 1000000, 0.5, 0.0, 0.0)
 	var neg_whites_luma: float = _mean_luma(neg_whites, nw, nh)
 	print("BLACKS_WHITES_SMOKE: whites=-1.0 frame, mean luma %.3f" % neg_whites_luma)
 
-	# Both at full positive strength: independent bands, must render fine.
+	# Both bands at full strength must render fine together.
 	backend.set_blacks(1.0)
 	backend.set_whites(1.0)
 	var both: PackedByteArray = backend.render_view(1000000, 1000000, 0.5, 0.0, 0.0)
 	var both_luma: float = _mean_luma(both, nw, nh)
 	print("BLACKS_WHITES_SMOKE: blacks=1.0 whites=1.0 frame, mean luma %.3f" % both_luma)
 
-	# Reset: back to the neutral frame.
 	backend.set_blacks(0.0)
 	backend.set_whites(0.0)
 	var reset: PackedByteArray = backend.render_view(1000000, 1000000, 0.5, 0.0, 0.0)

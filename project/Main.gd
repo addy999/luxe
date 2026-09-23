@@ -1,48 +1,23 @@
 extends Control
 
-# Luxe — Main scene controller.
-# Bridges the GDExtension `DtBackend` class to the UI. There are now two
-# independent view knobs, deliberately decoupled:
+# Luxe: Main scene controller that bridges the GDExtension DtBackend to the UI.
+# Two independent, decoupled view knobs (details in docs/PERF-IMPROVEMENT.md):
 #
-#   1. EDIT RESOLUTION (backend / pixelpipe) — _edit_scale, the EditRes dropdown.
-#      Two backend pipes sit behind this, chosen by _final_quality() (see
-#      dt_backend.cpp's preview_pipe):
-#        - 100% ("final quality"): render_view() on the full pipe, fed the
-#          full-res DT_MIPMAP_FULL buffer, whole image at native scale.
-#        - 75/50/25% ("fast"): render_preview() on a separate PREVIEW pipe,
-#          fed darktable's downscaled DT_MIPMAP_F float mip. The backend sizes
-#          that mip to the display's physical pixel resolution (see init()), so
-#          _edit_scale is a fraction of the display-resolution mip: 0.75 is
-#          ~3/4 screen pixels, 0.5 ~half, 0.25 ~quarter. darktable propagates
-#          the effective scale into every module's ROI, so both the output and
-#          the intermediate work shrink with it. This mirrors darktable's own
-#          darkroom, which keeps a preview pipe for interaction and the full
-#          pipe for the final render.
-#      Both calls pass an oversized viewport so the ROI clamp (develop.c:874-890)
-#      collapses to the whole image: render_*(BIG, BIG, scale, 0, 0) allocates
-#      only scale*pipe_native pixels (it copies wd*ht = the clipped ROI).
+#   1. EDIT RESOLUTION (backend), _edit_scale, the EditRes dropdown. 100% runs
+#      render_view() on the full pipe; 75/50/25% run render_preview() on the
+#      PREVIEW pipe fed the DT_MIPMAP_F mip. The scale propagates into every
+#      module's ROI, so output and intermediate work shrink together.
+#   2. DISPLAY ZOOM (frontend), _display_zoom, the top-bar ZoomSlider: how
+#      large the rendered buffer is drawn. TextureRect sizing only; never
+#      re-runs the pipe. Relative to *native* pixels.
 #
-#   2. DISPLAY ZOOM (frontend / Godot only) — _display_zoom, the DisplayZoom
-#      dropdown. How large that already-rendered buffer is drawn on screen:
-#      Fit / 25 / 50 / 100 / 200%. Pure TextureRect sizing inside a
-#      ScrollContainer; it does NOT re-run the pipe, so it is instant and
-#      panning is just scrolling. Display zoom % is relative to *native*
-#      pixels (100% display = 1 native px per screen px), so it stays meaningful
-#      regardless of which pipe produced the buffer.
-#
-# Consequence (surfaced in the resolution label): in fast mode the buffer is
-# scale * the display-resolution mip, so displaying it at 100% stretches it up
-# unless EditRes is at 100%. True 1:1 detail requires edit resolution 100% and
-# display zoom 100%.
-# export_image() is untouched and always renders full-resolution.
+# 1:1 native detail needs edit resolution 100% AND display zoom 100%; the
+# resolution label surfaces this. export_image() always renders full-res.
 
 @onready var scroll_container: ScrollContainer = $Root/MiddleHBox/Scroll
 @onready var texture_rect: TextureRect = $Root/MiddleHBox/Scroll/Center/TextureRect
-# Empty-state placeholder: a CenterContainer over the canvas pane holding an
-# "Open Image…" call-to-action. It shares the MiddleHBox with the Scroll pane,
-# so it's hidden (visible = false) the moment an image loads and re-shown
-# whenever the pane goes back to no-image. mouse_filter is IGNORE (set in the
-# scene) so it never blocks anything underneath.
+# mouse_filter is IGNORE (set in the scene) so it never blocks anything underneath.
+# Hidden when an image loads, re-shown when the pane goes back to no-image.
 @onready var empty_state: CenterContainer = $Root/MiddleHBox/EmptyState
 @onready var exposure_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ExposureRow/ExposureSlider
 @onready var exposure_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ExposureRow/ExposureValueLabel
@@ -70,26 +45,20 @@ extends Control
 @onready var export_button: Button = $Root/TopBar/TopBarRow/ExportButton
 @onready var theme_button: Button = $Root/TopBar/TopBarRow/ThemeButton
 @onready var resolution_label: Label = $Root/BottomBar/BottomRow/ResolutionLabel
-# Display-zoom controls live in the top bar now: a continuous slider (native-
-# relative %) plus a toggle for the Fit sentinel. See _display_zoom below.
 @onready var zoom_slider: HSlider = $Root/TopBar/TopBarRow/ZoomSlider
 @onready var fit_button: Button = $Root/TopBar/TopBarRow/FitButton
 @onready var zoom_value_label: Label = $Root/TopBar/TopBarRow/ZoomValueLabel
 @onready var file_dialog: FileDialog = $FileDialog
 @onready var export_dialog: FileDialog = $ExportDialog
-# Crop UI: the top-bar toggle button plus the overlay editor (instantiated in
-# code, parented to texture_rect while open -- see CropOverlay.gd).
+# Overlay editor instantiated in code, parented to texture_rect while open.
 @onready var crop_button: Button = $Root/TopBar/TopBarRow/CropButton
 
 const CropOverlayScript := preload("res://CropOverlay.gd")
 var _crop_overlay: Control = null
-# Done/Cancel bar for the crop overlay. Lives anchored to the Scroll pane (NOT
-# the overlay, which is image-sized and scrolls off-screen at high zoom).
+# Anchored to the Scroll pane (the image-sized overlay scrolls off-screen).
 var _crop_bar: HBoxContainer = null
-# The committed crop while the overlay is open. While editing, the pipe
-# renders the FULL frame (crop temporarily lifted) so the user always adjusts
-# the box over the whole image, exactly like darktable's own darkroom UI;
-# this remembers what to fall back to on Cancel.
+# Committed crop saved while the overlay is open: the pipe renders the FULL
+# frame during editing (crop lifted, like darktable's darkroom).
 var _crop_before_edit: Rect2 = Rect2(0, 0, 1, 1)
 # Chrome panels, referenced only for the one-shot entrance animation.
 @onready var top_bar: PanelContainer = $Root/TopBar
@@ -101,88 +70,49 @@ var image_texture: ImageTexture = null
 
 var _image_loaded: bool = false
 
-# Per-image default white balance (the camera's as-shot CCT, resolved on load).
-# Unlike the other sliders, WB has no fixed default -- its reset target is this
-# value, refreshed in _on_image_loaded(). 6500.0 is only a pre-load placeholder.
+# Per-image default white balance (as-shot CCT, resolved on load). Unlike the
+# other sliders, WB has no fixed default: its reset target is this value.
 var _wb_default_temperature: float = 6500.0
-# Every reset icon button, tracked so they can be disabled together when the
-# backend fails to init (mirrors the slider .editable handling below).
+# All reset icon buttons, disabled together on backend init failure.
 var _reset_buttons: Array[Button] = []
 
 # --- Edit state: the authoritative "what to render" ---------------------------
-# Every darktable module parameter the UI can drive lives here as key -> desired
-# value. Any control's value_changed handler writes its key immediately, then
-# calls _request_render(). The render queue always re-snapshots THIS dict at the
-# moment a render starts, so a change to one parameter while a render driven by
-# another is still in flight is never lost or clobbered — and any burst of
-# changes collapses into a single follow-up render.
-#
-# To expose a new module (see the README's module documentation): add its key
-# here, add one line to _apply_params_to_backend(), and add a control that writes
-# the key and calls _request_render(). Only params whose value changed since the
-# last apply are pushed (see _applied_params / _params_differ below), so a new
-# module needs no extra bookkeeping: just keep writing its key as usual.
+# Key -> desired value; handlers write the key then _request_render(). The queue
+# re-snapshots this dict at render start, so mid-render changes are never lost.
+# New module (see README): add a key here, one guarded line in
+# _apply_params_to_backend(), and a control writing it.
 var _params: Dictionary = {
 	"exposure": 0.0,
 	"contrast": 0.0,
 	"highlights": -50.0,
 	"shadows": 50.0,
-	# Blacks/Whites: two-sided -1..1 strengths driving toneequal's 1-EV band
-	# gains (see dt_backend.h's dt_iop_toneequalizer_params_t note). Blacks
-	# writes the -5 EV band sign-inverted (Lightroom's positive Blacks deepens
-	# blacks; a positive toneequal gain lifts its band), Whites writes the
-	# -1 EV band straight through. Unlike the _MODULE_RANGES keys these are
-	# already in the backend's expected units, so the callbacks write the
-	# slider value straight through -- the band math lives in the C++ setter.
+	# Blacks/Whites: -1..1 strengths driving toneequal's 1-EV band gains; the
+	# band math and sign conventions live in the C++ setters (dt_backend.h).
 	"blacks": 0.0,
 	"whites": 0.0,
-	# Dehaze: UI units -1..1 (0 neutral), written straight through to
-	# backend.set_dehaze(). NOT the darktable hazeremoval module: the backend
-	# runs its own hue-safe dark-channel dehaze as a post-pipe stage (see
-	# set_dehaze in dt_backend.cpp) -- no darktable module changes hue here.
+	# Dehaze: -1..1 (0 neutral). NOT darktable's hazeremoval module; the
+	# backend has its own post-pipe dehaze.
 	"dehaze": 0.0,
 	"saturation": 25.0,
-	# Desaturation amount 0..1 driving the monochrome module's blend opacity
-	# (see _on_saturation_slider_value_changed below) -- the saturation slider's
-	# below-neutral range. 0.0 = full color (neutral).
+	# Desaturation 0..1 = monochrome blend opacity (saturation slider's
+	# below-neutral half). 0.0 = full color.
 	"desaturation": 0.0,
 	"vibrance": 25.0,
-	# Tone curve L-channel control points, owned by ToneCurveEditor -- see
-	# _on_tone_curve_changed() below. This default (identity, 2 nodes) matches
-	# tonecurve.c's own init() default.
+	# Tone curve points, owned by ToneCurveEditor; identity default = tonecurve.c init().
 	"tonecurve": PackedVector2Array([Vector2(0.0, 0.0), Vector2(1.0, 1.0)]),
-	# wb_temperature drives channelmixerrgb's chromatic adaptation directly in
-	# Kelvin -- see the White Balance (K) slider comment below. This 6500.0
-	# placeholder only matters before any image is loaded; on load it's
-	# replaced by the image's real as-shot temperature (see _on_image_loaded()).
+	# Kelvin, straight to channelmixerrgb (see the White Balance note below);
+	# 6500.0 is only a pre-load placeholder.
 	"wb_temperature": 6500.0,
-	# Crop box in normalized image fractions, stored as edges (NOT x/y/w/h --
-	# darktable's clipping module stores left/top/right/bottom). Full frame =
-	# no crop; the backend disables the clipping module for that case. Owned by
-	# the crop overlay UI (see _on_crop_overlay_applied below).
+	# Normalized edges (darktable clipping stores left/top/right/bottom, not
+	# x/y/w/h). Full frame = clipping module disabled.
 	"crop": Rect2(0, 0, 1, 1),
 }
 
 # --- Slider offsets vs. module defaults ----------------------------------------
-# Four darktable modules have non-zero DEFAULTS (shadowsandhighlights: shadows
-# +50 / highlights -50, both in -100..100; velvia "strength" 25 in 0..100;
-# vibrance "amount" 25 in 0..100 -- see the introspection notes in
-# dt_backend.h). A fresh darktable load applies those values, so they are the
-# visual "neutral" -- resetting a slider to 0.0 in module units would visibly
-# lift highlights and crush shadows. The UI therefore centers the thumb on
-# neutral: each slider reads an OFFSET in -50..+50 (0 = as darktable loads the
-# image), mapped onto the module's FULL range via _map_offset_to_module().
-#
-# The map is piecewise linear THROUGH the default, not a plain min->max ramp:
-# a straight ramp would put offset 0 at the range midpoint (50 for velvia/
-# vibrance, not their 25 default), changing what a fresh image looks like.
-# Instead the left half of the track spans min->default and the right half
-# spans default->max, so 0 maps exactly to the default AND both extremes of
-# the module's range stay reachable. The cost is non-uniform sensitivity
-# (uneven module units per slider step on each side) -- the deliberate
-# trade-off for full-range coverage with a centered neutral.
-# Only these four keys map through the table; exposure/contrast default to 0
-# and their ranges are symmetric, so their sliders already are offsets.
+# Shadows/highlights, velvia and vibrance have non-zero module defaults that are
+# the visual neutral, so these sliders read an OFFSET in -50..+50, mapped
+# piecewise linear through the default (docs section F.2: a straight ramp would
+# put offset 0 at the range midpoint, not the 25 default).
 
 const _MODULE_RANGES: Dictionary = {
 	# key: [module_min, module_default, module_max]
@@ -193,8 +123,7 @@ const _MODULE_RANGES: Dictionary = {
 }
 
 
-# Offset (-50..+50) -> absolute module value, piecewise linear through the
-# default: offset -50 -> module min, 0 -> module default, +50 -> module max.
+# Piecewise linear: offset -50 -> module min, 0 -> default, +50 -> module max.
 func _map_offset_to_module(key: String, offset: float) -> float:
 	var range_vals: Array = _MODULE_RANGES[key]
 	var lo: float = range_vals[0]
@@ -205,59 +134,27 @@ func _map_offset_to_module(key: String, offset: float) -> float:
 	return dflt + offset / 50.0 * (hi - dflt)
 
 
-# Last values actually pushed to the backend, keyed like _params. A key missing
-# here (or one whose _params value differs) is stale and gets pushed by
-# _apply_params_to_backend(). Emptied on image load to force a full sync, since
-# load_image resets the backend's modules and its state must be re-pushed.
+# Last values pushed to the backend, keyed like _params; missing or differing
+# keys get re-pushed. Emptied on image load (modules reset, full sync needed).
 var _applied_params: Dictionary = {}
 
 # --- White Balance (K) slider mapping -----------------------------------------
-# White balance is implemented via channelmixerrgb ("color calibration")'s
-# chromatic adaptation, not the temperature module -- see the NOTE on white
-# balance above dt_iop_channelmixer_rgb_params_t in dt_backend.h for the full
-# rationale (this app's default darktable workflow is scene-referred/sigmoid,
-# where temperature is pinned neutral and channelmixerrgb owns the real
-# camera-to-D65 correction). Unlike the old temperature-based approach, this
-# is a REAL colorimetric CCT: the slider value is fed straight to
-# channelmixerrgb's `temperature` field (illuminant pinned to DT_ILLUMINANT_D,
-# daylight), and darktable's own illuminant_to_xy() derives the correct
-# chromatic-adaptation matrix from it. No linear bias hack needed.
-#
-# The slider's Kelvin range lives in Main.tscn (min 1667, max 25000) to match
-# channelmixerrgb's TEMP_MIN/TEMP_MAX, so a raw's as-shot temperature (used to
-# seed the slider at load) never clamps. On load the slider is set to the
-# image's real as-shot CCT via backend.get_white_balance_temperature().
+# Via channelmixerrgb's chromatic adaptation (illuminant pinned to
+# DT_ILLUMINANT_D), not the temperature module; see dt_backend.h and docs F.4.
+# The 1667..25000 range in Main.tscn matches channelmixerrgb's TEMP_MIN/TEMP_MAX,
+# so an as-shot temperature never clamps.
 
 var _processing: bool = false
-# A render request that arrived while a render was already in flight. We store no
-# value — the next _start_process() re-snapshots _params/_edit_scale, so it always
-# renders the latest state. Exactly one follow-up render runs no matter how many
-# requests coalesced into this flag.
+# A request that arrived while a render was in flight; exactly one follow-up runs.
 var _render_queued: bool = false
 var _current_task_id: int = -1
 
 # --- Live-render EWMA gate -----------------------------------------------------
-# Time-based throttle modeled on darktable's own UI gate: a new pipe run is only
-# started if the previous one started at least half the averaged runtime ago
-# (develop.c:294-298, _inside_pipe_ui_frame). The average is an EWMA over 8 runs,
-# the same recurrence as _dev_average_delay_update() (develop.c:628-633,
-# DT_DEV_AVERAGE_DELAY_COUNT = 8).
-#
-# Cheap renders keep the average small, so the gate stays open and feedback is
-# near-instant. Expensive renders widen it, collapsing a drag's burst of ticks
-# into the fewest frames that still keep the preview current. This is adaptive,
-# never a fixed debounce: a slow render widens the window, a fast one closes it.
-#
-# A request that arrives while the gate is shut is not dropped. It arms a one-shot
-# timer for exactly the remaining sliver of the window, and that trailing render
-# re-snapshots _params, so the final slider value is always rendered.
-#
-# Note the gate is deliberately conservative: because we never abort an in-flight
-# render (unlike darktable, which stops the pipe mid-run), a render that takes its
-# own runtime to finish always clears the half-average window on completion, so a
-# saturated back-to-back drag is unaffected. The gate only sheds frames when a
-# render finishes well under half the recent average, i.e. when there is variance
-# worth smoothing.
+# Modeled on darktable's own UI gate (develop.c:294-298): a new render only
+# starts if the previous one started at least half the averaged runtime ago
+# (EWMA over 8 runs). A request while shut arms a one-shot timer for the
+# remaining sliver; the trailing render re-snapshots _params. No fixed debounce,
+# and in-flight renders are never aborted. Details: docs/PERF-IMPROVEMENT.md.
 const _RENDER_AVG_COUNT: int = 8
 var _render_avg_usec: float = 0.0        # EWMA of render start-to-start latency.
 var _last_render_start_usec: int = 0     # Start time of the most recent render (0 = none).
@@ -268,25 +165,20 @@ var _export_path: String = ""
 var _source_basename: String = "export"
 
 # --- Knob 1: edit resolution (backend render scale) ---------------------------
-# Fraction of the display-resolution preview mip the preview pipe processes the
-# whole image at. 100% uses the full pipe; anything lower uses the preview pipe
-# (fed the DT_MIPMAP_F mip). Item ids on EditResOptionButton index into this
-# array.
+# Fraction of the preview mip the pipe processes; 100% uses the full pipe.
+# EditResOptionButton item ids index into this array.
 const _EDIT_MODES: Array = [
 	{"id": 0, "label": "100%", "scale": 1.00},
 	{"id": 1, "label": "75%", "scale": 0.75},
 	{"id": 2, "label": "50%", "scale": 0.50},
 	{"id": 3, "label": "25%", "scale": 0.25},
 ]
-const _EDIT_DEFAULT_ID: int = 2 # 50% — fallback used until an image's size is known.
+const _EDIT_DEFAULT_ID: int = 2 # 50%, fallback used until an image's size is known.
 var _edit_scale: float = 0.50
 
-# Size-adaptive default: bigger raw files get a smaller default edit scale, so
-# the initial render of a huge file isn't dramatically slower than a normal
-# one. Checked in order; first threshold the image's megapixel count meets or
-# exceeds wins. Based on raw_width/raw_height (DtBackend::get_raw_width/
-# get_raw_height), which are known right after load_image() -- before the
-# first pipe run, unlike get_native_width()/get_native_height().
+# Size-adaptive default: bigger raws get a smaller edit scale. Uses
+# raw_width/raw_height (known right after load_image(), unlike
+# get_native_width/height, which need a render first); tiers check in order.
 const _EDIT_DEFAULT_BY_SIZE: Array = [
 	{"min_megapixels": 20.0, "id": 3}, # huge (e.g. medium format, stitched) -> 25%
 	{"min_megapixels": 12.0, "id": 2}, # large (typical modern camera) -> 50%
@@ -294,9 +186,7 @@ const _EDIT_DEFAULT_BY_SIZE: Array = [
 ]
 
 
-# Picks the default edit-mode id for a newly loaded image, based on its raw
-# pixel count. Falls back to _EDIT_DEFAULT_ID if the size isn't known yet
-# (raw_w/raw_h <= 0).
+# Falls back to _EDIT_DEFAULT_ID if the size isn't known yet.
 func _pick_default_edit_mode_id(raw_w: int, raw_h: int) -> int:
 	if raw_w <= 0 or raw_h <= 0:
 		return _EDIT_DEFAULT_ID
@@ -306,67 +196,31 @@ func _pick_default_edit_mode_id(raw_w: int, raw_h: int) -> int:
 			return tier["id"]
 	return _EDIT_DEFAULT_ID
 
-# An oversized viewport handed to render_view() so its MIN(viewport, pipe_dim)
-# clamp always resolves to pipe_dim — i.e. the whole image at _edit_scale, never
-# a viewport-sized crop. render_view() only allocates the clipped ROI, so this
-# large number costs nothing; it just disables cropping/panning at the backend.
+# Defeats render_view()'s MIN(viewport, pipe_dim) clamp; only the clipped ROI
+# is allocated.
 const _WHOLE_IMAGE_VIEWPORT: int = 1000000
 
 # --- Display zoom (frontend TextureRect scale) --------------------------------
-# On-screen size relative to *native* pixels. Driven by the top-bar ZoomSlider
-# (a continuous percentage) plus the FitButton toggle. The slider itself cannot
-# encode "Fit", so the -1.0 sentinel lives only in _display_zoom below and is
-# mirrored in the UI: FitButton pressed + ZoomValueLabel showing "Fit". Dragging
-# the slider drops out of Fit into a positive native-relative scale.
+# On-screen size relative to *native* pixels. The slider can't encode "Fit", so
+# the -1.0 sentinel lives only in _display_zoom and is mirrored in the UI.
 const _ZOOM_MIN_PCT: float = 10.0
 const _ZOOM_MAX_PCT: float = 400.0
 var _display_zoom: float = -1.0 # -1.0 = Fit; otherwise native-relative scale.
 
-# TextureRect StretchMode ids (confirmed via dynamic-rag godot_retrieve):
-# 0 = STRETCH_SCALE (fill the node rect exactly), 5 = STRETCH_KEEP_ASPECT_CENTERED.
+# TextureRect StretchMode ids.
 const _STRETCH_SCALE: int = 0
 const _STRETCH_KEEP_ASPECT_CENTERED: int = 5
 
 var _dragging: bool = false
 
 
-# Local dev/testing convenience: DtBackend::compute_dt_dirs() (dt_backend.cpp)
-# looks for DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR as real process environment
-# variables via getenv() -- Godot has no dotenv support, so a stray .env file
-# in this directory does nothing. Rather than requiring every dev to launch
-# the Godot editor from a terminal with those exported, set them here from the
-# res://-relative project settings (project.godot [dt_backend] section) before
-# init() runs. If the vars are already present in the real environment (e.g.
-# someone did launch from a terminal with an explicit override), leave them
-# alone -- an explicit external override should win over this project default.
-#
-# BUNDLE-SAFETY GUARD: this must never run in an exported/standalone build.
-# NOTE: "standalone" is NOT a real
-# Godot feature tag (verified against Godot's own feature-tags doc; an
-# earlier version of this guard used it and it silently always evaluated to
-# false, since OS.has_feature() returns false for unknown tags rather than
-# erroring -- the guard looked correct but never actually fired). The real,
-# documented tag is "editor": true when running in the editor OR when running
-# the project *from* the editor, false only for an exported build. So the
-# correct guard is `not OS.has_feature("editor")`, i.e. "only do this
-# dev-convenience env var setup when running under the editor." Without this
-# guard, an exported .app would set DT_BACKEND_DATADIR to the res://-relative
-# dev-tree default below, globalized (ProjectSettings.globalize_path() on a
-# res://../../... path with no actual res:// filesystem backing in an
-# exported .app just strips the "res://" prefix, producing a *relative*
-# string like "../../source/build/share/darktable" -- confirmed by an actual
-# move-test launch log, not just reasoned about) -- and compute_dt_dirs()
-# (dt_backend.cpp) used to trust this env var unconditionally (its one
-# candidate that skipped datadir_looks_valid()), passing it straight through
-# as dt_init()'s --datadir. darktable's own dt_loc_init_generic() then
-# realpath()s that relative string against the process's current working
-# directory, which is exactly why the original crash log showed the app's own
-# bundle path prefixed onto "source/build/share/darktable/rawspeed/
-# cameras.xml" -- realpath() of a relative path resolves against CWD, and CWD
-# happened to be the app bundle's own directory. In an exported build, skip
-# this function entirely and let compute_dt_dirs() fall through to its
-# bundle-relative candidates (Godot executable path, then dladdr()), both of
-# which validate with datadir_looks_valid() before being accepted.
+# Dev-only: DtBackend::compute_dt_dirs() reads DT_BACKEND_DATADIR/MODULEDIR via
+# getenv(); Godot has no dotenv support, so set them from project settings
+# before init(); an external override wins. Editor-only guard (BUNDLE-SAFETY):
+# in an exported build globalize_path() strips unbacked res:// paths to a
+# relative string that compute_dt_dirs() used to trust as --datadir, crashing
+# cameras.xml lookup (docs section A). Exported builds fall through to
+# candidates that validate properly.
 func _configure_dt_backend_env() -> void:
 	if not OS.has_feature("editor"):
 		return
@@ -381,16 +235,13 @@ func _configure_dt_backend_env() -> void:
 
 
 func _ready() -> void:
-	# One-shot timer for the EWMA render gate's trailing render. Created once and
-	# reused; never allocated per tick. See the gate block above.
+	# One-shot timer for the EWMA gate's trailing render; created once, reused.
 	_gate_timer = Timer.new()
 	_gate_timer.one_shot = true
 	_gate_timer.timeout.connect(_on_render_gate_timeout)
 	add_child(_gate_timer)
 
-	# Build the per-slider/per-module reset icon buttons first so they exist even
-	# on the backend-failure path below (where they get disabled alongside the
-	# sliders they'd otherwise reset).
+	# Built first so the buttons exist even on the backend-failure path.
 	_setup_reset_buttons()
 
 	_animate_entrance()
@@ -401,15 +252,9 @@ func _ready() -> void:
 	_finish_ready()
 
 
-# Physical (device) pixel size of the screen the window is on, passed into
-# backend.init(). The backend uses it to size the DT_MIPMAP_F preview mip, so
-# the fast preview pipe runs at the display's real pixel count. Kept passing
-# physical pixels rather than logical points deliberately: on a HiDPI display
-# the compositor upscales the window's
-# logical content by the DPI factor, so a device-pixel-accurate number is the
-# meaningful one if a future revision makes the ceiling display-aware again.
-# Godot's screen_get_size() is in pixels per the docs and screen_get_scale() is
-# 2.0 on Retina macOS. Returns 0,0 if the platform reports nothing useful.
+# Physical (device) pixel size of the screen, for sizing the DT_MIPMAP_F mip:
+# screen_get_size() is documented in pixels but screen_get_scale() reports 2.0
+# on Retina, so multiply by the DPI factor.
 func _display_pixel_size() -> Vector2i:
 	var screen: int = DisplayServer.window_get_current_screen()
 	var screen_size: Vector2i = DisplayServer.screen_get_size(screen)
@@ -454,31 +299,21 @@ func _finish_ready() -> void:
 	vibrance_value_label.text = "%.2f" % vibrance_slider.value
 	white_balance_value_label.text = "%dK" % roundi(white_balance_slider.value)
 
-	# Populate the edit-resolution dropdown. Item *index* == item *id* here (ids
-	# assigned in order), and add_item(label, id) pins the id explicitly so
-	# lookups stay correct even if entries are reordered (confirmed via dynamic-
-	# rag godot_retrieve against OptionButton's docs).
+	# add_item(label, id) pins the id explicitly so lookups survive reordering.
 	for mode in _EDIT_MODES:
 		edit_res_option.add_item(mode["label"], mode["id"])
 	edit_res_option.select(_EDIT_DEFAULT_ID)
 	_edit_scale = _EDIT_MODES[_EDIT_DEFAULT_ID]["scale"]
 
-	# Display zoom starts in Fit. The scene already sets the slider to 100 and the
-	# Fit toggle on; mirror that into _display_zoom and the readout.
+	# Start in Fit; the scene already sets slider 100 + toggle on.
 	_display_zoom = -1.0
 	fit_button.set_pressed_no_signal(true)
 	_update_zoom_readout()
 
-	# Re-lay-out on pane resize. This only recomputes the frontend display size
-	# (Fit depends on the pane's size); edit resolution is viewport-independent
-	# now, so a resize never re-runs the pipe.
+	# Resize only affects frontend layout (Fit), never the pipe.
 	scroll_container.resized.connect(_on_scroll_resized)
 
-	# Drag-to-pan: when the image is larger than the pane (zoomed in), press-
-	# drag scrolls the ScrollContainer. TextureRect's mouse_filter defaults to
-	# STOP so it receives these events; connecting the signal explicitly (rather
-	# than a _gui_input override) is required because this script is on the root
-	# Control, not the TextureRect.
+	# TextureRect's mouse_filter defaults to STOP so it receives these events.
 	texture_rect.gui_input.connect(_on_texture_rect_gui_input)
 
 	ThemeManager.theme_changed.connect(_on_theme_changed)
@@ -488,9 +323,8 @@ func _finish_ready() -> void:
 	crop_button.disabled = true
 
 
-# Empty-canvas placeholder: with no image loaded, hide the (blank) Scroll pane
-# so the centered "Open Image…" call-to-action owns the whole canvas area; once
-# an image loads, hand the space back to the Scroll pane.
+# With no image, hides the (blank) Scroll pane so the centered "Open Image..."
+# call-to-action owns the whole canvas area.
 func _update_empty_state() -> void:
 	var empty: bool = not _image_loaded
 	empty_state.visible = empty
@@ -498,20 +332,16 @@ func _update_empty_state() -> void:
 
 
 func _animate_entrance() -> void:
-	# One-shot: the chrome settles in on launch. Each bar fades from transparent
-	# and scales up a hair (0.98 -> 1.0), staggered so the eye reads top -> panel
-	# -> status. We animate modulate and scale, NOT position: containers own their
-	# children's position/size and re-sort would stomp a position tween, but scale
-	# is a transform the layout leaves alone. Fast (~0.3s), gentle cubic ease-out
-	# — present, not showy. This is a photo tool; motion must never upstage pixels.
+	# One-shot launch animation: bars fade in and scale 0.98 -> 1.0, staggered
+	# top -> panel -> status. Modulate/scale, NOT position: containers own their
+	# children's position and a re-sort would stomp a position tween.
 	var bars: Array = [top_bar, right_panel, bottom_bar]
 	# Hide immediately so there's no first-frame flash before we have real sizes.
 	for bar in bars:
 		if bar != null:
 			bar.modulate.a = 0.0
 			bar.scale = Vector2(0.98, 0.98)
-	# One frame so the containers have laid out and each bar has a real size to
-	# center the scale pivot on (at _ready, sizes are still zero).
+	# One frame so each bar has a real size to center the scale pivot on.
 	await get_tree().process_frame
 	for i in bars.size():
 		var bar: Control = bars[i]
@@ -543,15 +373,10 @@ func _on_file_dialog_file_selected(path: String) -> void:
 	_image_loaded = true
 	_update_empty_state()
 
-	# load_image() resets the backend's modules, so nothing from the previous
-	# image is still applied. Drop the applied snapshot to force the next render
-	# to push every param fresh (the "first render after load is a full sync"
-	# case); the per-param resets below then just seed _params.
+	# load_image() resets the backend's modules: drop the applied snapshot to
+	# force a fresh push of every param, and reset the render gate (a pending
+	# trailing render belongs to the old image; the EWMA restarts).
 	_applied_params.clear()
-
-	# Cancel any render/throttle state inherited from the previous image: a
-	# pending trailing render belongs to the old image, and the EWMA restarts so
-	# the new image's first render is never delayed by the old image's timing.
 	_reset_render_gate()
 
 	# Default the export filename to "<source>_edited.jpg".
@@ -560,19 +385,16 @@ func _on_file_dialog_file_selected(path: String) -> void:
 	crop_button.disabled = false
 	crop_button.set_pressed_no_signal(false)
 
-	# Reset both view knobs for the new image, then kick off the initial render.
-	# The edit-resolution default is picked from this image's raw size (huge ->
-	# 25%, large -> 50%, normal/HD -> 100%) rather than a fixed id, so the first
-	# render of a huge file isn't dramatically slower than a normal one.
+	# Reset both view knobs, then kick off the initial render. Edit-resolution
+	# default comes from this image's raw size, not a fixed id.
 	exposure_slider.value = 0.0
 	exposure_value_label.text = "%.2f" % 0.0
 	_params["exposure"] = 0.0
 	contrast_slider.value = 0.0
 	contrast_value_label.text = "%.2f" % 0.0
 	_params["contrast"] = 0.0
-	# Offset sliders (see _MODULE_RANGES): all four reset to a centered thumb
-	# (offset 0), with _params seeded to the module default so the first render
-	# is exactly what darktable itself would show on a fresh load.
+	# Offset sliders reset to a centered thumb; _params gets the module default
+	# so the first render matches a fresh darktable load.
 	highlights_slider.value = 0.0
 	highlights_value_label.text = "%.2f" % 0.0
 	_params["highlights"] = _map_offset_to_module("highlights", 0.0)
@@ -596,20 +418,14 @@ func _on_file_dialog_file_selected(path: String) -> void:
 	vibrance_value_label.text = "%.2f" % 0.0
 	_params["vibrance"] = _map_offset_to_module("vibrance", 0.0)
 	tone_curve_editor.reset_to_default()
-	# White balance has no fixed default -- read this image's real as-shot
-	# temperature back from the backend (channelmixerrgb's reload_defaults()
-	# already resolved it from the camera's raw WB coefficients right after
-	# load_image(), before any setter has run -- see dt_backend.h's NOTE on
-	# white balance) and seed the slider with it directly, so a fresh load
-	# stays visually neutral.
+	# As-shot CCT, resolved by channelmixerrgb's reload_defaults() right after
+	# load_image(); this is the WB slider's reset target from now on.
 	var as_shot_temperature: float = backend.get_white_balance_temperature()
 	white_balance_slider.value = as_shot_temperature
 	white_balance_value_label.text = "%dK" % roundi(as_shot_temperature)
 	_params["wb_temperature"] = as_shot_temperature
-	# Reset crop to the full frame for the new image (crop state is not
-	# per-image persistent yet; same policy as every slider above).
+	# Crop state is not per-image persistent yet; same policy as every slider.
 	_params["crop"] = Rect2(0, 0, 1, 1)
-	# This image's as-shot CCT is the WB slider's reset target from now on.
 	_wb_default_temperature = as_shot_temperature
 	var default_edit_id: int = _pick_default_edit_mode_id(
 		backend.get_raw_width(), backend.get_raw_height())
@@ -646,10 +462,7 @@ func _on_shadows_slider_value_changed(value: float) -> void:
 
 
 func _on_blacks_slider_value_changed(value: float) -> void:
-	# The slider is drag-inverted per request: dragging LEFT (negative) is
-	# "more black" (deeper shadows), dragging RIGHT is "less black" (lifted).
-	# The backend's set_blacks() is the opposite sign, so negate here and keep
-	# the label showing the raw slider position.
+	# UI-negative = "more black"; backend's set_blacks() takes the opposite sign.
 	blacks_value_label.text = "%.2f" % value
 	_params["blacks"] = -value
 	_request_render()
@@ -669,13 +482,8 @@ func _on_dehaze_slider_value_changed(value: float) -> void:
 
 func _on_saturation_slider_value_changed(value: float) -> void:
 	saturation_value_label.text = "%.2f" % value
-	# The slider's one axis drives TWO backend modules, split at neutral:
-	# velvia can only BOOST saturation (its $MIN 0.0 is neutral, so its slider
-	# floor can't desaturate -- that was the "min doesn't make it B&W" bug).
-	# Above neutral (offset > 0): velvia strength via the normal range map, and
-	# monochrome fully off. At or below neutral: velvia pinned to its neutral
-	# default 25.0, while monochrome fades in via blend opacity (0..1), so the
-	# slider's floor is a true full-strength B&W.
+	# One axis, two modules split at neutral: velvia can only boost; below
+	# neutral, monochrome's blend opacity desaturates.
 	if value > 0.0:
 		_params["saturation"] = _map_offset_to_module("saturation", value)
 		_params["desaturation"] = 0.0
@@ -703,13 +511,9 @@ func _on_white_balance_slider_value_changed(value: float) -> void:
 
 
 # --- Reset buttons ------------------------------------------------------------
-# Each slider/module gets a small flat "↺" icon button that restores its default.
-# Built in code (rather than in Main.tscn) so the one appearance/behaviour lives
-# in one place and adding a module means one _add_slider_reset() line, matching
-# the single-line-per-module convention _apply_params_to_backend() already uses.
+# Built in code (not Main.tscn): one appearance/behaviour, one line per module.
 
-# A small, flat, borderless icon button that blends into a slider row. focus is
-# disabled so tabbing still lands on the sliders, not these secondary controls.
+# Flat borderless icon button; focus disabled so tabbing lands on the sliders.
 func _make_reset_button(tooltip_text: String) -> Button:
 	var btn := Button.new()
 	btn.text = "↺"
@@ -723,10 +527,8 @@ func _make_reset_button(tooltip_text: String) -> Button:
 	return btn
 
 
-# Appends a reset button to a slider's row (the slider's HBoxContainer parent),
-# so it sits just right of the value label. Setting slider.value fires the
-# existing value_changed handler, which updates the label, _params and render --
-# so a reset flows through the exact same path as a manual drag.
+# slider.value fires the value_changed handler, so a reset flows through the
+# manual-drag path.
 func _add_slider_reset(slider: HSlider, default_value: float) -> void:
 	var btn := _make_reset_button("Reset to default")
 	btn.pressed.connect(func() -> void: slider.value = default_value)
@@ -736,8 +538,7 @@ func _add_slider_reset(slider: HSlider, default_value: float) -> void:
 func _setup_reset_buttons() -> void:
 	_add_slider_reset(exposure_slider, 0.0)
 	_add_slider_reset(contrast_slider, 0.0)
-	# Offset sliders reset to a centered thumb (0 = module default); the
-	# value_changed handler adds the default back for _params.
+	# Offset sliders reset to a centered thumb; the handler adds the default back.
 	_add_slider_reset(highlights_slider, 0.0)
 	_add_slider_reset(shadows_slider, 0.0)
 	_add_slider_reset(blacks_slider, 0.0)
@@ -745,15 +546,13 @@ func _setup_reset_buttons() -> void:
 	_add_slider_reset(saturation_slider, 0.0)
 	_add_slider_reset(vibrance_slider, 0.0)
 
-	# White balance resets to the image's as-shot CCT, not a fixed constant --
-	# the lambda reads _wb_default_temperature live so it tracks the loaded image.
+	# WB resets to the as-shot CCT; the lambda reads _wb_default_temperature live.
 	var wb_btn := _make_reset_button("Reset to as-shot white balance")
 	wb_btn.pressed.connect(func() -> void:
 		white_balance_slider.value = _wb_default_temperature)
 	white_balance_slider.get_parent().add_child(wb_btn)
 
-	# Tone curve: its "Tone Curve" label is a bare Label above the editor, so wrap
-	# label + reset button in a row and drop it in at the label's old slot.
+	# Wrap the bare Tone Curve label + reset button in a row at the label's slot.
 	var tone_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ToneCurveLabel
 	var vbox: Node = tone_label.get_parent()
 	var slot: int = tone_label.get_index()
@@ -768,10 +567,9 @@ func _setup_reset_buttons() -> void:
 	tone_header.add_child(tone_btn)
 
 
-# Single entry point for every control: "the edit state changed, bring the
-# preview up to date." Coalesces requests so two renders never overlap on shared
-# process-wide darktable state — if one is already in flight, just flag that
-# another is needed; _on_process_done() runs it when the current one finishes.
+# Single entry point for every control: coalesces edits so two renders never
+# overlap on shared process-wide darktable state; _on_process_done() runs the
+# follow-up.
 func _request_render() -> void:
 	if backend == null or not _image_loaded or _exporting:
 		return
@@ -785,8 +583,7 @@ func _request_render() -> void:
 
 
 # True once at least half the averaged render latency has passed since the last
-# render started. Mirrors darktable's patience window (develop.c:296-297). A pipe
-# that has never run is always open, so the first render is never delayed.
+# render started (darktable's patience window).
 func _render_gate_open() -> bool:
 	if _last_render_start_usec == 0:
 		return true
@@ -794,15 +591,12 @@ func _render_gate_open() -> bool:
 	return float(elapsed_usec) >= _render_avg_usec * 0.5
 
 
-# True while a trailing render is counting down to the gate opening.
 func _render_gate_pending() -> bool:
 	return _gate_timer != null and not _gate_timer.is_stopped()
 
 
-# Arm the one-shot trailing render for exactly the remaining sliver of the gate
-# window. If a timer is already armed, leave it: it points at the same absolute
-# deadline, so re-arming on every tick would turn the adaptive gate into a fixed
-# debounce that delays the trailing render indefinitely.
+# Arm the one-shot trailing render for the remaining sliver of the gate window;
+# re-arming an armed timer would turn the adaptive gate into a fixed debounce.
 func _arm_render_gate_timer() -> void:
 	if _render_gate_pending():
 		return
@@ -815,10 +609,8 @@ func _arm_render_gate_timer() -> void:
 	_gate_timer.start(remaining_usec / 1000000.0)
 
 
-# Drop all gate state. Called on image load: the old image's latency history and
-# any in-flight trailing render are meaningless for the new one. Safe to call
-# while a render is in flight: _on_process_done() measures that render's own
-# start time, so the EWMA update is not corrupted by this reset.
+# Drop all gate state (on image load: old latency history is meaningless). Safe
+# mid-render: _on_process_done() measures the render's own start time.
 func _reset_render_gate() -> void:
 	if _gate_timer != null:
 		_gate_timer.stop()
@@ -831,24 +623,21 @@ func _on_render_gate_timeout() -> void:
 	if backend == null or not _image_loaded or _exporting:
 		return
 	if _processing:
-		# A render slipped in while we waited; fold this into the queued follow-up
-		# so the latest value still renders when that one completes.
+		# A render slipped in while we waited; fold into the queued follow-up.
 		_render_queued = true
 		return
 	_start_process()
 
 
-# True if `key`'s desired value differs from what was last pushed. A key that has
-# never been applied counts as different, which is what makes the first render
-# after an image load a full sync.
+# A never-applied key counts as different: makes the first render after load a
+# full sync.
 func _params_differ(key: String) -> bool:
 	if not _applied_params.has(key):
 		return true
 	return _params[key] != _applied_params[key]
 
 
-# Record the values just pushed. Arrays are duplicated so a later in-place edit
-# (e.g. ToneCurveEditor mutating its points) can't silently mutate the snapshot.
+# Duplicate arrays so in-place edits (ToneCurveEditor) can't mutate the snapshot.
 func _snapshot_applied_params() -> void:
 	for key in _params:
 		var value: Variant = _params[key]
@@ -857,16 +646,10 @@ func _snapshot_applied_params() -> void:
 		_applied_params[key] = value
 
 
-# Push the current desired parameters into their darktable modules. This is the
-# ONE place that maps _params keys to backend setters, so adding a module means
-# adding one guarded line here. Runs on the main thread: darktable's set_* calls
-# mutate process-wide pipe state and must not race the worker's render_view().
-#
-# Only params that actually changed since the last apply are pushed. Every setter
-# calls dt_dev_add_history_item_ext(), and darktable only dedups history against
-# the LAST item on the stack (which is always the crop item), so re-pushing all
-# nine on every render appended up to 9 history items per slider tick, and every
-# render replayed all of it: that is the slowdown that grew the longer you dragged.
+# The ONE place mapping _params keys to backend setters; adding a module means
+# one guarded line here. Main thread only: darktable's set_* calls mutate
+# process-wide pipe state and must not race the worker's render_view(). Only
+# changed params are pushed (every setter adds a history item; see docs E).
 func _apply_params_to_backend() -> void:
 	if _params_differ("exposure"):
 		backend.set_exposure(_params["exposure"])
@@ -904,44 +687,35 @@ func _start_process() -> void:
 
 	_processing = true
 	_render_queued = false
-	# Cancel any trailing render still counting down: this render supersedes it
-	# (same re-snapshotted _params), so letting it fire would be a wasted run.
+	# This render supersedes any trailing render (same re-snapshotted _params).
 	if _gate_timer != null:
 		_gate_timer.stop()
 	_render_start_usec = Time.get_ticks_usec()
 	_last_render_start_usec = _render_start_usec
-	# Block export while a preview render is in flight: both run darktable's pipe
-	# over shared process-wide state, so they must not overlap.
+	# Export must not overlap a preview render: shared process-wide pipe state.
 	export_button.disabled = true
 	_apply_params_to_backend()
 
-	# Snapshot _edit_scale and the pipe choice on the main thread and hand the
-	# plain values into the worker task. An oversized viewport renders the whole
-	# image at this scale (no viewport cap, no crop) — the display zoom is a
-	# frontend-only concern applied after the buffer comes back.
+	# Snapshot on the main thread; hand plain values into the worker task.
 	var edit_scale: float = _edit_scale
 	var final_quality: bool = _final_quality()
 	_current_task_id = WorkerThreadPool.add_task(_process_task.bind(edit_scale, final_quality))
 
 
-# True when the current edit resolution asks for the full-quality pipe. 100%
-# means "final" (render_view() on the full pipe); anything lower is the fast
-# interactive path (render_preview() on the preview pipe).
+# 100% = full pipe (render_view); lower = fast preview pipe (render_preview,
+# dt_backend.cpp's preview_pipe, fed the DT_MIPMAP_F mip).
 func _final_quality() -> bool:
 	return _edit_scale >= 0.999
 
 
 func _process_task(edit_scale: float, final_quality: bool) -> void:
-	# Runs on a worker thread. Only touch the backend and plain data here — no
-	# Godot rendering/scene-tree APIs (main-thread only).
+	# Worker thread: backend and plain data only, no Godot scene-tree APIs.
 	var bytes: PackedByteArray
 	if final_quality:
 		bytes = backend.render_view(
 			_WHOLE_IMAGE_VIEWPORT, _WHOLE_IMAGE_VIEWPORT, edit_scale, 0.0, 0.0)
 	else:
-		# Fast path: separate preview pipe, fed the display-resolution DT_MIPMAP_F
-		# mip. edit_scale is a fraction of that mip's dimensions; it scales
-		# intermediate module work too, not just the output.
+		# Preview pipe on the DT_MIPMAP_F mip; edit_scale scales module work too.
 		bytes = backend.render_preview(
 			_WHOLE_IMAGE_VIEWPORT, _WHOLE_IMAGE_VIEWPORT, edit_scale, 0.0, 0.0)
 	var width: int = backend.get_width()
@@ -950,27 +724,22 @@ func _process_task(edit_scale: float, final_quality: bool) -> void:
 
 
 func _on_process_done(bytes: PackedByteArray, width: int, height: int) -> void:
-	# Update the render-latency EWMA before deciding whether to start a follow-up.
-	# Uses the in-flight render's own start time (not _last_render_start_usec, which
-	# an image load may have reset to 0 while this render was in flight). Same
-	# recurrence as darktable's _dev_average_delay_update() (develop.c:628-633).
+	# Uses the in-flight render's own start time (an image load may have reset
+	# _last_render_start_usec to 0 while this render was in flight).
 	var elapsed_usec: int = Time.get_ticks_usec() - _render_start_usec
 	_render_avg_usec += float(elapsed_usec) / _RENDER_AVG_COUNT \
 		- _render_avg_usec / _RENDER_AVG_COUNT
 
 	if width > 0 and height > 0 and bytes.size() >= width * height * 4:
 		var img: Image = Image.create_from_data(width, height, false, Image.FORMAT_RGBA8, bytes)
-		# ImageTexture.update() is the fast in-place path but requires a matching
-		# size/format; an edit-resolution change alters the buffer dimensions, so
-		# recreate the texture in that case and keep update() only for same-size
-		# frames (the common case: exposure-slider drags at a fixed edit res).
+		# Recreate the texture only when dimensions change (edit-res switches);
+		# update() needs matching size/format.
 		if image_texture == null \
 				or image_texture.get_width() != width \
 				or image_texture.get_height() != height:
 			image_texture = ImageTexture.create_from_image(img)
 			texture_rect.texture = image_texture
-			# A new buffer means new Fit-letterbox geometry; keep the crop
-			# overlay (if open) glued to the drawn image region.
+			# New buffer = new Fit geometry; keep an open crop overlay glued.
 			if _crop_overlay != null:
 				_crop_overlay.sync_to_texture()
 		else:
@@ -981,11 +750,7 @@ func _on_process_done(bytes: PackedByteArray, width: int, height: int) -> void:
 	_processing = false
 
 	if _render_queued and _image_loaded and not _exporting:
-		# Changes landed mid-render; render once more with the latest _params.
-		# Routed through _request_render() so the same EWMA gate applies to the
-		# follow-up: a burst of ticks collapses into fewer frames instead of always
-		# running back-to-back. A deferred follow-up keeps export disabled until it
-		# actually starts.
+		# Re-route through _request_render() so the EWMA gate applies.
 		_render_queued = false
 		_request_render()
 	elif _image_loaded and not _exporting:
@@ -994,9 +759,7 @@ func _on_process_done(bytes: PackedByteArray, width: int, height: int) -> void:
 
 
 func _apply_display_layout() -> void:
-	# Frontend-only: size the TextureRect inside the ScrollContainer to realize
-	# the current display zoom. No pipe involvement. Native dims come from the
-	# backend (populated by the render that just completed).
+	# Frontend-only: size the TextureRect to realize the current display zoom.
 	if image_texture == null:
 		return
 	var native_w: int = backend.get_native_width()
@@ -1005,45 +768,33 @@ func _apply_display_layout() -> void:
 		return
 
 	if _display_zoom < 0.0:
-		# Fit: fill the pane and letterbox/center the whole image. custom_minimum_
-		# size == pane size means the ScrollContainer shows no scrollbars, and
-		# KEEP_ASPECT_CENTERED scales the buffer to fit that rect centered.
+		# Fit: minimum size == pane size (no scrollbars); KEEP_ASPECT_CENTERED
+		# scales the buffer to fit that rect centered.
 		texture_rect.stretch_mode = _STRETCH_KEEP_ASPECT_CENTERED
 		texture_rect.custom_minimum_size = scroll_container.size
 	else:
-		# Fixed zoom: on-screen size = native * display_zoom, filled exactly by
-		# the buffer (STRETCH_SCALE). Larger than the pane -> scrollbars/drag-pan;
-		# smaller -> the CenterContainer wrapper (Scroll/Center) keeps it centered
-		# instead of pinned to the ScrollContainer's default top-left corner.
+		# Fixed zoom: size = native * zoom (STRETCH_SCALE); the Center wrapper
+		# keeps a smaller-than-pane image centered rather than pinned top-left.
 		texture_rect.stretch_mode = _STRETCH_SCALE
 		texture_rect.custom_minimum_size = Vector2(native_w, native_h) * _display_zoom
 
 
 func _on_scroll_resized() -> void:
-	# Fit's on-screen size depends on the pane size; recompute the frontend
-	# layout only. Edit resolution is viewport-independent, so no re-render.
+	# Fit's on-screen size depends on pane size; frontend re-layout only.
 	if not _image_loaded:
 		return
 	_apply_display_layout()
 
 
 func _on_edit_res_option_button_item_selected(index: int) -> void:
-	# item_selected passes the *index*, not the id; look the id up rather than
-	# assume index==id (confirmed via dynamic-rag godot_retrieve).
+	# item_selected passes the *index*, not the id.
 	var id: int = edit_res_option.get_item_id(index)
 	_edit_scale = _EDIT_MODES[id]["scale"]
-
-	# Re-render at the new edit resolution. _request_render() re-snapshots
-	# _edit_scale and _params, so it carries the current exposure automatically
-	# and coalesces safely if a render is already running.
 	_request_render()
 
 
 func _on_zoom_slider_value_changed(value: float) -> void:
-	# Dragging the slider always means an explicit positive zoom, so drop out
-	# of Fit. Routed through _set_display_zoom() so the slider anchors on the
-	# viewport center exactly like Cmd+wheel/pinch, instead of drifting to the
-	# top-left corner the way a bare _apply_zoom_change() call would.
+	# Dragging always means an explicit positive zoom, so drop out of Fit.
 	_set_display_zoom(value)
 
 
@@ -1059,19 +810,16 @@ func _on_theme_changed(is_dark: bool) -> void:
 
 func _on_fit_button_toggled(pressed: bool) -> void:
 	if pressed:
-		# Engage the Fit sentinel; leave the slider where it is as a fallback.
-		# No anchor math needed -- Fit is always centered via the Center wrapper.
+		# Fit sentinel; slider value kept as fallback.
 		_display_zoom = -1.0
 		_apply_zoom_change()
 	else:
-		# Fit released -> snap to whatever the slider currently reads, anchored
-		# on the viewport center (== image center, since Fit was centered).
+		# Fit released -> snap to the slider's value.
 		_set_display_zoom(zoom_slider.value)
 
 
 func _apply_zoom_change() -> void:
-	# Shared tail for both display-zoom controls. Frontend-only knob: no pipe
-	# re-render. Refresh the readout, then re-lay-out the existing buffer.
+	# Shared tail for both display-zoom controls: frontend-only, no pipe re-render.
 	_update_zoom_readout()
 	if not _image_loaded:
 		return
@@ -1083,8 +831,7 @@ func _apply_zoom_change() -> void:
 
 
 func _update_zoom_readout() -> void:
-	# The top-bar "%"/"Fit" label. In Fit, also park the slider thumb on the
-	# effective fit percent (no-signal) so it reflects what is actually on screen.
+	# In Fit, park the thumb on the effective fit percent so it shows reality.
 	if _display_zoom < 0.0:
 		zoom_value_label.text = "Fit"
 		if backend != null:
@@ -1100,10 +847,7 @@ func _update_zoom_readout() -> void:
 
 
 func _update_resolution_label(buf_w: int, buf_h: int) -> void:
-	# Trustworthy two-axis readout, derived from the backend's authoritative
-	# numbers: get_native_*() is the full processed (scale=1.0) size; buf_w/buf_h
-	# == get_width()/get_height() are the exact pixels the pipe just produced at
-	# the current edit resolution. Nothing here trusts what the UI *requested*.
+	# From the backend's authoritative numbers; never trusts what the UI requested.
 	if backend == null:
 		resolution_label.text = "No image loaded"
 		return
@@ -1113,15 +857,11 @@ func _update_resolution_label(buf_w: int, buf_h: int) -> void:
 		resolution_label.text = "No image loaded"
 		return
 
-	# Effective buffer scale derived from the actual buffer, not the requested
-	# _edit_scale: in fast mode the buffer is a fraction of the display-resolution
-	# mip, so buf_w/native_w is the honest ratio.
+	# Actual buffer ratio, not requested _edit_scale: the honest fast-mode number.
 	var buffer_scale: float = float(buf_w) / float(native_w)
 	var edit_pct: int = roundi(buffer_scale * 100.0)
 	var mode: String = "final" if _final_quality() else "fast"
 
-	# Effective display zoom: in Fit it is derived from the actual pane size, so
-	# it reflects what is really on screen, not a requested number.
 	var disp_zoom: float
 	if _display_zoom < 0.0:
 		var avail: Vector2 = scroll_container.size
@@ -1132,10 +872,7 @@ func _update_resolution_label(buf_w: int, buf_h: int) -> void:
 	var screen_h: int = roundi(disp_zoom * float(native_h))
 	var disp_label: String = "Fit" if _display_zoom < 0.0 else "%d%%" % roundi(disp_zoom * 100.0)
 
-	# Sharpness: the buffer holds buffer_scale*native pixels; drawing it at
-	# disp_zoom*native on screen means each buffer pixel is stretched by
-	# disp_zoom/buffer_scale. > 1 => upscaled (soft); == 1 with both at 100% =>
-	# true 1:1 native detail.
+	# Each buffer pixel stretches by disp_zoom/buffer_scale; >1 soft, ==1 sharp.
 	var buffer_upscale: float = disp_zoom / buffer_scale
 	var quality: String = ""
 	if buffer_upscale > 1.001:
@@ -1148,15 +885,11 @@ func _update_resolution_label(buf_w: int, buf_h: int) -> void:
 
 
 func _on_texture_rect_gui_input(event: InputEvent) -> void:
-	# Drag-to-pan by scrolling the ScrollContainer. A no-op when the image fits
-	# the pane (scroll values clamp to 0), so no guard is needed.
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			_dragging = event.pressed
 			return
-		# Cmd+wheel (Ctrl+wheel on Windows/Linux) zooms instead of the
-		# ScrollContainer's default wheel-scroll, so only claim wheel events
-		# when the modifier is held.
+		# Only claim wheel events when Cmd is held; otherwise the container scrolls.
 		if event.pressed and event.is_command_or_control_pressed():
 			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 				_zoom_by_factor(1.1)
@@ -1169,15 +902,13 @@ func _on_texture_rect_gui_input(event: InputEvent) -> void:
 		scroll_container.scroll_vertical -= int(event.relative.y)
 		return
 
-	# Trackpad pinch. factor is already a multiplier centered on 1.0 (>1 =
-	# fingers spreading = zoom in), so it feeds _zoom_by_factor directly.
+	# Trackpad pinch: factor is already a multiplier centered on 1.0 (>1 = zoom in).
 	if event is InputEventMagnifyGesture:
 		_zoom_by_factor(event.factor)
 		return
 
-	# Trackpad two-finger scroll arrives as InputEventPanGesture, not
-	# InputEventMouseButton wheel events, so Cmd+scroll needs its own branch.
-	# delta.y < 0 means scrolling up (away from the user) => zoom in.
+	# Trackpad two-finger scroll is InputEventPanGesture, not wheel, so it needs
+	# its own branch.
 	if event is InputEventPanGesture and event.is_command_or_control_pressed():
 		if event.delta.y < 0.0:
 			_zoom_by_factor(1.05)
@@ -1186,9 +917,6 @@ func _on_texture_rect_gui_input(event: InputEvent) -> void:
 
 
 func _zoom_by_factor(multiplier: float) -> void:
-	# Cmd+wheel / pinch entry point: turn a relative multiplier into an
-	# absolute target percent, then hand off to the same path the slider and
-	# Fit-release use.
 	if backend == null:
 		return
 	var native_w: int = backend.get_native_width()
@@ -1205,12 +933,8 @@ func _zoom_by_factor(multiplier: float) -> void:
 
 
 func _set_display_zoom(target_pct: float) -> void:
-	# Single path for every way display zoom can change (slider drag, Fit
-	# release, Cmd+wheel, trackpad pinch): compute the pre-zoom anchor point,
-	# apply the new zoom, then re-center scroll on that same point so all
-	# inputs behave identically instead of each hand-rolling its own scroll
-	# math (the slider used to just call _apply_zoom_change() directly, which
-	# left scroll untouched and drifted the image toward the top-left corner).
+	# Single path for every zoom change; anchors on the pre-zoom viewport-center
+	# point (skipping this drifted the image top-left).
 	if backend == null:
 		return
 	var native_w: int = backend.get_native_width()
@@ -1219,9 +943,8 @@ func _set_display_zoom(target_pct: float) -> void:
 		return
 	var viewport_size: Vector2 = scroll_container.size
 
-	# Ratio (0..1 per axis) of the viewport-center point within the current
-	# content. Fit mode has no scrollbars and is always centered, so the
-	# viewport center is always the image center regardless of letterboxing.
+	# Ratio of the viewport-center point within the content; in Fit (no
+	# scrollbars) that's the image center.
 	var ratio: Vector2
 	if _display_zoom < 0.0:
 		ratio = Vector2(0.5, 0.5)
@@ -1239,16 +962,9 @@ func _set_display_zoom(target_pct: float) -> void:
 	fit_button.set_pressed_no_signal(false)
 	_apply_zoom_change()
 
-	# Re-center scroll on the same content ratio at the new zoom, so whatever
-	# was under the cursor/viewport-center stays there across zoom -> pan ->
-	# zoom sequences. scroll_horizontal/vertical clamp against the
-	# ScrollContainer's own H/V ScrollBar max_value/page, which only get
-	# recomputed on the container's *next* layout pass (one or more frames
-	# after TextureRect's resize propagates up through the Center wrapper) --
-	# waiting for that (even polling) is racy. Instead, push the scrollbars to
-	# the new content size ourselves right now; Godot's own upcoming sort pass
-	# will recompute the identical numbers, so this is just applying them a
-	# frame early with no conflict.
+	# Re-center on the same content ratio. scroll_* clamp against the ScrollBars'
+	# max/page, which only recompute on the NEXT layout pass: push the new content
+	# size ourselves (Godot's sort pass recomputes identical numbers).
 	var new_content_size: Vector2 = Vector2(native_w, native_h) * _display_zoom
 	var target_scroll: Vector2 = ratio * new_content_size - viewport_size / 2.0
 	var h_bar: ScrollBar = scroll_container.get_h_scroll_bar()
@@ -1264,11 +980,9 @@ func _set_display_zoom(target_pct: float) -> void:
 
 
 # --- Crop ----------------------------------------------------------------------
-# The crop toggle opens an interactive overlay over the displayed image
-# (CropOverlay.gd). Done commits the box into _params["crop"] and re-renders
-# (the pixelpipe's clipping module now crops the output); clicking the button
-# again reopens the overlay pre-seeded with the current crop so it can be
-# resumed and adjusted. Cancel restores the pre-edit crop.
+# Done commits the box into _params["crop"] and re-renders; clicking the button
+# again reopens pre-seeded so a crop can be resumed. Cancel restores the
+# pre-edit crop.
 func _on_crop_button_toggled(pressed: bool) -> void:
 	if not _image_loaded:
 		crop_button.set_pressed_no_signal(false)
@@ -1284,19 +998,14 @@ func _open_crop_overlay() -> void:
 		return
 	_crop_overlay = CropOverlayScript.new()
 	_crop_overlay.apply_theme(ThemeManager.is_dark)
-	# Lift the committed crop for the duration of the edit so the overlay shows
-	# (and edits against) the whole image; the box being edited is seeded from
-	# the committed crop so re-opening resumes where the last Done left off.
-	# The overlay re-syncs its own geometry on every zoom/Fit/host resize
-	# (resized signal) and via sync_to_texture() when the lift render swaps the
-	# buffer, so the box stays glued to the drawn image at all times.
+	# Lift the committed crop so the overlay edits against the whole image; the
+	# box is seeded from it so re-opening resumes.
 	_crop_before_edit = _params["crop"]
 	_params["crop"] = Rect2(0, 0, 1, 1)
 	_request_render()
 	_crop_overlay.open(texture_rect, _crop_before_edit)
-	# Done/Cancel bar anchored to the visible pane so it stays clickable at any
-	# zoom (the overlay itself is image-sized). Done closes over the live
-	# overlay so it always commits the box's CURRENT state.
+	# Bar anchored to the visible pane (the overlay is image-sized); Done closes
+	# over the live overlay to commit CURRENT state.
 	var overlay: Control = _crop_overlay
 	_crop_bar = CropOverlayScript.build_bar(scroll_container)
 	var cancel_btn := Button.new()
@@ -1316,8 +1025,7 @@ func _close_crop_overlay() -> void:
 	_crop_overlay.close()
 	_crop_overlay = null
 	if _crop_bar != null:
-		# _crop_bar is the HBox; its parent PanelContainer is what was added to
-		# the pane -- free that whole chrome subtree.
+		# Free the whole chrome subtree: the HBox's parent PanelContainer owns it.
 		_crop_bar.get_parent().queue_free()
 		_crop_bar = null
 
@@ -1338,10 +1046,8 @@ func _on_crop_overlay_canceled() -> void:
 
 
 func _on_export_button_pressed() -> void:
-	# Also block while the crop overlay is open: it has temporarily lifted the
-	# crop from the pipe, so an export now would export the uncropped frame. And
-	# while a trailing render is armed: that render would otherwise start
-	# underneath the export's full-res pipe run.
+	# Also blocked while the crop overlay is open (it lifted the crop: would
+	# export the uncropped frame) or a trailing render is armed.
 	if not _image_loaded or _exporting or _processing \
 			or _render_gate_pending() or _crop_overlay != null:
 		return
@@ -1367,8 +1073,7 @@ func _on_export_dialog_file_selected(path: String) -> void:
 	vibrance_slider.editable = false
 	white_balance_slider.editable = false
 
-	# Run the (full-res, high-quality) export off the main thread so the UI
-	# doesn't freeze; it writes the file directly via darktable's export engine.
+	# Full-res export off the main thread so the UI doesn't freeze.
 	WorkerThreadPool.add_task(_export_task)
 
 

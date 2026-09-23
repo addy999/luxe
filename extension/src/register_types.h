@@ -1,9 +1,4 @@
-/*
- * GDExtension registration entry points for the darktable-on-Godot PoC.
- * Mirrors the standard godot-cpp boilerplate (see
- * godot-poc/extension/godot-cpp/test/src/register_types.h for the reference
- * this was checked against).
- */
+/* GDExtension registration entry points (standard godot-cpp boilerplate). */
 #pragma once
 
 #include <godot_cpp/core/class_db.hpp>

@@ -1,19 +1,13 @@
 extends SceneTree
 
-# Vibrance verification: load the fixture RAW, render the neutral frame, then
-# sweep set_vibrance() via the introspection-resolved vibrance "amount" field
-# (see dt_iop_set_float() in dt_backend.cpp). vibrance is a boost-only module
-# ($MIN 0.0 $MAX 100.0) that selectively boosts LESS-saturated pixels more
-# than already-saturated ones, so its effect on mean chroma (mean |channel -
-# luma| per pixel) is real but smaller than a flat boost like velvia's -- the
-# threshold below is tuned accordingly (measured ~+4% on the fixture at
-# amount=100). Asserts:
-#   1) vibrance=100 increases mean chroma vs. neutral
-#   2) resetting to 0 restores the neutral frame (mean chroma within tolerance)
-# Run:
-#   Godot --headless --path godot-poc/project --script res://tests/vibrance_smoke_test.gd \
-#         -- <input_raw>
-# with DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR exported.
+# Vibrance: sweep set_vibrance() via the introspection-resolved "amount" field
+# (dt_iop_set_float() in dt_backend.cpp, field range 0.0..100.0). Vibrance is
+# boost-only and selectively boosts LESS-saturated pixels more than
+# already-saturated ones, so its mean-chroma effect is weaker than a flat
+# boost like velvia's; the +0.1 threshold matches the measured ~+4% on the
+# fixture at amount=100.
+# Run: Godot --headless --path godot-poc/project --script res://tests/vibrance_smoke_test.gd \
+#         -- <input_raw>  (DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR must be exported)
 
 func _mean_chroma(data: PackedByteArray, w: int, h: int) -> float:
 	var sum: float = 0.0

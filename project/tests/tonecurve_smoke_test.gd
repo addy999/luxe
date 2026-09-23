@@ -1,22 +1,14 @@
 extends SceneTree
 
-# Tonecurve verification: load the fixture RAW, render the neutral frame,
-# then drive set_tonecurve() with an S-curve (deepens shadows, lifts
-# highlights) and a straight identity curve. Unlike every other setter, this
-# one writes a COUNTED ARRAY of {x,y} node structs, not a single scalar field
-# -- set_tonecurve() resolves the array base via get_p("tonecurve") and the
-# per-node x/y byte offsets via get_f("tonecurve[0][0].x"/".y") (see
-# dt_backend.cpp), rather than assuming a hardcoded struct stride. A wrong
-# stride/offset would scramble every node written past the first, so this is
-# the one introspection code path not already covered by a scalar-field test.
-# Asserts:
-#   1) an S-curve materially changes luma spread vs. neutral
-#   2) resetting to an identity curve restores the neutral frame (mean within
-#      tolerance)
-# Run:
-#   Godot --headless --path godot-poc/project --script res://tests/tonecurve_smoke_test.gd \
-#         -- <input_raw>
-# with DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR exported.
+# Tonecurve: drive set_tonecurve() with an S-curve, then an identity curve.
+# Unlike every other setter this writes a COUNTED ARRAY of {x,y} node structs,
+# not a single scalar: set_tonecurve() resolves the array base via
+# get_p("tonecurve") and per-node x/y byte offsets via
+# get_f("tonecurve[0][0].x"/".y") (dt_backend.cpp) rather than a hardcoded
+# struct stride. A wrong stride/offset would scramble every node past the
+# first, so this covers the one introspection path no scalar-field test hits.
+# Run: Godot --headless --path godot-poc/project --script res://tests/tonecurve_smoke_test.gd \
+#         -- <input_raw>  (DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR must be exported)
 
 func _luma_stats(data: PackedByteArray, w: int, h: int) -> Vector2:
 	var sum: float = 0.0
@@ -68,7 +60,6 @@ func _initialize() -> void:
 	var neutral_stats: Vector2 = _luma_stats(neutral, w, h)
 	print("TONECURVE_SMOKE: neutral frame %dx%d, mean %.3f stddev %.3f" % [w, h, neutral_stats.x, neutral_stats.y])
 
-	# Strong S-curve: deepen shadows, lift highlights, five nodes.
 	var s_curve: PackedVector2Array = PackedVector2Array([
 		Vector2(0.0, 0.0),
 		Vector2(0.25, 0.10),
@@ -81,7 +72,6 @@ func _initialize() -> void:
 	var curved_stats: Vector2 = _luma_stats(curved, w, h)
 	print("TONECURVE_SMOKE: s-curve frame, mean %.3f stddev %.3f" % [curved_stats.x, curved_stats.y])
 
-	# Identity curve: should restore (approximately) the neutral frame.
 	var identity: PackedVector2Array = PackedVector2Array([
 		Vector2(0.0, 0.0),
 		Vector2(1.0, 1.0),
@@ -92,7 +82,7 @@ func _initialize() -> void:
 	print("TONECURVE_SMOKE: identity-curve frame, mean %.3f stddev %.3f" % [reset_stats.x, reset_stats.y])
 
 	if curved_stats.y <= neutral_stats.y + 0.5:
-		_die("s-curve did not increase luma spread (stddev %.3f vs neutral %.3f) -- node array write may be scrambled" % [curved_stats.y, neutral_stats.y])
+		_die("s-curve did not increase luma spread (stddev %.3f vs neutral %.3f): node array write may be scrambled" % [curved_stats.y, neutral_stats.y])
 		return
 	if absf(reset_stats.x - neutral_stats.x) > 2.0:
 		_die("identity curve did not restore neutral (mean %.3f vs %.3f)" % [reset_stats.x, neutral_stats.x])

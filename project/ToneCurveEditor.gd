@@ -1,19 +1,13 @@
 extends Control
 class_name ToneCurveEditor
 
-# A minimal spline editor for darktable's tonecurve module (L channel only).
-# Backs DtBackend.set_tonecurve() -- see the README's module documentation.
-#
-# Curve space is [0,1] x [0,1] with (0,0) at the bottom-left and (1,1) at the
-# top-right, matching darktable's own curve editor convention. Points are kept
-# sorted by x at all times except mid-drag (see _dragging_index below).
-#
-# The drawn curve is a monotone cubic Hermite spline (Fritsch-Carlson tangents),
-# the same interpolation family darktable's MONOTONE_HERMITE curve type uses --
-# this is an independent reimplementation for preview purposes, not darktable's
-# own dt_draw_curve code, so it may differ from the rendered result by a hair at
-# extreme node placements. Good enough for the UI to look like what the pixel
-# pipe will actually do.
+# Minimal spline editor for darktable's tonecurve module (L channel only);
+# backs DtBackend.set_tonecurve(). Curve space is [0,1]x[0,1], (0,0) bottom-left,
+# matching darktable's editor; points stay sorted by x except mid-drag. The
+# curve reimplements the same Fritsch-Carlson monotone Hermite interpolation
+# darktable's MONOTONE_HERMITE curve type uses (not its dt_draw_curve code),
+# so preview may differ from the rendered result by a hair at extreme node
+# placements.
 
 signal curve_changed(points: PackedVector2Array)
 
@@ -41,8 +35,7 @@ func _ready() -> void:
 	_update_colors(ThemeManager.is_dark)
 
 
-# Mirrors main_theme.tres/light_theme.tres's canvas_bg so the curve panel
-# matches the rest of the app instead of staying hardcoded to dark mode.
+# Mirrors the .tres themes' canvas_bg so the panel matches the app's theme.
 func _on_theme_changed(is_dark: bool) -> void:
 	_update_colors(is_dark)
 	queue_redraw()
@@ -71,8 +64,7 @@ func _get_minimum_size() -> Vector2:
 	return Vector2(0, 180)
 
 
-# Resets to the identity curve (darktable's own default, tonecurve.c's init()):
-# 2 nodes, (0,0) and (1,1). Called when a new image loads.
+# Identity curve (darktable's tonecurve.c init() default). Called on new image.
 func reset_to_default() -> void:
 	_points = [Vector2(0.0, 0.0), Vector2(1.0, 1.0)]
 	_dragging_index = -1
@@ -83,8 +75,6 @@ func reset_to_default() -> void:
 func get_points() -> PackedVector2Array:
 	return PackedVector2Array(_points)
 
-
-# --- Coordinate mapping --------------------------------------------------------
 
 func _curve_rect() -> Rect2:
 	return Rect2(Vector2(PADDING, PADDING), size - Vector2(PADDING, PADDING) * 2.0)
@@ -106,14 +96,11 @@ func _screen_to_curve(p: Vector2) -> Vector2:
 	return Vector2(clampf(x, 0.0, 1.0), clampf(y, 0.0, 1.0))
 
 
-# --- Drawing --------------------------------------------------------------------
-
 func _draw() -> void:
 	var r: Rect2 = _curve_rect()
 	draw_rect(Rect2(Vector2.ZERO, size), _color_bg, true)
 	draw_rect(Rect2(Vector2.ZERO, size), _color_border, false, 1.0)
 
-	# Quarter gridlines.
 	for i in range(1, 4):
 		var t: float = i / 4.0
 		var gx: float = r.position.x + t * r.size.x
@@ -123,7 +110,6 @@ func _draw() -> void:
 
 	draw_line(_curve_to_screen(Vector2(0, 0)), _curve_to_screen(Vector2(1, 1)), _color_diagonal, 1.0)
 
-	# Sampled spline curve.
 	var samples: int = 64
 	var prev: Vector2 = _curve_to_screen(Vector2(0.0, _sample_curve(0.0)))
 	for i in range(1, samples + 1):
@@ -132,17 +118,15 @@ func _draw() -> void:
 		draw_line(prev, cur, _color_curve, 2.0)
 		prev = cur
 
-	# Control points.
 	for i in range(_points.size()):
 		var screen_pt: Vector2 = _curve_to_screen(_points[i])
 		var color: Color = _color_point_selected if i == _dragging_index else _color_point
 		draw_circle(screen_pt, POINT_RADIUS, color)
 
 
-# --- Monotone cubic Hermite interpolation (Fritsch-Carlson) ---------------------
-# Evaluates the spline through _points at a given x in [0,1]. Recomputed per-draw
-# rather than cached -- _points is at most MAX_NODES (20) long, so this is cheap.
-
+# Monotone cubic Hermite (Fritsch-Carlson) spline through _points, evaluated at
+# x in [0,1]. Recomputed per-draw rather than cached: at most MAX_NODES points,
+# so this is cheap.
 func _sample_curve(x: float) -> float:
 	var n: int = _points.size()
 	if n < 2:
@@ -186,8 +170,6 @@ func _sample_curve(x: float) -> float:
 	return h00 * p0.y + h10 * dx * m[seg] + h01 * p1.y + h11 * dx * m[seg + 1]
 
 
-# --- Mouse interaction -----------------------------------------------------------
-
 func _nearest_point_index(screen_pos: Vector2) -> int:
 	var best_index: int = -1
 	var best_dist: float = HIT_RADIUS
@@ -222,10 +204,8 @@ func _gui_input(event: InputEvent) -> void:
 		_drag_point(_dragging_index, _screen_to_curve(event.position))
 
 
-# Inserts a new node at `curve_pos`, keeping _points sorted by x. Rejects the
-# add if it would land within MIN_SPACING_X of an existing node in x (mirrors
-# tonecurve.c's own "don't add a node too close to others" guard, tonecurve.c:
-# 1867-1886) or if MAX_NODES is already reached.
+# Keeps _points sorted by x; rejects adds within MIN_SPACING_X of an existing
+# node (tonecurve.c:1867-1886) or beyond MAX_NODES.
 func _try_add_point(curve_pos: Vector2) -> void:
 	if _points.size() >= MAX_NODES:
 		return
@@ -246,8 +226,8 @@ func _try_add_point(curve_pos: Vector2) -> void:
 	curve_changed.emit(PackedVector2Array(_points))
 
 
-# Endpoints (index 0 / last) are never removed, only reset to (0,0)/(1,1) --
-# mirrors tonecurve.c:1951-1957. Interior nodes are removed outright.
+# Endpoints are never removed, only reset to (0,0)/(1,1), mirroring
+# tonecurve.c:1951-1957. Interior nodes are removed outright.
 func _try_delete_point(index: int) -> void:
 	if index == 0:
 		_points[0] = Vector2(0.0, 0.0)
@@ -261,9 +241,9 @@ func _try_delete_point(index: int) -> void:
 
 
 # Endpoints keep x locked at 0.0/1.0 (y is free); interior points are clamped
-# to stay strictly between their neighbors in x rather than crossing/reordering
-# past them, a simpler stand-in for tonecurve.c's sanity_check() (tonecurve.c:
-# 1124-1133), which instead deletes a point that would cross a neighbor.
+# between neighbors rather than crossing them, a simpler stand-in for
+# tonecurve.c's sanity_check() (tonecurve.c:1124-1133), which deletes a
+# crossing point instead.
 func _drag_point(index: int, curve_pos: Vector2) -> void:
 	var y: float = clampf(curve_pos.y, 0.0, 1.0)
 	if index == 0:

@@ -1,36 +1,26 @@
 extends Control
 
-# CropOverlay -- an interactive crop editor drawn directly over the image's
-# TextureRect. Instantiated in code and parented to the TextureRect itself (see
-# _open_crop_overlay() in Main.gd), so it automatically tracks every display-
-# zoom/pan/Fit re-layout; the crop box is stored in NORMALIZED image fractions,
-# which is exactly the coordinate space darktable's clipping module uses
-# (cx/cy/cw/ch as left/top/right/bottom edges). Main.gd owns the authoritative
-# value (_params["crop"]); this widget only edits it and signals back.
+# Interactive crop editor drawn over the image's TextureRect, parented to it by
+# Main.gd (which owns the authoritative _params["crop"]; this widget only edits
+# and signals back) so it tracks zoom/pan/Fit re-layouts. The box is stored in
+# NORMALIZED image fractions, darktable's clipping-module coordinate space
+# (cx/cy/cw/ch edges). While open it swallows mouse input from pan/zoom below.
 #
-# Interaction: drag inside the box to move it, drag an edge/corner handle to
-# resize. "Done" commits via crop_applied; Cancel restores whatever was set
-# when the overlay opened. While open, this control swallows mouse input so
-# the drag-to-pan/Cmd+wheel handlers under it stay quiet.
-
-# The Done/Cancel bar. Lives OUTSIDE this control, anchored to the visible
-# scroll pane (Main.gd parents it to the ScrollContainer): this overlay is
-# sized to the DISPLAYED IMAGE, which at high zoom is far larger than the
-# pane, so anything anchored here scrolls/shoots off-screen. Main.gd owns the
-# bar node and connects its buttons to _on_crop_overlay_applied/canceled.
+# The Done/Cancel bar lives OUTSIDE this control, anchored to the visible
+# scroll pane: the overlay is image-sized, so anchoring here scrolls off-screen.
+# Main.gd's _open_crop_overlay() wires the bar's buttons straight to its
+# apply/cancel handlers (Done reads get_rect_normalized() at click time).
 
 const _MIN_SIZE: float = 0.02      # smallest allowed box, as image fraction
-# Handle grab geometry, in px. _HANDLE_GRAB is how far INSIDE the box an edge
-# still counts as grabbable; _HANDLE_OUTER reaches a similar distance OUTSIDE
-# the box, so the 1px frame line does not have to be hit exactly. _CORNER_GRAB
-# is the circular radius around a corner (corners always outrank edges).
+# Grab tolerances in px: _HANDLE_GRAB inside an edge, _HANDLE_OUTER outside it,
+# _CORNER_GRAB around corners.
 const _HANDLE_GRAB: float = 22.0
 const _HANDLE_OUTER: float = 24.0
 const _CORNER_GRAB: float = 26.0
 const _GRID: int = 3               # rule-of-thirds grid lines per axis
 
-# Handle ids for hit-testing. Corners outrank edges (a corner is always within
-# both of its edges' grab bands), edges outrank the interior.
+# Hit-test ids. Corners outrank edges (a corner sits inside both its edges'
+# grab bands), edges outrank the interior.
 enum Handle { NONE, MOVE, TL, TR, BL, BR, TOP, BOTTOM, LEFT, RIGHT }
 
 var _rect := Rect2(0, 0, 1, 1)     # working copy while editing
@@ -39,15 +29,11 @@ var _drag: int = Handle.NONE
 var _drag_start_mouse := Vector2.ZERO
 var _drag_start_rect := Rect2()
 
-# The host TextureRect, remembered so _notification(SORTED_CHILDREN) /
-# NOTIFICATION_RESIZED can re-sync this overlay's rect to the image region as
-# the host re-lays out (display-zoom changes, Fit, window resizes). Without
-# this, the overlay kept its open-time geometry while the image under it
-# moved/resized, so zooming detached the crop box from the image.
+# Host TextureRect, for re-syncing this overlay's rect to the image region on
+# re-layout (without this, zooming detached the crop box from the image).
 var _host: TextureRect = null
 
-# Theme-driven chrome colors, pushed by Main.gd's _on_theme_changed() via
-# apply_theme() so light/dark switches stay correct while the overlay is open.
+# Theme colors, pushed by Main.gd's _on_theme_changed() via apply_theme().
 var _line_color := Color.WHITE
 var _dim_color := Color(0, 0, 0, 0.6)
 
@@ -56,18 +42,15 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP  # block clicks from reaching the pan/zoom handlers below
 
 
-# Build the Done/Cancel bar anchored to the VISIBLE PANE (pane: the
-# ScrollContainer that clips the image), not to this overlay. The overlay is
-# image-sized: at 200% zoom it is several thousand px tall, and a bar anchored
-# to it would be scrolled off-screen. The bar floats at the pane's bottom.
+# Builds the Done/Cancel bar; pane is the ScrollContainer clipping the image,
+# the bar floats at the pane's bottom (see the note above _MIN_SIZE).
 static func build_bar(pane: Control) -> HBoxContainer:
 	var bar := PanelContainer.new()
 	bar.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
 	bar.offset_top = -52.0
 	bar.offset_bottom = -8.0
-	# Transparent to mouse input outside its buttons so presses near the pane's
-	# bottom edge (where a zoomed image's crop handles sit) still reach the
-	# overlay under the bar.
+	# Transparent to input outside its buttons, so presses near the pane's
+	# bottom edge still reach the overlay under the bar.
 	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pane.add_child(bar)
 	var bar_h := HBoxContainer.new()
@@ -83,29 +66,24 @@ func apply_theme(is_dark: bool) -> void:
 	queue_redraw()
 
 
-# Open over the given TextureRect with the crop to resume editing. The
-# overlay's own rect is recomputed from the host's current texture + stretch
-# mode by _sync_rect() (also re-run on every host resize), so the box always
-# sits on the actual drawn image pixels regardless of zoom/Fit re-layouts:
-# normalized fractions then map 1:1 onto the displayed image.
+# Open over the host with the crop to resume editing; _sync_rect() keeps the
+# box mapped 1:1 onto the displayed image regardless of zoom/Fit re-layouts.
 func open(host: TextureRect, rect: Rect2) -> void:
 	_orig = rect
 	_rect = rect
 	_host = host
 	host.add_child(self)
-	# Re-sync on every host resize (zoom slider, Fit toggle, window resize) so
-	# the crop box stays glued to the drawn image region. Texture swaps do NOT
-	# signal (TextureRect has no texture_changed) -- Main.gd calls
-	# sync_to_texture() after assigning a new texture instead.
+	# Texture swaps do NOT signal (TextureRect has no texture_changed), so
+	# Main.gd calls sync_to_texture() after assigning a new texture.
 	host.resized.connect(_sync_rect)
 	visible = true
 	_sync_rect()
 
 
-# Re-derive this overlay's position/size from the host's current texture and
-# stretch mode. In STRETCH_SCALE (fixed zoom) the image fills the whole host
-# rect; in KEEP_ASPECT_CENTERED (Fit) it letterboxes into a centered sub-rect
-# (Godot scales by min(host/tex) per axis and centers -- confirmed behavior).
+# Re-derive position/size from the host's texture and stretch mode. In
+# STRETCH_SCALE (fixed zoom) the image fills the host rect; in
+# KEEP_ASPECT_CENTERED (Fit) it letterboxes into a centered sub-rect scaled by
+# min(host_size/texture_size) per axis.
 func _sync_rect() -> void:
 	if _host == null:
 		return
@@ -129,15 +107,13 @@ func close() -> void:
 		_host.remove_child(self)
 
 
-# The box currently being edited, in normalized fractions -- Main.gd's Done
-# button reads this at click time so it always commits the latest state.
+# Main.gd's Done button reads this at click time so it commits the latest state.
 func get_rect_normalized() -> Rect2:
 	return _rect
 
 
-# Main.gd calls this right after assigning a new texture on the host: the
-# buffer dimensions change (lift render, edit-res change), which changes the
-# Fit-mode letterbox geometry even though the host node itself did not resize.
+# Called after Main.gd assigns a new texture: buffer dimensions change the
+# Fit letterbox geometry even without a host resize.
 func sync_to_texture() -> void:
 	_sync_rect()
 
@@ -157,13 +133,11 @@ func _draw() -> void:
 		var fy := box.position.y + box.size.y * float(i) / float(_GRID)
 		draw_line(Vector2(fx, box.position.y), Vector2(fx, box.end.y), _line_color, 0.75)
 		draw_line(Vector2(box.position.x, fy), Vector2(box.end.x, fy), _line_color, 0.75)
-	# Corner handles (small filled squares read better than edge-only handles).
-	# Each 8px square is centered on its corner, so half of it lands outside the
-	# box -- and for a box flush with an edge (the default full-frame crop)
-	# outside the image itself, over the Fit letterbox. Clamp each handle into
-	# this control's rect: the overlay IS the drawn image region (see _sync_rect),
-	# so the clamp keeps every handle on the image.
+	# 8px corner handles centered on each corner, so half lands outside the box
+	# (for a flush full-frame crop, outside the image over the Fit letterbox).
+	# Clamped into this control's rect, which IS the drawn image region.
 	var handle_span: Vector2 = Vector2(maxf(size.x - 8.0, 0.0), maxf(size.y - 8.0, 0.0))
+
 	for pos: Vector2 in [box.position, Vector2(box.end.x, box.position.y),
 			Vector2(box.position.x, box.end.y), box.end]:
 		var handle: Rect2 = Rect2(pos - Vector2.ONE * 4.0, Vector2(8, 8))
@@ -194,20 +168,16 @@ func _gui_input(event: InputEvent) -> void:
 
 func _hit_test(p: Vector2) -> int:
 	var box := _screen_rect()
-	# Corners first (highest priority), then edges, then inside. Each corner is
-	# a generous circular grab (_CORNER_GRAB) so it wins over the edge bands
-	# below. Outside the box beyond all grab bands is Handle.NONE: clicks there
-	# are swallowed (no draw-new-box mode; resizing via the handles covers the
-	# common cases).
+	# Corners first (generous circular grab so they win over the edge bands
+	# below), then edges, then inside. Clicks fully outside are swallowed:
+	# no draw-new-box mode; resizing via handles covers the common cases.
 	for pair: Array in [
 		[box.position, Handle.TL], [Vector2(box.end.x, box.position.y), Handle.TR],
 		[Vector2(box.position.x, box.end.y), Handle.BL], [box.end, Handle.BR]]:
 		if p.distance_to(pair[0]) <= _CORNER_GRAB:
 			return pair[1]
-	# Edge bands reach _HANDLE_GRAB px INSIDE each edge and _HANDLE_OUTER px
-	# OUTSIDE it, so the cursor can sit slightly past the box and still grab that
-	# side. The along-edge span stays within the box; the corner grabs above own
-	# the diagonal regions.
+	# Edge bands reach _HANDLE_GRAB px inside and _HANDLE_OUTER px outside each
+	# edge; the along-edge span stays within the box (corners own the diagonals).
 	var on_left: bool = p.x >= box.position.x - _HANDLE_OUTER \
 		and p.x <= box.position.x + _HANDLE_GRAB \
 		and p.y >= box.position.y and p.y <= box.end.y
@@ -232,9 +202,8 @@ func _hit_test(p: Vector2) -> int:
 	return Handle.NONE
 
 
-# Cursor feedback: reuse the exact hit-test used for drags so the pointer
-# always advertises the action a press would start. Godot calls this every
-# frame the mouse is over this control (public wrapper: get_cursor_shape()).
+# Reuse the drag hit-test so the cursor always advertises the action a press
+# would start. Godot calls this every frame the mouse is over the control.
 func _get_cursor_shape(p: Vector2) -> int:
 	match _hit_test(p):
 		Handle.TL, Handle.BR:
@@ -251,8 +220,7 @@ func _get_cursor_shape(p: Vector2) -> int:
 			return Control.CURSOR_ARROW
 
 
-# Mouse motion handler: translate the hit id into an edge/corner edit. All
-# math happens in normalized space so behavior is zoom-independent.
+# All math happens in normalized space so behavior is zoom-independent.
 func _apply_drag(mouse: Vector2) -> void:
 	var delta := (mouse - _drag_start_mouse) / size
 	var r := _drag_start_rect

@@ -1,26 +1,16 @@
 extends SceneTree
 
-# White balance verification: load the fixture RAW, read back the as-shot
-# Kelvin via get_white_balance_temperature() (reads channelmixerrgb's
-# default_params "temperature" field), then sweep
-# set_white_balance_temperature() across warm/cool extremes. This exercises
-# BOTH introspection code paths the refactor touches for this module: the
-# float field write ("temperature") AND the two enum writes ("illuminant" ->
-# "DT_ILLUMINANT_D", "adaptation" -> "DT_ADAPTATION_CAT16") resolved by name
-# via dt_iop_set_enum(). A wrong/no-op enum code (miswired illuminant, or a
-# name lookup silently failing) would leave the CAT inactive and both extreme
-# Kelvin targets would render identically -- so rather than assert a specific
-# warm/cool sign (channelmixerrgb's CAT math is not worth re-deriving here),
-# this checks the two extremes produce a materially different mean R-B channel
-# balance, proving the enum + float writes actually reached the pipe. Asserts:
-#   1) get_white_balance_temperature() returns a plausible Kelvin (1667..25000)
-#   2) temperature=3000 vs temperature=8000 render with a materially different
-#      mean R-B channel balance (direction-agnostic: proves the writes landed)
-#   3) both renders succeed without error
-# Run:
-#   Godot --headless --path godot-poc/project --script res://tests/white_balance_smoke_test.gd \
-#         -- <input_raw>
-# with DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR exported.
+# White balance: read as-shot Kelvin via get_white_balance_temperature()
+# (channelmixerrgb's "temperature" default_params field), then sweep
+# set_white_balance_temperature() across warm/cool extremes. Exercises BOTH
+# introspection paths: the float "temperature" write AND the enum writes
+# ("illuminant" -> DT_ILLUMINANT_D, "adaptation" -> DT_ADAPTATION_CAT16) via
+# dt_iop_set_enum() (dt_backend.cpp). A miswired enum value, or a name lookup
+# that silently fails, would leave the CAT inactive and both extremes would
+# render identically, so the check is direction-agnostic (channelmixerrgb's CAT
+# math is not re-derived here): the extremes must just give materially
+# different mean R-B balance, proving the writes actually reached the pipe.
+# Run: Godot --headless --path godot-poc/project --script res://tests/white_balance_smoke_test.gd -- <input_raw>  (DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR must be exported)
 
 func _mean_rb_diff(data: PackedByteArray, w: int, h: int) -> float:
 	var sum: float = 0.0
@@ -80,7 +70,7 @@ func _initialize() -> void:
 	print("WHITE_BALANCE_SMOKE: temperature=8000 frame, mean R-B %.3f" % cool_rb)
 
 	if absf(cool_rb - warm_rb) < 1.0:
-		_die("temperature=3000 vs 8000 did not materially change R-B balance (%.3f vs %.3f) -- CAT writes may not have reached the pipe" % [warm_rb, cool_rb])
+		_die("temperature=3000 vs 8000 did not materially change R-B balance (%.3f vs %.3f): CAT writes may not have reached the pipe" % [warm_rb, cool_rb])
 		return
 
 	print("WHITE_BALANCE_SMOKE: PASS")

@@ -1,20 +1,11 @@
 extends SceneTree
 
-# Contrast verification: load the fixture RAW, render the neutral frame, then
-# sweep set_contrast() to its extremes via the introspection-resolved
-# colorbalancergb "contrast" field (see dt_iop_set_float() in dt_backend.cpp).
-# Contrast pivots around a mid-grey fulcrum, so mean luma alone is not a
-# reliable signal (raising contrast can leave the mean roughly unchanged while
-# spreading the histogram). Instead this measures the STANDARD DEVIATION of
-# luma, which must rise as |contrast| increases: a wider spread is the
-# defining effect of a contrast module. Asserts:
-#   1) contrast=+1.0 increases luma spread vs. neutral
-#   2) contrast=-1.0 decreases luma spread vs. neutral
-#   3) resetting to 0 restores the neutral frame (mean within tolerance)
-# Run:
-#   Godot --headless --path godot-poc/project --script res://tests/contrast_smoke_test.gd \
-#         -- <input_raw>
-# with DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR exported.
+# Contrast: sweep set_contrast() extremes via colorbalancergb's
+# introspection-resolved "contrast" field (dt_iop_set_float() in
+# dt_backend.cpp). Contrast pivots around mid-grey, so mean luma is unreliable
+# (the mean can hold while the histogram spreads); the signal is luma STANDARD
+# DEVIATION, which must rise with |contrast|.
+# Run: Godot --headless --path godot-poc/project --script res://tests/contrast_smoke_test.gd -- <input_raw>  (DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR must be exported)
 
 func _luma_stats(data: PackedByteArray, w: int, h: int) -> Vector2:
 	var sum: float = 0.0
