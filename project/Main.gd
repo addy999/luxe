@@ -119,9 +119,18 @@ const _EDIT_MODES: Array = [
 	{"id": 1, "label": "75%", "scale": 0.75},
 	{"id": 2, "label": "50%", "scale": 0.50},
 	{"id": 3, "label": "25%", "scale": 0.25},
+	{"id": 4, "label": "Auto", "scale": -1.0}, # scale computed by _auto_compute_scale()
 ]
 const _EDIT_DEFAULT_ID: int = 2 # 50%, fallback used until an image's size is known.
+const _EDIT_AUTO_ID: int = 4
+const _EDIT_SCALE_EPSILON: float = 0.01 # min |delta| in _edit_scale to re-render
 var _edit_scale: float = 0.50
+var _edit_mode_id: int = _EDIT_DEFAULT_ID # dropdown id; see docs/GODOT_FRONTEND_NOTES.md
+var _auto_floor_scale: float = 0.50 # Auto's lower bound; set per image load
+
+
+func _is_auto_mode() -> bool:
+	return _edit_mode_id == _EDIT_AUTO_ID
 
 # Size-adaptive default edit scale, by raw megapixels (tiers in order).
 const _EDIT_DEFAULT_BY_SIZE: Array = [
@@ -231,6 +240,7 @@ func _finish_ready() -> void:
 	for mode in _EDIT_MODES:
 		edit_res_option.add_item(mode["label"], mode["id"])
 	edit_res_option.select(_EDIT_DEFAULT_ID)
+	_edit_mode_id = _EDIT_DEFAULT_ID
 	_edit_scale = _EDIT_MODES[_EDIT_DEFAULT_ID]["scale"]
 
 	# Start in Fit; the scene already sets slider 100 + toggle on.
@@ -339,11 +349,16 @@ func _on_file_dialog_file_selected(path: String) -> void:
 	_wb_default_temperature = as_shot_temperature
 	var default_edit_id: int = _pick_default_edit_mode_id(
 		backend.get_raw_width(), backend.get_raw_height())
-	edit_res_option.select(default_edit_id)
-	_edit_scale = _EDIT_MODES[default_edit_id]["scale"]
+	_auto_floor_scale = _EDIT_MODES[default_edit_id]["scale"]
 	_display_zoom = -1.0
 	fit_button.set_pressed_no_signal(true)
 	_update_zoom_readout()
+	if _is_auto_mode():
+		_edit_scale = _auto_compute_scale()
+	else:
+		edit_res_option.select(default_edit_id)
+		_edit_mode_id = default_edit_id
+		_edit_scale = _EDIT_MODES[default_edit_id]["scale"]
 	_request_render()
 
 
@@ -648,11 +663,17 @@ func _on_scroll_resized() -> void:
 	if not _image_loaded:
 		return
 	_apply_display_layout()
+	if _update_auto_edit_scale():
+		_request_render()
 
 
 func _on_edit_res_option_button_item_selected(index: int) -> void:
 	var id: int = edit_res_option.get_item_id(index)
-	_edit_scale = _EDIT_MODES[id]["scale"]
+	_edit_mode_id = id
+	if id == _EDIT_AUTO_ID:
+		_edit_scale = _auto_compute_scale()
+	else:
+		_edit_scale = _EDIT_MODES[id]["scale"]
 	_request_render()
 
 
@@ -678,6 +699,8 @@ func _on_fit_button_toggled(pressed: bool) -> void:
 		_set_display_zoom(zoom_slider.value)
 
 
+# Frontend-only, plus a conditional _update_auto_edit_scale()/_request_render()
+# for Auto edit-resolution; see docs/GODOT_FRONTEND_NOTES.md.
 func _apply_zoom_change() -> void:
 	_update_zoom_readout()
 	if not _image_loaded:
@@ -687,19 +710,49 @@ func _apply_zoom_change() -> void:
 		_update_resolution_label(image_texture.get_width(), image_texture.get_height())
 	else:
 		_update_resolution_label(0, 0)
+	if _update_auto_edit_scale():
+		_request_render()
+
+
+# Fraction of native image size currently on screen.
+func _effective_zoom_fraction() -> float:
+	if _display_zoom >= 0.0:
+		return _display_zoom
+	if backend == null:
+		return 0.0
+	var native_w: int = backend.get_native_width()
+	var native_h: int = backend.get_native_height()
+	if native_w <= 0 or native_h <= 0:
+		return 0.0
+	var avail: Vector2 = scroll_container.size
+	var fit: float = min(avail.x / float(native_w), avail.y / float(native_h))
+	return clamp(fit, _ZOOM_MIN_PCT / 100.0, _ZOOM_MAX_PCT / 100.0)
+
+
+func _auto_compute_scale() -> float:
+	if _display_zoom < 0.0:
+		return _auto_floor_scale
+	return clamp(_display_zoom, _auto_floor_scale, 1.0)
+
+
+# Recomputes _edit_scale from current zoom when Auto is active. Returns true
+# if _edit_scale changed by at least _EDIT_SCALE_EPSILON.
+func _update_auto_edit_scale() -> bool:
+	if not _is_auto_mode() or not _image_loaded:
+		return false
+	var new_scale: float = _auto_compute_scale()
+	if absf(new_scale - _edit_scale) < _EDIT_SCALE_EPSILON:
+		return false
+	_edit_scale = new_scale
+	return true
 
 
 func _update_zoom_readout() -> void:
 	if _display_zoom < 0.0:
 		zoom_value_label.text = "Fit"
 		if backend != null:
-			var native_w: int = backend.get_native_width()
-			var native_h: int = backend.get_native_height()
-			if native_w > 0 and native_h > 0:
-				var avail: Vector2 = scroll_container.size
-				var fit: float = min(avail.x / float(native_w), avail.y / float(native_h))
-				var pct: float = clamp(fit * 100.0, _ZOOM_MIN_PCT, _ZOOM_MAX_PCT)
-				zoom_slider.set_value_no_signal(pct)
+			var pct: float = _effective_zoom_fraction() * 100.0
+			zoom_slider.set_value_no_signal(pct)
 	else:
 		zoom_value_label.text = "%d%%" % roundi(_display_zoom * 100.0)
 
@@ -718,12 +771,7 @@ func _update_resolution_label(buf_w: int, buf_h: int) -> void:
 	var edit_pct: int = roundi(buffer_scale * 100.0)
 	var mode: String = "final" if _final_quality() else "fast"
 
-	var disp_zoom: float
-	if _display_zoom < 0.0:
-		var avail: Vector2 = scroll_container.size
-		disp_zoom = min(avail.x / float(native_w), avail.y / float(native_h))
-	else:
-		disp_zoom = _display_zoom
+	var disp_zoom: float = _effective_zoom_fraction()
 	var screen_w: int = roundi(disp_zoom * float(native_w))
 	var screen_h: int = roundi(disp_zoom * float(native_h))
 	var disp_label: String = "Fit" if _display_zoom < 0.0 else "%d%%" % roundi(disp_zoom * 100.0)
@@ -774,12 +822,7 @@ func _zoom_by_factor(multiplier: float) -> void:
 	var native_h: int = backend.get_native_height()
 	if native_w <= 0 or native_h <= 0:
 		return
-	var old_effective_zoom: float
-	if _display_zoom < 0.0:
-		var viewport_size: Vector2 = scroll_container.size
-		old_effective_zoom = min(viewport_size.x / float(native_w), viewport_size.y / float(native_h))
-	else:
-		old_effective_zoom = _display_zoom
+	var old_effective_zoom: float = _effective_zoom_fraction()
 	_set_display_zoom(old_effective_zoom * 100.0 * multiplier)
 
 
