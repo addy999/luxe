@@ -19,7 +19,6 @@ extern "C" {
 #include "common/film.h"
 #include "common/image.h"
 #include "common/mipmap_cache.h"
-// blend params; also included by pixelpipe_hb.c in the nogui build, so safe headless
 #include "develop/blend.h"
 #include "develop/develop.h"
 #include "develop/imageop.h"
@@ -28,21 +27,11 @@ extern "C" {
 #include "imageio/imageio_module.h"
 }
 
-// IOP params structs are private to each module's .c file; never redeclare
-// them (layout is load-bearing, drifts silently). Drive fields by NAME via the
-// generated introspection accessors (dt_iop_field()/dt_iop_set_enum() in
-// dt_backend.cpp), so a renamed/removed field surfaces as a NULL lookup
-// instead of a shifted struct offset.
-
-// channelmixerrgb.c:82-83: clamp range for the White Balance Kelvin slider.
 #define DT_BACKEND_CHANNELMIXERRGB_TEMP_MIN 1667.0f
 #define DT_BACKEND_CHANNELMIXERRGB_TEMP_MAX 25000.0f
 
-// tonecurve.c:48: max spline control points on the L-channel curve.
 #define DT_BACKEND_TONECURVE_MAXNODES 20
 
-// curve_tools.h:29: CUBIC_SPLINE 0, CATMULL_ROM 1, MONOTONE_HERMITE 2;
-// stored as a plain int in tonecurve_type[] (no named enum in the struct).
 #define DT_BACKEND_MONOTONE_HERMITE 2
 
 
@@ -59,25 +48,22 @@ private:
 
   dt_imgid_t imgid = NO_IMGID;
   dt_develop_t dev;
-  // Full pipe (DT_DEV_PIXELPIPE_FULL, fed DT_MIPMAP_FULL): render_view().
+  // Full pipe (DT_MIPMAP_FULL input): render_view().
   dt_dev_pixelpipe_t pipe;
   dt_mipmap_buffer_t mipmap_buf;
-  // Fast preview pipe, fed the downscaled DT_MIPMAP_F mip, regenerated at the
-  // display's pixel resolution by init() (see set_preview_mip_size()). Both
-  // pipes share `dev`; each has its own node list/cache.
+  // Fast preview pipe, fed the display-sized DT_MIPMAP_F mip; shares `dev` with `pipe`.
   dt_dev_pixelpipe_t preview_pipe;
   // Backs the preview pipe's input; held open (locked) for its lifetime, like mipmap_buf.
   dt_mipmap_buffer_t preview_mipmap_buf;
   bool preview_pipe_ready = false;
-  // Preview pipe's scale=1.0 dims = the mip's dims (display-sized), authoritative for preview ROI.
+  // Preview pipe's scale=1.0 dims (= the mip's dims).
   int preview_native_width = 0;
   int preview_native_height = 0;
 
-  // Physical display size passed to init() to size the DT_MIPMAP_F mip; 0,0 keeps the default.
   int display_width_ = 0;
   int display_height_ = 0;
 
-  // Cached module pointers so repeated setter calls don't re-search dev.iop.
+  // Cached module pointers, filled on first use.
   dt_iop_module_t *exposure_module = nullptr;
   dt_iop_module_t *colorbalance_module = nullptr;
   dt_iop_module_t *shadhi_module = nullptr;
@@ -96,42 +82,26 @@ private:
   int native_width = 0;
   int native_height = 0;
 
-  // Raw sensor/file dimensions, captured at load_image() time (no render needed), so
-  // GDScript can pick a default edit scale before the first render.
+  // Raw sensor/file dims, captured at load_image().
   int raw_width = 0;
   int raw_height = 0;
 
   // --- Incremental change dispatch ------------------------------------------
-  // Setters end with dt_dev_add_history_item_ext(..., no_image=TRUE): the
-  // !no_image branch ORs DT_DEV_PIPE_*_CHANGED onto dev->full.pipe/
-  // preview_pipe, which are NULL headless, so dropping it would crash. This
-  // bridge therefore tracks pipe changes itself: one changed module maps onto
-  // TOP_CHANGED/synch_top(); two or more fall back to synch_all().
   bool pipe_change_pending = false;
   bool pipe_change_multi = false;
   bool pipe_needs_full_synch = false;
   dt_iop_module_t *pipe_change_module = nullptr;
 
-  // Records `module` as changed; full-replay fallback if enabling flips a still-disabled piece.
   void note_pipe_change(dt_iop_module_t *module);
-
-  // Applies any pending change (synch_top for one module, synch_all otherwise)
-  // to BOTH pipes: sync only one and the other serves stale pixels.
   void dispatch_pipe_changes();
-
-  // Dispatches pending changes then refreshes the pipe's scale=1.0 dims.
   bool refresh_native_dimensions();
   bool refresh_preview_dimensions();
 
-  // The one ROI-process-read implementation shared by render_view() and
-  // render_preview() so the paths cannot drift (develop.c:874-890 math).
+  // The one ROI-process-read implementation shared by both render paths.
   PackedByteArray render_pipe_roi(dt_dev_pixelpipe_t *p, int native_w, int native_h,
                                   int viewport_w, int viewport_h, double scale,
                                   double center_x, double center_y);
 
-  // Computes --datadir/--moduledir at runtime (baked-in absolute paths broke
-  // when the binary moved): env vars, then Godot's executable path, then
-  // dladdr() on this extension's own library. Returns false if none resolves.
   static bool compute_dt_dirs(std::string &datadir, std::string &moduledir);
 
 protected:
@@ -141,70 +111,46 @@ public:
   DtBackend();
   ~DtBackend();
 
-  // Physical (device) pixel dims of the screen, or 0,0 when unknown/headless.
-  // init() writes them into the mipmap cache as the DT_MIPMAP_F max dims
-  // (see set_preview_mip_size() in dt_backend.cpp).
+  // Physical (device) pixel dims of the screen, 0,0 when unknown/headless.
   bool init(int display_width = 0, int display_height = 0);
   bool load_image(String path);
   void set_exposure(float ev);
   void set_contrast(float value);
   void set_shadows(float value);
   void set_highlights(float value);
-  // Blacks/Whites: two-sided -1..1 sliders driven via toneequal's
-  // "blacks"/"whites" 1-EV-band gains; positive Blacks writes -value
-  // (a positive toneequal gain LIFTS its band, Lightroom's DEEPENS).
+  // Two-sided -1..1 sliders; 0 = neutral (module disabled). Sign conventions in
+  // docs/DARKTABLE_API_NOTES.md F.3.
   void set_blacks(float value);
   void set_whites(float value);
   void set_saturation(float value);
-  // The saturation axis's below-neutral half. amount in 0..1: 0 disables
-  // monochrome entirely (neutral), 1 = full B&W, between = uniform-blend opacity.
+  // Saturation's below-neutral half: amount 0..1 (0 = neutral, 1 = full B&W).
   void set_desaturation(float amount);
-  // Dehaze is NOT the darktable "hazeremoval" module (its per-channel ambient
-  // casts tinted scenes; see DARKTABLE_API_NOTES.md F.8). Stores the slider
-  // value (-1..1, 0 = neutral; positive removes haze, negative adds it) and
-  // _apply_dehaze() runs our hue-safe dark-channel post-pipe stage.
+  // -1..1 slider value, 0 = neutral; our own post-pipe stage (docs F.8), not
+  // darktable's "hazeremoval" module.
   void set_dehaze(float value);
-  // Run the dehaze stage over an RGBA8 gamma-encoded buffer in place; no-op at
-  // 0. Shared by render_pipe_roi and export_image so exports match the screen.
+  // Dehaze stage over an RGBA8 gamma-encoded buffer, in place; no-op at 0.
   void _apply_dehaze(uint8_t *rgba8, int width, int height) const;
-  // Dark-channel-prior estimate of the achromatic ambient A (0..1), cached per image.
+  // Dark-channel-prior estimate of the achromatic ambient A (0..1).
   float _estimate_dehaze_ambient(const uint8_t *rgba8, int width, int height) const;
-  // Slider value (-1..1, 0 = neutral); not a module param, no darktable module involved.
+  // Slider value (-1..1, 0 = neutral); not a darktable module param.
   float dehaze_value = 0.0f;
-  // Cached achromatic ambient A (linear luma 0..1); 0 = not yet measured.
-  // Invalidated by note_pipe_change and export_image's full-res re-estimate;
-  // mutable because _apply_dehaze is const and estimates it lazily.
+  // Cached ambient A (linear luma 0..1); 0 = not yet measured. Mutable: _apply_dehaze is const.
   mutable float _dehaze_ambient = 0.0f;
   void set_vibrance(float value);
-  // White balance via channelmixerrgb's chromatic adaptation (not the
-  // temperature module, scene-referred workflow); see set_white_balance_temperature
-  // in dt_backend.cpp. Clamped to DT_BACKEND_CHANNELMIXERRGB_TEMP_MIN/_MAX.
+  // Kelvin, clamped to _TEMP_MIN/_MAX (docs F.4).
   void set_white_balance_temperature(float kelvin);
-  // Read back channelmixerrgb's as-shot `temperature` (pre-edit) so the UI can
-  // seed its White Balance slider. Returns 0.0f (and errors) if no image is
-  // loaded or the module is missing.
+  // As-shot Kelvin for seeding the UI slider; 0.0f if no image/module.
   float get_white_balance_temperature();
-  // Drives the clipping module's crop box. All four values are normalized 0..1
-  // fractions of the whole image; (left, top) one corner, (right, bottom) the
-  // opposite. Clamped to the module's own commit_params() ranges. Full frame
-  // (0,0,1,1) DISABLES the module.
+  // Normalized 0..1 crop EDGES (left, top, right, bottom); full frame disables the module.
   void set_crop(float left, float top, float right, float bottom);
-  // Drives the tonecurve module's L-channel spline. `points` is a caller-sorted
-  // list of {x,y} control points in [0,1]x[0,1], first x==0, last x==1, 2..
-  // DT_BACKEND_TONECURVE_MAXNODES points; ordering is the GDScript widget's job.
+  // L-channel spline points in [0,1]x[0,1], caller-sorted, 2..MAXNODES.
   void set_tonecurve(PackedVector2Array points);
   PackedByteArray process_fit(int max_width, int max_height);
-  // General ROI render, the same math darktable's own darkroom uses for
-  // fit/100%/arbitrary zoom (develop.c:874-890); see render_pipe_roi().
-  // center_x/center_y are in [-0.5, 0.5], 0,0 = centered.
+  // ROI render on the full pipe; center_x/center_y in [-0.5, 0.5], 0,0 = centered.
   PackedByteArray render_view(int viewport_w, int viewport_h, double scale,
                               double center_x, double center_y);
-  // Fast interactive render through the preview pipe, same contract as
-  // render_view() EXCEPT that `scale` is a fraction of the preview mip's
-  // dimensions (display-sized by init()), not of the image's native size;
-  // passed straight through as the pipe's roi_out scale, so it scales
-  // intermediate work too. No cap: the mip is the ceiling. Falls back to
-  // render_view() if unavailable.
+  // Same contract as render_view() on the preview pipe, except `scale` is a
+  // fraction of the preview mip's dims; falls back to render_view().
   PackedByteArray render_preview(int viewport_w, int viewport_h, double scale,
                                  double center_x, double center_y);
   bool export_image(String path);
@@ -218,9 +164,8 @@ public:
   int get_raw_height();
   void cleanup();
 
-  // Tears down the current image's pipe/dev/mipmap state (mirrors cleanup()'s
-  // per-image branch) without touching `initialized`/`cleaned_up`, so the
-  // backend can load another image in the same process; no-op when idle.
+  // Per-image teardown that leaves `initialized`/`cleaned_up` intact, so another
+  // image can load in-process; no-op when idle.
   void unload_image();
 };
 

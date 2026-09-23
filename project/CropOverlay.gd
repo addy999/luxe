@@ -1,26 +1,18 @@
 extends Control
 
-# Interactive crop editor drawn over the image's TextureRect, parented to it by
-# Main.gd (which owns the authoritative _params["crop"]; this widget only edits
-# and signals back) so it tracks zoom/pan/Fit re-layouts. The box is stored in
-# NORMALIZED image fractions, darktable's clipping-module coordinate space
-# (cx/cy/cw/ch edges). While open it swallows mouse input from pan/zoom below.
-#
-# The Done/Cancel bar lives OUTSIDE this control, anchored to the visible
-# scroll pane: the overlay is image-sized, so anchoring here scrolls off-screen.
-# Main.gd's _open_crop_overlay() wires the bar's buttons straight to its
-# apply/cancel handlers (Done reads get_rect_normalized() at click time).
+# Interactive crop editor over the image's TextureRect; Main.gd owns the
+# authoritative _params["crop"], this widget only edits and signals back.
+# The box is in normalized image fractions (darktable clipping's cx/cy/cw/ch
+# edges); while open it swallows mouse input from pan/zoom below.
 
 const _MIN_SIZE: float = 0.02      # smallest allowed box, as image fraction
-# Grab tolerances in px: _HANDLE_GRAB inside an edge, _HANDLE_OUTER outside it,
-# _CORNER_GRAB around corners.
+# Grab tolerances in px (inside an edge / outside it / at corners).
 const _HANDLE_GRAB: float = 22.0
 const _HANDLE_OUTER: float = 24.0
 const _CORNER_GRAB: float = 26.0
 const _GRID: int = 3               # rule-of-thirds grid lines per axis
 
-# Hit-test ids. Corners outrank edges (a corner sits inside both its edges'
-# grab bands), edges outrank the interior.
+# Hit-test ids.
 enum Handle { NONE, MOVE, TL, TR, BL, BR, TOP, BOTTOM, LEFT, RIGHT }
 
 var _rect := Rect2(0, 0, 1, 1)     # working copy while editing
@@ -29,28 +21,24 @@ var _drag: int = Handle.NONE
 var _drag_start_mouse := Vector2.ZERO
 var _drag_start_rect := Rect2()
 
-# Host TextureRect, for re-syncing this overlay's rect to the image region on
-# re-layout (without this, zooming detached the crop box from the image).
+# Host TextureRect, for re-syncing on re-layout.
 var _host: TextureRect = null
 
-# Theme colors, pushed by Main.gd's _on_theme_changed() via apply_theme().
+# Theme colors, pushed by Main.gd via apply_theme().
 var _line_color := Color.WHITE
 var _dim_color := Color(0, 0, 0, 0.6)
 
 
 func _ready() -> void:
-	mouse_filter = Control.MOUSE_FILTER_STOP  # block clicks from reaching the pan/zoom handlers below
+	mouse_filter = Control.MOUSE_FILTER_STOP
 
 
-# Builds the Done/Cancel bar; pane is the ScrollContainer clipping the image,
-# the bar floats at the pane's bottom (see the note above _MIN_SIZE).
+# Builds the Done/Cancel bar, floating on the clipping pane (not the overlay).
 static func build_bar(pane: Control) -> HBoxContainer:
 	var bar := PanelContainer.new()
 	bar.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
 	bar.offset_top = -52.0
 	bar.offset_bottom = -8.0
-	# Transparent to input outside its buttons, so presses near the pane's
-	# bottom edge still reach the overlay under the bar.
 	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pane.add_child(bar)
 	var bar_h := HBoxContainer.new()
@@ -66,24 +54,18 @@ func apply_theme(is_dark: bool) -> void:
 	queue_redraw()
 
 
-# Open over the host with the crop to resume editing; _sync_rect() keeps the
-# box mapped 1:1 onto the displayed image regardless of zoom/Fit re-layouts.
+# Open over the host with the crop to resume editing.
 func open(host: TextureRect, rect: Rect2) -> void:
 	_orig = rect
 	_rect = rect
 	_host = host
 	host.add_child(self)
-	# Texture swaps do NOT signal (TextureRect has no texture_changed), so
-	# Main.gd calls sync_to_texture() after assigning a new texture.
 	host.resized.connect(_sync_rect)
 	visible = true
 	_sync_rect()
 
 
-# Re-derive position/size from the host's texture and stretch mode. In
-# STRETCH_SCALE (fixed zoom) the image fills the host rect; in
-# KEEP_ASPECT_CENTERED (Fit) it letterboxes into a centered sub-rect scaled by
-# min(host_size/texture_size) per axis.
+# Re-derive position/size from the host's texture and stretch mode.
 func _sync_rect() -> void:
 	if _host == null:
 		return
@@ -112,15 +94,14 @@ func get_rect_normalized() -> Rect2:
 	return _rect
 
 
-# Called after Main.gd assigns a new texture: buffer dimensions change the
-# Fit letterbox geometry even without a host resize.
+# Called by Main.gd when the texture's dimensions change (no texture_changed signal).
 func sync_to_texture() -> void:
 	_sync_rect()
 
 
 func _draw() -> void:
 	var box := _screen_rect()
-	# Dim everything outside the crop box (four strips; avoids a shader).
+	# Dim everything outside the crop box.
 	var s := size
 	draw_rect(Rect2(0, 0, s.x, box.position.y), _dim_color)
 	draw_rect(Rect2(0, box.end.y, s.x, s.y - box.end.y), _dim_color)
@@ -133,9 +114,7 @@ func _draw() -> void:
 		var fy := box.position.y + box.size.y * float(i) / float(_GRID)
 		draw_line(Vector2(fx, box.position.y), Vector2(fx, box.end.y), _line_color, 0.75)
 		draw_line(Vector2(box.position.x, fy), Vector2(box.end.x, fy), _line_color, 0.75)
-	# 8px corner handles centered on each corner, so half lands outside the box
-	# (for a flush full-frame crop, outside the image over the Fit letterbox).
-	# Clamped into this control's rect, which IS the drawn image region.
+	# Corner handles, clamped in (half outside the box so a flush crop stays grabbable).
 	var handle_span: Vector2 = Vector2(maxf(size.x - 8.0, 0.0), maxf(size.y - 8.0, 0.0))
 
 	for pos: Vector2 in [box.position, Vector2(box.end.x, box.position.y),
@@ -168,16 +147,13 @@ func _gui_input(event: InputEvent) -> void:
 
 func _hit_test(p: Vector2) -> int:
 	var box := _screen_rect()
-	# Corners first (generous circular grab so they win over the edge bands
-	# below), then edges, then inside. Clicks fully outside are swallowed:
-	# no draw-new-box mode; resizing via handles covers the common cases.
+	# Corners first (they sit inside both edge bands), then edges, then inside.
 	for pair: Array in [
 		[box.position, Handle.TL], [Vector2(box.end.x, box.position.y), Handle.TR],
 		[Vector2(box.position.x, box.end.y), Handle.BL], [box.end, Handle.BR]]:
 		if p.distance_to(pair[0]) <= _CORNER_GRAB:
 			return pair[1]
-	# Edge bands reach _HANDLE_GRAB px inside and _HANDLE_OUTER px outside each
-	# edge; the along-edge span stays within the box (corners own the diagonals).
+	# Edge bands: _HANDLE_GRAB px inside, _HANDLE_OUTER px outside; corners own diagonals.
 	var on_left: bool = p.x >= box.position.x - _HANDLE_OUTER \
 		and p.x <= box.position.x + _HANDLE_GRAB \
 		and p.y >= box.position.y and p.y <= box.end.y
@@ -202,8 +178,7 @@ func _hit_test(p: Vector2) -> int:
 	return Handle.NONE
 
 
-# Reuse the drag hit-test so the cursor always advertises the action a press
-# would start. Godot calls this every frame the mouse is over the control.
+# Reuse the drag hit-test so the cursor advertises the action a press would start.
 func _get_cursor_shape(p: Vector2) -> int:
 	match _hit_test(p):
 		Handle.TL, Handle.BR:

@@ -1,9 +1,6 @@
 /*
- * GDExtension registration for the darktable-on-Godot PoC. The entry_symbol
- * name (dt_backend_library_init) is fixed by dt_backend.gdextension's
- * [configuration] section; do not rename it without updating that file.
- * Links against darktable (github.com/darktable-org/darktable), Copyright (C)
- * the darktable contributors, licensed under GPL v3.0 or later; see NOTICE.
+ * GDExtension registration for the darktable-on-Godot PoC.
+ * Links against darktable (github.com/darktable-org/darktable), GPLv3 or later; see NOTICE.
  */
 #include "register_types.h"
 

@@ -1,10 +1,7 @@
 extends Node
 
-# Autoload. Owns the light/dark Theme resources and persists the choice. The
-# root Control's `theme` property cascades to every child, so switching is one
-# assignment. Themes only store baked pixel font sizes (no "em" unit), so
-# FONT_RATIOS recreates that: each style's size is a ratio of BASE_FONT_SIZE,
-# rescaled together by font_scale (like a CSS root font-size).
+# Autoload. Owns the light/dark Theme resources and the font-scale system
+# (see docs/GODOT_FRONTEND_NOTES.md for why FONT_RATIOS exists).
 
 signal theme_changed(is_dark: bool)
 signal font_scale_changed(scale: float)
