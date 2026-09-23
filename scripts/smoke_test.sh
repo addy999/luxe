@@ -25,11 +25,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-PROJECT_DIR="$REPO_ROOT/godot-poc/project"
-DT_BUILD_DIR="${2:-$REPO_ROOT/source/build}"
-OUT_DIR="${3:-$REPO_ROOT/godot-poc/scripts/.smoke_out}"
+PROJECT_DIR="$ROOT/project"
+# The darktable build lives in the outer repo (godot-poc's parent).
+DT_BUILD_DIR="${2:-$ROOT/../source/build}"
+OUT_DIR="${3:-$ROOT/scripts/.smoke_out}"
 GODOT_BIN="${4:-/Applications/Godot.app/Contents/MacOS/Godot}"
 
 # Two EV values far enough apart that a working exposure module must produce
@@ -64,9 +65,14 @@ MODULEDIR="$DT_BUILD_DIR/lib/darktable"
 [[ -d "$DATADIR" ]] || fail "datadir missing: $DATADIR"
 [[ -d "$MODULEDIR" ]] || fail "moduledir missing: $MODULEDIR"
 
+# Build the GDExtension unconditionally before testing (scons is incremental;
+# a no-op when up to date). Building always guarantees the tests never run
+# against a stale framework from an older source tree.
 FRAMEWORK="$PROJECT_DIR/bin/libdt_backend.macos.template_debug.framework"
-[[ -d "$FRAMEWORK" ]] || fail "debug GDExtension not built: $FRAMEWORK
-  build it: cd $REPO_ROOT/godot-poc/extension && scons arch=arm64 target=template_debug dt_build_dir=$DT_BUILD_DIR"
+echo "Building GDExtension (scons, incremental)..."
+( cd "$ROOT/extension" && scons arch=arm64 target=template_debug ) \
+    || fail "scons build failed"
+[[ -d "$FRAMEWORK" ]] || fail "scons succeeded but framework missing: $FRAMEWORK"
 
 echo "DT_BUILD:   $DT_BUILD_DIR"
 echo "GODOT:      $GODOT_BIN"

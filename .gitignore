@@ -19,3 +19,12 @@ extension/dt_link_flags.json
 # Test output
 scripts/.smoke_out/
 scripts/.crop_out/
+project/tests/.feature_out/blacks_whites.log
+project/tests/.feature_out/contrast.log
+project/tests/.feature_out/crop.log
+project/tests/.feature_out/dehaze.log
+project/tests/.feature_out/saturation.log
+project/tests/.feature_out/shadows_highlights.log
+project/tests/.feature_out/tonecurve.log
+project/tests/.feature_out/vibrance.log
+project/tests/.feature_out/white_balance.log
