@@ -14,9 +14,7 @@
 
 Luxe is a desktop photo editor built with [Godot 4](https://godotengine.org/). Instead of reimplementing RAW processing from scratch, it embeds darktable's real pixel pipeline in-process through a small C++ GDExtension, so every slider you drag is processed by the same code darktable's own darkroom uses.
 
-<p align="center">
-  <img src="docs/img/v0.1.3.png" width="720" alt="Luxe v0.1.3">
-</p>
+https://github.com/user-attachments/assets/257148fa-0ed2-4830-85a8-caf0972ba8f7
 
 ## Contents
 
