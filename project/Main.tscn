@@ -3,6 +3,7 @@
 [ext_resource type="Script" uid="uid://b02co8417l8ik" path="res://Main.gd" id="1_main"]
 [ext_resource type="Theme" uid="uid://dtluxetheme01" path="res://main_theme.tres" id="2_theme"]
 [ext_resource type="Script" uid="uid://ceu8uebg1suob" path="res://ToneCurveEditor.gd" id="3_tonecurve"]
+[ext_resource type="PackedScene" path="res://LibraryView.tscn" id="4_libview"]
 
 [node name="Main" type="Control" unique_id=445136820]
 layout_mode = 3
@@ -35,6 +36,10 @@ theme_override_constants/separation = 10
 layout_mode = 2
 theme_type_variation = &"Logo"
 text = "luxe"
+
+[node name="ViewTabBar" type="TabBar" parent="Root/TopBar/TopBarRow"]
+layout_mode = 2
+size_flags_vertical = 4
 
 [node name="TopSpacer" type="Control" parent="Root/TopBar/TopBarRow" unique_id=508932557]
 layout_mode = 2
@@ -92,6 +97,10 @@ toggle_mode = true
 disabled = true
 tooltip_text = "Crop"
 text = "⛶ Crop"
+
+[node name="LibraryView" parent="Root" instance=ExtResource("4_libview")]
+layout_mode = 2
+size_flags_vertical = 3
 
 [node name="MiddleHBox" type="HBoxContainer" parent="Root" unique_id=1029653399]
 layout_mode = 2
@@ -425,6 +434,12 @@ layout_mode = 2
 size_flags_horizontal = 3
 theme_type_variation = &"Muted"
 text = "No image loaded"
+
+[node name="LibraryStatusLabel" type="Label" parent="Root/BottomBar/BottomRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_type_variation = &"Muted"
+text = "No photos yet"
 
 [node name="FileDialog" type="FileDialog" parent="." unique_id=845195832]
 oversampling_override = 1.0

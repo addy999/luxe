@@ -39,8 +39,23 @@ extends Control
 @onready var file_dialog: FileDialog = $FileDialog
 @onready var export_dialog: FileDialog = $ExportDialog
 @onready var crop_button: Button = $Root/TopBar/TopBarRow/CropButton
+@onready var view_tab_bar: TabBar = $Root/TopBar/TopBarRow/ViewTabBar
+@onready var library_view: LibraryView = $Root/LibraryView
+@onready var middle_hbox: HBoxContainer = $Root/MiddleHBox
+@onready var library_status_label: Label = $Root/BottomBar/BottomRow/LibraryStatusLabel
+@onready var top_vsep: Control = $Root/TopBar/TopBarRow/VSep
+@onready var crop_sep: Control = $Root/TopBar/TopBarRow/CropSep
 
 const CropOverlayScript := preload("res://CropOverlay.gd")
+
+# --- View switching (Library vs Edit) ------------------------------------------
+enum View { LIBRARY, EDIT }
+
+var _view: int = View.LIBRARY
+# TabBar.current_tab emits tab_changed on assignment; guards _set_view recursion.
+var _switching_view: bool = false
+var _edit_only_controls: Array[Control] = []
+
 var _crop_overlay: Control = null
 var _crop_bar: HBoxContainer = null
 var _crop_before_edit: Rect2 = Rect2(0, 0, 1, 1)
@@ -183,6 +198,7 @@ func _ready() -> void:
 	add_child(_gate_timer)
 
 	_setup_reset_buttons()
+	_setup_views()
 
 	_animate_entrance()
 	_update_empty_state()
@@ -190,6 +206,76 @@ func _ready() -> void:
 	if not _init_backend():
 		return
 	_finish_ready()
+
+
+func _setup_views() -> void:
+	_edit_only_controls = [
+		export_button, fit_button, zoom_slider, zoom_value_label,
+		crop_button, top_vsep, crop_sep,
+	]
+	view_tab_bar.add_tab("Library")
+	view_tab_bar.add_tab("Edit")
+	# Connected after both tabs exist: adding the first tab to an empty TabBar
+	# emits tab_changed, which would hit _set_view with a half-built bar.
+	view_tab_bar.tab_changed.connect(_on_view_tab_changed)
+	library_view.photo_activated.connect(_on_library_photo_activated)
+	library_view.status_changed.connect(_on_library_status_changed)
+	_set_view(View.LIBRARY)
+
+
+func _set_view(view: int) -> void:
+	_view = view
+	var in_library: bool = view == View.LIBRARY
+
+	library_view.visible = in_library
+	middle_hbox.visible = not in_library
+	for control in _edit_only_controls:
+		control.visible = not in_library
+	resolution_label.visible = not in_library
+	library_status_label.visible = in_library
+
+	_switching_view = true
+	view_tab_bar.current_tab = view
+	_switching_view = false
+
+	view_tab_bar.set_tab_disabled(View.EDIT, not _image_loaded)
+
+	if in_library:
+		library_view.on_view_entered()
+	else:
+		# scroll_container.size is stale while MiddleHBox is hidden.
+		_apply_display_layout.call_deferred()
+
+
+func _on_view_tab_changed(tab: int) -> void:
+	if _switching_view:
+		return
+	if tab == View.EDIT and not _image_loaded:
+		_set_view(View.LIBRARY)
+		return
+	_set_view(tab)
+
+
+func _on_library_photo_activated(path: String) -> void:
+	open_photo(path)
+
+
+func _on_library_status_changed(status: String) -> void:
+	library_status_label.text = status
+
+
+func _unhandled_key_input(event: InputEvent) -> void:
+	if not event.is_pressed() or event.is_echo():
+		return
+	if (event as InputEventKey).keycode != KEY_ESCAPE:
+		return
+	if _crop_overlay != null:
+		_on_crop_overlay_canceled()
+		accept_event()
+		return
+	if _view == View.EDIT:
+		_set_view(View.LIBRARY)
+		accept_event()
 
 
 # Physical (device) pixel size of the screen.
@@ -268,7 +354,9 @@ func _update_empty_state() -> void:
 func _animate_entrance() -> void:
 	# One-shot launch animation: bars fade in and scale 0.98 -> 1.0, staggered
 	# (tween modulate/scale, NOT position; see docs/GODOT_FRONTEND_NOTES.md).
-	var bars: Array = [top_bar, right_panel, bottom_bar]
+	# The launch view is Library, so animate the library grid, not right_panel
+	# (hidden inside MiddleHBox, zero-size pivot there).
+	var bars: Array = [top_bar, library_view, bottom_bar]
 	for bar in bars:
 		if bar != null:
 			bar.modulate.a = 0.0
@@ -291,15 +379,25 @@ func _on_open_button_pressed() -> void:
 
 
 func _on_file_dialog_file_selected(path: String) -> void:
+	open_photo(path)
+
+
+# Loads path into the editor, resets all edit state, and switches to Edit view.
+# Returns false when the backend is unavailable or the file can't be decoded.
+func open_photo(path: String) -> bool:
 	if backend == null:
-		return
+		return false
+	# A render task may be mid-flight inside the pipe; load_image must not race it.
+	if _processing and _current_task_id != -1:
+		WorkerThreadPool.wait_for_task_completion(_current_task_id)
+		_processing = false
 
 	var ok: bool = backend.load_image(path)
 	if not ok:
 		_image_loaded = false
 		_update_empty_state()
 		export_button.disabled = true
-		return
+		return false
 
 	_image_loaded = true
 	_update_empty_state()
@@ -359,7 +457,9 @@ func _on_file_dialog_file_selected(path: String) -> void:
 		edit_res_option.select(default_edit_id)
 		_edit_mode_id = default_edit_id
 		_edit_scale = _EDIT_MODES[default_edit_id]["scale"]
+	_set_view(View.EDIT)
 	_request_render()
+	return true
 
 
 func _on_exposure_slider_value_changed(value: float) -> void:

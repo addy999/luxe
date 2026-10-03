@@ -1,0 +1,81 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://LibraryView.gd" id="1_libview"]
+
+[node name="LibraryView" type="HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 0
+script = ExtResource("1_libview")
+
+[node name="Sidebar" type="PanelContainer" parent="."]
+custom_minimum_size = Vector2(320, 0)
+layout_mode = 2
+size_flags_vertical = 3
+theme_type_variation = &"SidePanel"
+
+[node name="SidebarMargin" type="MarginContainer" parent="Sidebar"]
+layout_mode = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 16
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 16
+
+[node name="SidebarVBox" type="VBoxContainer" parent="Sidebar/SidebarMargin"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="LocationsHeader" type="Label" parent="Sidebar/SidebarMargin/SidebarVBox"]
+layout_mode = 2
+theme_type_variation = &"GroupHeader"
+text = "LOCATIONS"
+
+[node name="LocationsVBox" type="VBoxContainer" parent="Sidebar/SidebarMargin/SidebarVBox"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="AddLocationButton" type="Button" parent="Sidebar/SidebarMargin/SidebarVBox"]
+layout_mode = 2
+text = "+ Add Location…"
+
+[node name="CountLabel" type="Label" parent="Sidebar/SidebarMargin/SidebarVBox"]
+layout_mode = 2
+theme_type_variation = &"Muted"
+text = "No photos yet"
+
+[node name="GridPanel" type="VBoxContainer" parent="."]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="GridScroll" type="ScrollContainer" parent="GridPanel"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="GridMargin" type="MarginContainer" parent="GridPanel/GridScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 16
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 16
+
+[node name="Grid" type="GridContainer" parent="GridPanel/GridScroll/GridMargin"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/h_separation = 12
+theme_override_constants/v_separation = 12
+columns = 1
+
+[node name="EmptyState" type="CenterContainer" parent="."]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="EmptyStateLabel" type="Label" parent="EmptyState"]
+layout_mode = 2
+theme_type_variation = &"Muted"
+text = "Add a folder to start browsing"
