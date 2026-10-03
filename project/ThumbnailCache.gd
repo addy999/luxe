@@ -42,16 +42,24 @@ static func build_thumbnail(path: String, key: String) -> Image:
 		var new_h: int = maxi(1, roundi(h * scale))
 		img.resize(new_w, new_h, Image.INTERPOLATE_LANCZOS)
 
+	return store_thumb(key, img)
+
+
+# Persists an already-rendered Image (e.g. a backend-rendered RAW thumb) into
+# the cache and returns it. Shared code path with build_thumbnail's finish.
+static func store_thumb(key: String, img: Image) -> Image:
+	if img == null:
+		return img
+
 	img.convert(Image.FORMAT_RGB8)
 
 	var out_path: String = cache_path(key)
 	var shard_dir: String = out_path.get_base_dir()
 	var err: int = DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(shard_dir))
 	if err != OK and err != ERR_ALREADY_EXISTS:
-		return null
+		return img
 
-	if img.save_jpg(out_path, 0.85) != OK:
-		return null
+	img.save_jpg(out_path, 0.85)
 
 	return img
 

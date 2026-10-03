@@ -9,6 +9,9 @@ signal photo_activated(path: String)
 # Mirrors the sidebar CountLabel text; Main.gd routes this to a bottom-bar label.
 signal status_changed(status: String)
 signal add_location_requested()
+# A visible, untextured RAW tile needs a backend-rendered thumbnail; Main.gd
+# owns the backend and handles the actual render.
+signal raw_thumb_requested(index: int)
 
 const LibraryItemScript := preload("res://LibraryItem.gd")
 
@@ -78,6 +81,17 @@ func _ready() -> void:
 func on_view_entered() -> void:
 	grid.grab_focus()
 	_request_visible_thumbs()
+
+
+func get_photo_count() -> int:
+	return _photos.size()
+
+
+# Returns the photo dict at index, or an empty Dictionary if out of range.
+func get_photo(index: int) -> Dictionary:
+	if index < 0 or index >= _photos.size():
+		return {}
+	return _photos[index]
 
 
 func _on_theme_changed(_is_dark: bool) -> void:
@@ -373,11 +387,13 @@ func _on_thumb_timer_timeout() -> void:
 		var item: LibraryItem = _items[i]
 		if item.has_texture():
 			continue
-		if _photos[i].get("is_raw", false):
-			continue
 		var item_rect := Rect2(item.global_position, item.size)
-		if expanded_rect.intersects(item_rect):
-			to_enqueue.append(i)
+		if not expanded_rect.intersects(item_rect):
+			continue
+		if _photos[i].get("is_raw", false):
+			raw_thumb_requested.emit(i)
+			continue
+		to_enqueue.append(i)
 
 	_mutex.lock()
 	for i in to_enqueue:
@@ -422,6 +438,24 @@ func _on_thumb_ready(generation: int, index: int, img: Image) -> void:
 		_evict_if_over_budget()
 
 	_pump()
+
+
+# Applies a backend-rendered RAW thumbnail to its tile. Guards against stale
+# results (list rescanned or selection changed since the request was made).
+# Returns true on success, false if the index/path no longer match or img is null.
+func apply_raw_thumb(index: int, path: String, img: Image) -> bool:
+	if index < 0 or index >= _photos.size():
+		return false
+	if _photos[index]["path"] != path:
+		return false
+	if img == null:
+		return false
+
+	var tex: ImageTexture = ImageTexture.create_from_image(img)
+	_items[index].set_texture(tex)
+	_live_thumb_indices.append(index)
+	_evict_if_over_budget()
+	return true
 
 
 # Evicts textures from tiles farthest from the viewport center until back

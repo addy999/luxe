@@ -68,6 +68,15 @@ var image_texture: ImageTexture = null
 
 var _image_loaded: bool = false
 
+# --- RAW library thumbnails (shares the backend pipe with editing) ------------
+const _RAW_THUMB_SCALE: float = 0.25   # ~320-360px on a 1440x900 F mip
+var _raw_thumb_queue: Array[Dictionary] = []   # {index, path, mtime}
+var _raw_thumb_busy: bool = false
+var _raw_thumb_task_id: int = -1
+var _raw_thumb_stop: bool = false       # set when the backend is needed; in-flight result is discarded
+var _edited_path: String = ""          # last successfully opened image path
+var _backend_path: String = ""         # image currently loaded in the backend
+
 # Per-image as-shot CCT; the WB reset target.
 var _wb_default_temperature: float = 6500.0
 var _reset_buttons: Array[Button] = []
@@ -220,12 +229,19 @@ func _setup_views() -> void:
 	view_tab_bar.tab_changed.connect(_on_view_tab_changed)
 	library_view.photo_activated.connect(_on_library_photo_activated)
 	library_view.status_changed.connect(_on_library_status_changed)
+	library_view.raw_thumb_requested.connect(_on_raw_thumb_requested)
 	_set_view(View.LIBRARY)
 
 
 func _set_view(view: int) -> void:
 	_view = view
 	var in_library: bool = view == View.LIBRARY
+
+	if not in_library:
+		# A render needs exclusive use of the backend pipe; stop and wait out
+		# any mid-flight RAW thumb job before the Edit view can request one.
+		_stop_raw_thumbs()
+		_wait_for_raw_thumb()
 
 	library_view.visible = in_library
 	middle_hbox.visible = not in_library
@@ -241,8 +257,14 @@ func _set_view(view: int) -> void:
 	view_tab_bar.set_tab_disabled(View.EDIT, not _image_loaded)
 
 	if in_library:
+		_raw_thumb_stop = false
 		library_view.on_view_entered()
+		_pump_raw_thumbs()
 	else:
+		# The RAW thumb queue may have hijacked the backend while browsing;
+		# reload the edited image before any further edit render.
+		if _edited_path != "" and _backend_path != _edited_path:
+			_reload_edited_image()
 		# scroll_container.size is stale while MiddleHBox is hidden.
 		_apply_display_layout.call_deferred()
 
@@ -387,6 +409,11 @@ func _on_file_dialog_file_selected(path: String) -> void:
 func open_photo(path: String) -> bool:
 	if backend == null:
 		return false
+	# The RAW thumb queue may be mid-flight in the shared backend pipe; stop it
+	# and wait it out before anything else touches the backend.
+	_stop_raw_thumbs()
+	_wait_for_raw_thumb()
+
 	# A render task may be mid-flight inside the pipe; load_image must not race it.
 	if _processing and _current_task_id != -1:
 		WorkerThreadPool.wait_for_task_completion(_current_task_id)
@@ -401,6 +428,10 @@ func open_photo(path: String) -> bool:
 
 	_image_loaded = true
 	_update_empty_state()
+	_edited_path = path
+	_backend_path = path
+	_raw_thumb_stop = false
+	_raw_thumb_queue.clear()
 
 	_applied_params.clear()
 	_reset_render_gate()
@@ -460,6 +491,101 @@ func open_photo(path: String) -> bool:
 	_set_view(View.EDIT)
 	_request_render()
 	return true
+
+
+# --- RAW library thumbnails ----------------------------------------------------
+# LibraryView asks for a thumbnail per visible, untextured RAW tile; this runs
+# the request through the shared backend pipe, one image at a time, yielding
+# to edit renders/exports/open_photo whenever the backend is needed elsewhere.
+
+func _on_raw_thumb_requested(index: int) -> void:
+	if backend == null or _view != View.LIBRARY:
+		return
+	if index < 0 or index >= library_view.get_photo_count():
+		return
+	var photo: Dictionary = library_view.get_photo(index)
+	if photo.is_empty():
+		return
+	for queued in _raw_thumb_queue:
+		if queued["path"] == photo["path"]:
+			return
+	_raw_thumb_queue.append({
+		"index": index,
+		"path": photo["path"],
+		"mtime": photo["mtime"],
+	})
+	_pump_raw_thumbs()
+
+
+func _raw_thumbs_allowed() -> bool:
+	return backend != null and _view == View.LIBRARY and not _raw_thumb_stop \
+		and not _processing and not _exporting and not _render_gate_pending() \
+		and _crop_overlay == null
+
+
+func _pump_raw_thumbs() -> void:
+	if _raw_thumb_busy or not _raw_thumbs_allowed() or _raw_thumb_queue.is_empty():
+		return
+	var photo: Dictionary = _raw_thumb_queue.pop_front()
+	_raw_thumb_busy = true
+	_raw_thumb_task_id = WorkerThreadPool.add_task(_raw_thumb_task.bind(photo))
+
+
+# Runs on a worker thread: backend calls only, no scene node access; result
+# handoff happens via call_deferred.
+func _raw_thumb_task(photo: Dictionary) -> void:
+	var key: String = ThumbnailCache.cache_key(photo["path"], photo["mtime"])
+	var img: Image = ThumbnailCache.load_cached(key)
+	# Only a real load_image moves the backend off whatever it held before.
+	var loaded: bool = false
+	if img == null:
+		if backend.load_image(photo["path"]):
+			loaded = true
+			var bytes: PackedByteArray = backend.render_preview(
+				_WHOLE_IMAGE_VIEWPORT, _WHOLE_IMAGE_VIEWPORT, _RAW_THUMB_SCALE, 0.0, 0.0)
+			var w: int = backend.get_width()
+			var h: int = backend.get_height()
+			if w > 0 and h > 0 and bytes.size() >= w * h * 4:
+				img = Image.create_from_data(w, h, false, Image.FORMAT_RGBA8, bytes)
+				var long_edge: int = maxi(w, h)
+				if long_edge > ThumbnailCache.THUMB_MAX:
+					var s: float = float(ThumbnailCache.THUMB_MAX) / float(long_edge)
+					img.resize(maxi(1, roundi(w * s)), maxi(1, roundi(h * s)), Image.INTERPOLATE_LANCZOS)
+				img = ThumbnailCache.store_thumb(key, img)
+	call_deferred("_on_raw_thumb_done", photo, img, loaded)
+
+
+func _on_raw_thumb_done(photo: Dictionary, img: Image, loaded: bool) -> void:
+	_raw_thumb_busy = false
+	# A cache hit never touched the backend; claiming it did would force a
+	# pointless edited-image reload on the next Edit entry.
+	if loaded:
+		_backend_path = photo["path"]
+	if not _raw_thumb_stop and img != null:
+		library_view.apply_raw_thumb(photo["index"], photo["path"], img)
+	_pump_raw_thumbs()
+
+
+func _wait_for_raw_thumb() -> void:
+	if _raw_thumb_busy and _raw_thumb_task_id != -1:
+		WorkerThreadPool.wait_for_task_completion(_raw_thumb_task_id)
+		_raw_thumb_busy = false
+
+
+func _stop_raw_thumbs() -> void:
+	_raw_thumb_stop = true
+
+
+# The RAW thumb queue loads other images into the shared backend; the edited
+# image must be re-loaded and re-pushed before any further edit render.
+func _reload_edited_image() -> void:
+	if backend == null or not _image_loaded:
+		return
+	if not backend.load_image(_edited_path):
+		return
+	_backend_path = _edited_path
+	_applied_params.clear()   # forces _apply_params_to_backend to re-push every param
+	_request_render()
 
 
 func _on_exposure_slider_value_changed(value: float) -> void:
@@ -683,6 +809,11 @@ func _apply_params_to_backend() -> void:
 func _start_process() -> void:
 	if backend == null or not _image_loaded or _exporting:
 		return
+
+	# A render needs exclusive use of the backend pipe; wait out any mid-flight
+	# RAW thumb job (acceptable brief main-thread stall, same as open_photo).
+	_stop_raw_thumbs()
+	_wait_for_raw_thumb()
 
 	_processing = true
 	_render_queued = false
