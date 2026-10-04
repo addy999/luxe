@@ -180,6 +180,11 @@ const _ZOOM_MIN_PCT: float = 10.0
 const _ZOOM_MAX_PCT: float = 400.0
 var _display_zoom: float = -1.0 # -1.0 = Fit; otherwise native-relative scale.
 
+# --- Library thumbnail zoom (shares TopBar's ZoomSlider/ZoomValueLabel) --------
+const _LIBRARY_ZOOM_MIN_PCT: float = 50.0
+const _LIBRARY_ZOOM_MAX_PCT: float = 250.0
+var _library_thumb_zoom_pct: float = 100.0
+
 const _STRETCH_SCALE: int = 0
 const _STRETCH_KEEP_ASPECT_CENTERED: int = 5
 
@@ -219,7 +224,7 @@ func _ready() -> void:
 
 func _setup_views() -> void:
 	_edit_only_controls = [
-		export_button, fit_button, zoom_slider, zoom_value_label,
+		export_button, fit_button,
 		crop_button, top_vsep, crop_sep,
 	]
 	view_tab_bar.add_tab("Library")
@@ -230,6 +235,7 @@ func _setup_views() -> void:
 	library_view.photo_activated.connect(_on_library_photo_activated)
 	library_view.status_changed.connect(_on_library_status_changed)
 	library_view.raw_thumb_requested.connect(_on_raw_thumb_requested)
+	library_view.zoom_requested.connect(_on_library_zoom_requested)
 	_set_view(View.LIBRARY)
 
 
@@ -256,15 +262,30 @@ func _set_view(view: int) -> void:
 
 	view_tab_bar.set_tab_disabled(View.EDIT, not _image_loaded)
 
+	zoom_value_label.visible = not in_library
+
 	if in_library:
+		# Library's 50..250 clamp range replaces Edit's 10..400; min/max must
+		# be assigned before set_value_no_signal, since reassigning the range
+		# re-clamps the slider's current value.
+		zoom_slider.min_value = _LIBRARY_ZOOM_MIN_PCT
+		zoom_slider.max_value = _LIBRARY_ZOOM_MAX_PCT
+		zoom_slider.set_value_no_signal(_library_thumb_zoom_pct)
 		_raw_thumb_stop = false
 		library_view.on_view_entered()
 		_pump_raw_thumbs()
 	else:
+		zoom_slider.min_value = _ZOOM_MIN_PCT
+		zoom_slider.max_value = _ZOOM_MAX_PCT
 		# The RAW thumb queue may have hijacked the backend while browsing;
 		# reload the edited image before any further edit render.
 		if _edited_path != "" and _backend_path != _edited_path:
 			_reload_edited_image()
+		if _display_zoom < 0.0:
+			_update_zoom_readout()
+		else:
+			zoom_slider.set_value_no_signal(_display_zoom * 100.0)
+			_update_zoom_readout()
 		# scroll_container.size is stale while MiddleHBox is hidden.
 		_apply_display_layout.call_deferred()
 
@@ -909,7 +930,24 @@ func _on_edit_res_option_button_item_selected(index: int) -> void:
 
 
 func _on_zoom_slider_value_changed(value: float) -> void:
-	_set_display_zoom(value)
+	if _view == View.LIBRARY:
+		_set_library_zoom(value)
+	else:
+		_set_display_zoom(value)
+
+
+# Clamps pct, pushes it to the shared slider/label (library mode), and scales
+# LibraryView's tiles. Mirrors _set_display_zoom's slider/label bookkeeping.
+func _set_library_zoom(pct: float) -> void:
+	var clamped: float = clamp(pct, _LIBRARY_ZOOM_MIN_PCT, _LIBRARY_ZOOM_MAX_PCT)
+	if not is_equal_approx(clamped, zoom_slider.value):
+		zoom_slider.set_value_no_signal(clamped)
+	_library_thumb_zoom_pct = clamped
+	library_view.set_thumb_zoom(clamped / 100.0)
+
+
+func _on_library_zoom_requested(factor: float) -> void:
+	_set_library_zoom(_library_thumb_zoom_pct * factor)
 
 
 func _on_theme_button_pressed() -> void:

@@ -12,6 +12,9 @@ signal add_location_requested()
 # A visible, untextured RAW tile needs a backend-rendered thumbnail; Main.gd
 # owns the backend and handles the actual render.
 signal raw_thumb_requested(index: int)
+# Multiplicative zoom request (centered on 1.0), same convention as Main.gd's
+# _zoom_by_factor. Emitted by pinch/Cmd-wheel gestures over tiles or empty grid area.
+signal zoom_requested(factor: float)
 
 const LibraryItemScript := preload("res://LibraryItem.gd")
 
@@ -37,6 +40,7 @@ var _selected_location: String = ""
 var _photos: Array[Dictionary] = []
 var _items: Array[LibraryItem] = []
 var _cursor: int = -1
+var _thumb_scale: float = 1.0
 
 var _scan_generation: int = 0
 var _scanning: bool = false
@@ -180,7 +184,11 @@ func _on_remove_location_pressed(dir_path: String) -> void:
 # --- Sidebar ---------------------------------------------------------------------
 
 func _rebuild_sidebar() -> void:
+	# remove_child detaches immediately, unlike queue_free alone, which only
+	# defers deletion: without the immediate detach, rows added below would
+	# share the VBox with the still-attached old rows until end of frame.
 	for child in locations_vbox.get_children():
+		locations_vbox.remove_child(child)
 		child.queue_free()
 
 	for dir_path: String in _locations:
@@ -264,7 +272,12 @@ func _on_scan_done(results: Array[Dictionary], generation: int) -> void:
 # --- Grid population ---------------------------------------------------------------
 
 func _populate_grid() -> void:
+	# remove_child detaches immediately, unlike queue_free alone, which only
+	# defers deletion: without the immediate detach, tiles added below would
+	# share the GridContainer with the still-attached old tiles until end of
+	# frame, and GridContainer sorts both generations into overlapping cells.
 	for child in grid.get_children():
+		grid.remove_child(child)
 		child.queue_free()
 	_items.clear()
 	_cursor = -1
@@ -276,8 +289,10 @@ func _populate_grid() -> void:
 	for i in _photos.size():
 		var item := LibraryItemScript.new()
 		item.setup(i, _photos[i])
+		item.set_tile_scale(_thumb_scale)
 		item.clicked.connect(_on_item_clicked)
 		item.activated.connect(_on_item_activated)
+		item.zoom_gestured.connect(_on_item_zoom_gestured)
 		grid.add_child(item)
 		_items.append(item)
 
@@ -295,6 +310,23 @@ func _on_item_activated(index: int) -> void:
 	_activate(index)
 
 
+func _on_item_zoom_gestured(factor: float) -> void:
+	zoom_requested.emit(factor)
+
+
+# --- Thumbnail zoom ------------------------------------------------------------
+
+func set_thumb_zoom(scale: float) -> void:
+	scale = clamp(scale, 0.5, 2.5)
+	if is_equal_approx(scale, _thumb_scale):
+		return
+	_thumb_scale = scale
+	for item in _items:
+		item.set_tile_scale(scale)
+	_recompute_columns()
+	_request_visible_thumbs()
+
+
 # --- Column layout -----------------------------------------------------------------
 
 func _on_grid_scroll_resized() -> void:
@@ -303,7 +335,7 @@ func _on_grid_scroll_resized() -> void:
 
 
 func _recompute_columns() -> void:
-	var tile_w: float = LibraryItemScript.TILE_SIZE.x
+	var tile_w: float = LibraryItemScript.TILE_SIZE.x * _thumb_scale
 	var sep: int = LibraryItemScript.GROUP_SEP
 	var avail_w: float = grid_scroll.size.x - _GRID_MARGIN * 2.0 + sep
 	var cols: int = maxi(1, floori(avail_w / (tile_w + sep)))
@@ -314,6 +346,11 @@ func _recompute_columns() -> void:
 # --- Keyboard navigation ------------------------------------------------------------
 
 func _on_grid_gui_input(event: InputEvent) -> void:
+	if event is InputEventMagnifyGesture:
+		zoom_requested.emit(event.factor)
+		accept_event()
+		return
+
 	if not (event is InputEventKey) or not event.pressed:
 		return
 	var key_event: InputEventKey = event

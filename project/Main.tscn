@@ -37,7 +37,7 @@ layout_mode = 2
 theme_type_variation = &"Logo"
 text = "luxe"
 
-[node name="ViewTabBar" type="TabBar" parent="Root/TopBar/TopBarRow"]
+[node name="ViewTabBar" type="TabBar" parent="Root/TopBar/TopBarRow" unique_id=345480146]
 layout_mode = 2
 size_flags_vertical = 4
 
@@ -86,21 +86,18 @@ theme_type_variation = &"Muted"
 text = "Fit"
 horizontal_alignment = 2
 
-[node name="CropSep" type="VSeparator" parent="Root/TopBar/TopBarRow"]
+[node name="CropSep" type="VSeparator" parent="Root/TopBar/TopBarRow" unique_id=2134658972]
 layout_mode = 2
 
-[node name="CropButton" type="Button" parent="Root/TopBar/TopBarRow"]
-custom_minimum_size = Vector2(0, 0)
+[node name="CropButton" type="Button" parent="Root/TopBar/TopBarRow" unique_id=555565887]
 layout_mode = 2
 size_flags_vertical = 4
-toggle_mode = true
-disabled = true
 tooltip_text = "Crop"
+disabled = true
+toggle_mode = true
 text = "⛶ Crop"
 
-[node name="LibraryView" parent="Root" instance=ExtResource("4_libview")]
-layout_mode = 2
-size_flags_vertical = 3
+[node name="LibraryView" parent="Root" unique_id=2075896440 instance=ExtResource("4_libview")]
 
 [node name="MiddleHBox" type="HBoxContainer" parent="Root" unique_id=1029653399]
 layout_mode = 2
@@ -435,7 +432,7 @@ size_flags_horizontal = 3
 theme_type_variation = &"Muted"
 text = "No image loaded"
 
-[node name="LibraryStatusLabel" type="Label" parent="Root/BottomBar/BottomRow"]
+[node name="LibraryStatusLabel" type="Label" parent="Root/BottomBar/BottomRow" unique_id=797648216]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_type_variation = &"Muted"
@@ -462,11 +459,11 @@ filters = PackedStringArray("*.jpg,*.jpeg ; JPEG", "*.png ; PNG", "*.tif,*.tiff 
 use_native_dialog = true
 
 [connection signal="pressed" from="Root/TopBar/TopBarRow/OpenButton" to="." method="_on_open_button_pressed"]
-[connection signal="pressed" from="Root/MiddleHBox/EmptyState/EmptyVBox/EmptyOpenButton" to="." method="_on_open_button_pressed"]
 [connection signal="pressed" from="Root/TopBar/TopBarRow/ExportButton" to="." method="_on_export_button_pressed"]
 [connection signal="pressed" from="Root/TopBar/TopBarRow/ThemeButton" to="." method="_on_theme_button_pressed"]
 [connection signal="toggled" from="Root/TopBar/TopBarRow/FitButton" to="." method="_on_fit_button_toggled"]
 [connection signal="value_changed" from="Root/TopBar/TopBarRow/ZoomSlider" to="." method="_on_zoom_slider_value_changed"]
+[connection signal="pressed" from="Root/MiddleHBox/EmptyState/EmptyVBox/EmptyOpenButton" to="." method="_on_open_button_pressed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ExposureRow/ExposureSlider" to="." method="_on_exposure_slider_value_changed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ContrastRow/ContrastSlider" to="." method="_on_contrast_slider_value_changed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/HighlightsRow/HighlightsSlider" to="." method="_on_highlights_slider_value_changed"]

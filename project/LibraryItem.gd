@@ -6,6 +6,7 @@ class_name LibraryItem
 
 signal clicked(index: int)
 signal activated(index: int)
+signal zoom_gestured(factor: float)
 
 const THUMB_SIZE: float = 200.0
 const CAPTION_HEIGHT: float = 28.0
@@ -18,6 +19,7 @@ var _photo: Dictionary = {}
 var _texture: Texture2D = null
 var _selected: bool = false
 var _hovered: bool = false
+var _tile_scale: float = 1.0
 
 var _color_tile: Color
 var _color_tile_hover: Color
@@ -29,7 +31,10 @@ var _color_caption: Color
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	focus_mode = Control.FOCUS_NONE
-	custom_minimum_size = TILE_SIZE
+	# Respects a _tile_scale set via set_tile_scale() before this node entered
+	# the tree; a bare `custom_minimum_size = TILE_SIZE` here would clobber it,
+	# leaving the cell sized for scale 1.0 while _draw uses the real scale.
+	_apply_tile_size()
 	mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	# Resolved by node path, not the ThemeManager identifier: autoloads are not
 	# registered in --script mode, where a direct identifier fails to compile.
@@ -94,8 +99,22 @@ func get_photo_index() -> int:
 	return _index
 
 
+func set_tile_scale(scale: float) -> void:
+	scale = clamp(scale, 0.5, 2.5)
+	if is_equal_approx(scale, _tile_scale) and custom_minimum_size.x > 0.0:
+		return
+	_tile_scale = scale
+	_apply_tile_size()
+	queue_redraw()
+
+
+func _apply_tile_size() -> void:
+	custom_minimum_size = Vector2(
+		TILE_SIZE.x * _tile_scale, THUMB_SIZE * _tile_scale + CAPTION_HEIGHT)
+
+
 func _draw() -> void:
-	var thumb_rect := Rect2(Vector2.ZERO, Vector2(size.x, THUMB_SIZE))
+	var thumb_rect := Rect2(Vector2.ZERO, Vector2(size.x, THUMB_SIZE * _tile_scale))
 	var bg_color: Color = _color_tile_hover if (_selected or _hovered) else _color_tile
 	draw_rect(Rect2(Vector2.ZERO, size), bg_color, true)
 
@@ -144,7 +163,7 @@ func _draw_caption() -> void:
 		return
 	var font: Font = get_theme_font("font", "Label")
 	var font_size: int = get_theme_font_size("font_size", "Label")
-	var caption_rect := Rect2(Vector2(4.0, THUMB_SIZE), Vector2(size.x - 8.0, CAPTION_HEIGHT))
+	var caption_rect := Rect2(Vector2(4.0, size.y - CAPTION_HEIGHT), Vector2(size.x - 8.0, CAPTION_HEIGHT))
 	var truncated: String = _truncate_to_width(name, font, font_size, caption_rect.size.x)
 	var baseline_y: float = caption_rect.position.y + (CAPTION_HEIGHT + font.get_ascent(font_size) - font.get_descent(font_size)) * 0.5
 	draw_string(font, Vector2(caption_rect.position.x, baseline_y), truncated,
@@ -177,6 +196,21 @@ func _gui_input(event: InputEvent) -> void:
 			else:
 				clicked.emit(_index)
 			accept_event()
+			return
+		# Cmd-wheel zooms; plain wheel is left unhandled so the ScrollContainer
+		# ancestor still receives it for scrolling.
+		if mb.is_command_or_control_pressed():
+			if mb.button_index == MOUSE_BUTTON_WHEEL_UP:
+				zoom_gestured.emit(1.1)
+				accept_event()
+			elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+				zoom_gestured.emit(1.0 / 1.1)
+				accept_event()
+		return
+
+	if event is InputEventMagnifyGesture:
+		zoom_gestured.emit(event.factor)
+		accept_event()
 
 
 func _notification(what: int) -> void:
