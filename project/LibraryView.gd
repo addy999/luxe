@@ -88,6 +88,7 @@ func _ready() -> void:
 	content.gui_input.connect(_on_grid_gui_input)
 	grid_scroll.resized.connect(_on_grid_scroll_resized)
 	grid_scroll.get_v_scroll_bar().value_changed.connect(_on_grid_scroll_changed)
+	_style_scrollbar()
 
 	_thumb_timer = Timer.new()
 	_thumb_timer.one_shot = true
@@ -105,6 +106,12 @@ func _ready() -> void:
 		_select_location(_locations[0])
 	else:
 		_update_status("No photos yet")
+
+
+func _style_scrollbar() -> void:
+	# Colors/rounding come from the shared theme (scroll_* styleboxes); only the
+	# bar thickness is per-ScrollContainer. See ScrollbarStyle.WIDTH.
+	ScrollbarStyle.widen(grid_scroll)
 
 
 func on_view_entered() -> void:

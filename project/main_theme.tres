@@ -115,6 +115,38 @@ corner_radius_bottom_left = 3
 [sub_resource type="StyleBoxFlat" id="panel_generic"]
 bg_color = Color(0.145, 0.145, 0.145, 1)
 
+[sub_resource type="StyleBoxFlat" id="scroll_track"]
+content_margin_left = 3.0
+content_margin_right = 3.0
+content_margin_top = 3.0
+content_margin_bottom = 3.0
+bg_color = Color(0.11, 0.11, 0.11, 1)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_right = 8
+corner_radius_bottom_left = 8
+
+[sub_resource type="StyleBoxFlat" id="scroll_grabber"]
+bg_color = Color(0.4, 0.4, 0.4, 1)
+corner_radius_top_left = 5
+corner_radius_top_right = 5
+corner_radius_bottom_right = 5
+corner_radius_bottom_left = 5
+
+[sub_resource type="StyleBoxFlat" id="scroll_grabber_hl"]
+bg_color = Color(0.5, 0.5, 0.5, 1)
+corner_radius_top_left = 5
+corner_radius_top_right = 5
+corner_radius_bottom_right = 5
+corner_radius_bottom_left = 5
+
+[sub_resource type="StyleBoxFlat" id="scroll_grabber_pressed"]
+bg_color = Color(0.29, 0.616, 0.878, 1)
+corner_radius_top_left = 5
+corner_radius_top_right = 5
+corner_radius_bottom_right = 5
+corner_radius_bottom_left = 5
+
 [sub_resource type="StyleBoxFlat" id="lineedit_focus"]
 draw_center = false
 border_width_left = 1
@@ -277,10 +309,10 @@ CheckButton/colors/font_pressed_color = Color(1, 1, 1, 1)
 GroupHeader/base_type = &"Label"
 GroupHeader/colors/font_color = Color(0.541, 0.541, 0.541, 1)
 GroupHeader/font_sizes/font_size = 11
-HScrollBar/styles/grabber = SubResource("slider_track")
-HScrollBar/styles/grabber_highlight = SubResource("slider_fill_hl")
-HScrollBar/styles/grabber_pressed = SubResource("slider_fill")
-HScrollBar/styles/scroll = SubResource("panel_generic")
+HScrollBar/styles/grabber = SubResource("scroll_grabber")
+HScrollBar/styles/grabber_highlight = SubResource("scroll_grabber_hl")
+HScrollBar/styles/grabber_pressed = SubResource("scroll_grabber_pressed")
+HScrollBar/styles/scroll = SubResource("scroll_track")
 HSlider/styles/grabber_area = SubResource("slider_fill")
 HSlider/styles/grabber_area_highlight = SubResource("slider_fill_hl")
 HSlider/styles/slider = SubResource("slider_track")
@@ -338,10 +370,10 @@ Tree/styles/hovered = SubResource("popup_hover")
 Tree/styles/panel = SubResource("panel_generic")
 Tree/styles/selected = SubResource("tree_selected")
 Tree/styles/selected_focus = SubResource("tree_selected")
-VScrollBar/styles/grabber = SubResource("slider_track")
-VScrollBar/styles/grabber_highlight = SubResource("slider_fill_hl")
-VScrollBar/styles/grabber_pressed = SubResource("slider_fill")
-VScrollBar/styles/scroll = SubResource("panel_generic")
+VScrollBar/styles/grabber = SubResource("scroll_grabber")
+VScrollBar/styles/grabber_highlight = SubResource("scroll_grabber_hl")
+VScrollBar/styles/grabber_pressed = SubResource("scroll_grabber_pressed")
+VScrollBar/styles/scroll = SubResource("scroll_track")
 VSlider/styles/grabber_area = SubResource("slider_fill")
 VSlider/styles/grabber_area_highlight = SubResource("slider_fill_hl")
 VSlider/styles/slider = SubResource("slider_track")

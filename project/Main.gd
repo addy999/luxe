@@ -5,6 +5,7 @@ extends Control
 # frontend); see docs/PERF-IMPROVEMENT.md.
 
 @onready var scroll_container: ScrollContainer = $Root/MiddleHBox/Scroll
+@onready var panel_scroll: ScrollContainer = $Root/MiddleHBox/RightPanel/PanelScroll
 @onready var texture_rect: TextureRect = $Root/MiddleHBox/Scroll/Center/TextureRect
 @onready var empty_state: CenterContainer = $Root/MiddleHBox/EmptyState
 @onready var exposure_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ExposureRow/ExposureSlider
@@ -376,6 +377,10 @@ func _finish_ready() -> void:
 	_display_zoom = -1.0
 	fit_button.set_pressed_no_signal(true)
 	_update_zoom_readout()
+
+	# Wider, easy-to-grab scrollbars (shared width; colors come from the theme).
+	ScrollbarStyle.widen(scroll_container)
+	ScrollbarStyle.widen(panel_scroll)
 
 	scroll_container.resized.connect(_on_scroll_resized)
 
