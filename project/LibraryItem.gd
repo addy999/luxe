@@ -100,7 +100,7 @@ func get_photo_index() -> int:
 
 
 func set_tile_scale(scale: float) -> void:
-	scale = clamp(scale, 0.5, 2.5)
+	scale = clamp(scale, 0.5, 4.0)
 	if is_equal_approx(scale, _tile_scale) and custom_minimum_size.x > 0.0:
 		return
 	_tile_scale = scale

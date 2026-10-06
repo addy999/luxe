@@ -182,7 +182,7 @@ var _display_zoom: float = -1.0 # -1.0 = Fit; otherwise native-relative scale.
 
 # --- Library thumbnail zoom (shares TopBar's ZoomSlider/ZoomValueLabel) --------
 const _LIBRARY_ZOOM_MIN_PCT: float = 50.0
-const _LIBRARY_ZOOM_MAX_PCT: float = 250.0
+const _LIBRARY_ZOOM_MAX_PCT: float = 400.0
 var _library_thumb_zoom_pct: float = 100.0
 
 const _STRETCH_SCALE: int = 0

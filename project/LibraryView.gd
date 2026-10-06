@@ -317,7 +317,7 @@ func _on_item_zoom_gestured(factor: float) -> void:
 # --- Thumbnail zoom ------------------------------------------------------------
 
 func set_thumb_zoom(scale: float) -> void:
-	scale = clamp(scale, 0.5, 2.5)
+	scale = clamp(scale, 0.5, 4.0)
 	if is_equal_approx(scale, _thumb_scale):
 		return
 	_thumb_scale = scale
