@@ -50,6 +50,11 @@ var _selected_location: String = ""
 
 var _photos: Array[Dictionary] = []
 var _cursor: int = -1
+# RAW (continuous) zoom, the persistence source of truth; never snapped.
+var _thumb_raw_scale: float = 1.0
+# Effective snapped scale used for layout; always re-derived from
+# _thumb_raw_scale + current grid width, never snapped in place (chained
+# snapping at a stale/hidden width drifts and reads as a zoom reset).
 var _thumb_scale: float = 1.0
 
 var _scan_generation: int = 0
@@ -325,12 +330,13 @@ func _set_photos(photos: Array[Dictionary]) -> void:
 # --- Thumbnail zoom ------------------------------------------------------------
 
 func set_thumb_zoom(scale: float) -> void:
-	scale = snap_thumb_scale(scale)
-	if is_equal_approx(scale, _thumb_scale):
+	_thumb_raw_scale = scale
+	var snapped: float = snap_thumb_scale(scale)
+	if is_equal_approx(snapped, _thumb_scale):
 		return
-	_thumb_scale = scale
+	_thumb_scale = snapped
 	for tile in _pool:
-		tile.set_tile_scale(scale)
+		tile.set_tile_scale(snapped)
 	_relayout()
 	if _cursor >= 0:
 		_scroll_cursor_into_view()
@@ -375,10 +381,10 @@ static func snap_scale(scale: float, avail_w: float) -> float:
 # Recomputes tile dimensions, column count and the virtual content height, then
 # rebinds the pool to the current visible range.
 func _relayout() -> void:
-	# Snap on every layout (initial populate, resize, zoom) so the current
-	# scale always sits on a gap-free level; snapping an already-snapped
-	# scale is a no-op.
-	_thumb_scale = snap_thumb_scale(_thumb_scale)
+	# Re-derive the snapped scale from the RAW one at the CURRENT width:
+	# stale widths while hidden (Edit view) or any resize then re-anchor to
+	# the nearest gap-free level instead of drifting from a snapped value.
+	_thumb_scale = snap_thumb_scale(_thumb_raw_scale)
 	_tile_w = LibraryItemScript.TILE_SIZE.x * _thumb_scale
 	_tile_h = LibraryItemScript.THUMB_SIZE * _thumb_scale + LibraryItemScript.CAPTION_HEIGHT
 

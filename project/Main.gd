@@ -265,19 +265,28 @@ func _set_view(view: int) -> void:
 
 	zoom_value_label.visible = not in_library
 
+	# The per-view slider-restore below reassigns min/max, and reassigning a
+	# Range's min/max re-clamps its value and EMITS value_changed (even via
+	# code). Guard the whole restore so a stale clamp can't clobber the
+	# stored zoom.
+	_switching_view = true
 	if in_library:
-		# Library's 50..250 clamp range replaces Edit's 10..400; min/max must
+		# Library's 50..400 clamp range replaces Edit's 10..400; min/max must
 		# be assigned before set_value_no_signal, since reassigning the range
 		# re-clamps the slider's current value.
 		zoom_slider.min_value = _LIBRARY_ZOOM_MIN_PCT
 		zoom_slider.max_value = _LIBRARY_ZOOM_MAX_PCT
 		zoom_slider.set_value_no_signal(_library_thumb_zoom_pct)
+	else:
+		zoom_slider.min_value = _ZOOM_MIN_PCT
+		zoom_slider.max_value = _ZOOM_MAX_PCT
+	_switching_view = false
+
+	if in_library:
 		_raw_thumb_stop = false
 		library_view.on_view_entered()
 		_pump_raw_thumbs()
 	else:
-		zoom_slider.min_value = _ZOOM_MIN_PCT
-		zoom_slider.max_value = _ZOOM_MAX_PCT
 		# The RAW thumb queue may have hijacked the backend while browsing;
 		# reload the edited image before any further edit render.
 		if _edited_path != "" and _backend_path != _edited_path:
@@ -935,6 +944,10 @@ func _on_edit_res_option_button_item_selected(index: int) -> void:
 
 
 func _on_zoom_slider_value_changed(value: float) -> void:
+	# Range min/max reassignment re-clamps and emits this during view
+	# switches; those clamped emissions are restore bookkeeping, not input.
+	if _switching_view:
+		return
 	if _view == View.LIBRARY:
 		_set_library_zoom(value)
 	else:
