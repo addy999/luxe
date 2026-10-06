@@ -40,6 +40,7 @@ text = "luxe"
 [node name="ViewTabBar" type="TabBar" parent="Root/TopBar/TopBarRow" unique_id=345480146]
 layout_mode = 2
 size_flags_vertical = 4
+clip_tabs = false
 
 [node name="TopSpacer" type="Control" parent="Root/TopBar/TopBarRow" unique_id=508932557]
 layout_mode = 2

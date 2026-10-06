@@ -38,7 +38,6 @@ const _GRID_MARGIN: float = 16.0
 
 @onready var locations_vbox: VBoxContainer = $Sidebar/SidebarMargin/SidebarVBox/LocationsVBox
 @onready var add_location_button: Button = $Sidebar/SidebarMargin/SidebarVBox/AddLocationButton
-@onready var count_label: Label = $Sidebar/SidebarMargin/SidebarVBox/CountLabel
 @onready var grid_scroll: ScrollContainer = $GridPanel/GridScroll
 @onready var content: Control = $GridPanel/GridScroll/Content
 @onready var empty_state: CenterContainer = $EmptyState
@@ -139,7 +138,6 @@ func _on_theme_changed(_is_dark: bool) -> void:
 # --- Status ---------------------------------------------------------------------
 
 func _update_status(status: String) -> void:
-	count_label.text = status
 	status_changed.emit(status)
 
 
@@ -228,10 +226,7 @@ func _rebuild_sidebar() -> void:
 		locations_vbox.add_child(_build_location_row(dir_path))
 
 
-func _build_location_row(dir_path: String) -> HBoxContainer:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 4)
-
+func _build_location_row(dir_path: String) -> Button:
 	var missing: bool = not DirAccess.dir_exists_absolute(dir_path)
 	var label_text: String = dir_path.get_file()
 	if label_text.is_empty():
@@ -240,26 +235,31 @@ func _build_location_row(dir_path: String) -> HBoxContainer:
 		label_text += " (missing)"
 
 	var select_btn := Button.new()
-	select_btn.flat = true
+	select_btn.theme_type_variation = &"SidebarItem"
 	select_btn.focus_mode = Control.FOCUS_NONE
 	select_btn.text = label_text
 	select_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	select_btn.toggle_mode = true
 	select_btn.button_pressed = (dir_path == _selected_location)
 	select_btn.disabled = missing
+	select_btn.clip_text = true
 	select_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	select_btn.pressed.connect(_select_location.bind(dir_path))
-	row.add_child(select_btn)
 
+	# The × sits inside the pill (right-anchored) so the whole row stays one
+	# hover/click surface; its own rect takes priority for its 28px.
 	var remove_btn := Button.new()
 	remove_btn.flat = true
 	remove_btn.focus_mode = Control.FOCUS_NONE
 	remove_btn.text = "×"
-	remove_btn.custom_minimum_size = Vector2(24, 0)
+	remove_btn.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
+	remove_btn.custom_minimum_size = Vector2(28, 0)
+	remove_btn.offset_left = -34.0
+	remove_btn.offset_right = -6.0
 	remove_btn.pressed.connect(_on_remove_location_pressed.bind(dir_path))
-	row.add_child(remove_btn)
+	select_btn.add_child(remove_btn)
 
-	return row
+	return select_btn
 
 
 func _select_location(dir_path: String) -> void:

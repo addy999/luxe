@@ -39,11 +39,6 @@ theme_override_constants/separation = 4
 layout_mode = 2
 text = "+ Add Location…"
 
-[node name="CountLabel" type="Label" parent="Sidebar/SidebarMargin/SidebarVBox"]
-layout_mode = 2
-theme_type_variation = &"Muted"
-text = "No photos yet"
-
 [node name="GridPanel" type="VBoxContainer" parent="."]
 layout_mode = 2
 size_flags_horizontal = 3
