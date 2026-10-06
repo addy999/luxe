@@ -944,11 +944,16 @@ func _on_zoom_slider_value_changed(value: float) -> void:
 # Clamps pct, pushes it to the shared slider/label (library mode), and scales
 # LibraryView's tiles. Mirrors _set_display_zoom's slider/label bookkeeping.
 func _set_library_zoom(pct: float) -> void:
-	var clamped: float = clamp(pct, _LIBRARY_ZOOM_MIN_PCT, _LIBRARY_ZOOM_MAX_PCT)
-	if not is_equal_approx(clamped, zoom_slider.value):
-		zoom_slider.set_value_no_signal(clamped)
-	_library_thumb_zoom_pct = clamped
-	library_view.set_thumb_zoom(clamped / 100.0)
+	# Store the RAW (continuous) value: gestures accumulate multiplicatively
+	# off it, and snapping the stored value would re-snap each small factor
+	# back to the same step (pinch dead zone). Snap only for the slider/tiles.
+	_library_thumb_zoom_pct = clamp(pct, _LIBRARY_ZOOM_MIN_PCT, _LIBRARY_ZOOM_MAX_PCT)
+	# Snap to the nearest gap-free zoom level so the slider itself steps
+	# between column counts instead of drifting through partial-column states.
+	var stepped: float = library_view.snap_thumb_scale(_library_thumb_zoom_pct / 100.0) * 100.0
+	if not is_equal_approx(stepped, zoom_slider.value):
+		zoom_slider.set_value_no_signal(stepped)
+	library_view.set_thumb_zoom(stepped / 100.0)
 
 
 func _on_library_zoom_requested(factor: float) -> void:

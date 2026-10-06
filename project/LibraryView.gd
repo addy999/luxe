@@ -325,7 +325,7 @@ func _set_photos(photos: Array[Dictionary]) -> void:
 # --- Thumbnail zoom ------------------------------------------------------------
 
 func set_thumb_zoom(scale: float) -> void:
-	scale = clamp(scale, 0.5, 4.0)
+	scale = snap_thumb_scale(scale)
 	if is_equal_approx(scale, _thumb_scale):
 		return
 	_thumb_scale = scale
@@ -344,15 +344,49 @@ func _on_grid_scroll_resized() -> void:
 	_request_visible_thumbs()
 
 
+func snap_thumb_scale(scale: float) -> float:
+	var sep: float = float(LibraryItemScript.GROUP_SEP)
+	return snap_scale(scale, grid_scroll.size.x - _GRID_MARGIN * 2.0 + sep)
+
+
+# Returns the scale nearest `scale` at which an integer column count exactly
+# fills the width (cols*tile_w + (cols-1)*sep == avail_w - sep), so zoom only
+# steps through gap-free levels instead of a continuous scale with a partial
+# column on the right. One candidate scale per column count.
+static func snap_scale(scale: float, avail_w: float) -> float:
+	const MIN_SCALE: float = 0.5
+	const MAX_SCALE: float = 4.0
+	var sep: float = float(LibraryItemScript.GROUP_SEP)
+	# Widest possible tile (MIN_SCALE) bounds the smallest column count.
+	var max_cols: int = maxi(1, int(floor(avail_w / (LibraryItemScript.TILE_SIZE.x * MIN_SCALE + sep))))
+	var best: float = scale
+	var best_diff: float = INF
+	for cols in range(max_cols, 0, -1):
+		var s: float = (avail_w - cols * sep) / (cols * LibraryItemScript.TILE_SIZE.x)
+		if s < MIN_SCALE or s > MAX_SCALE:
+			continue
+		var diff: float = absf(s - scale)
+		if diff < best_diff:
+			best = s
+			best_diff = diff
+	return best
+
+
 # Recomputes tile dimensions, column count and the virtual content height, then
 # rebinds the pool to the current visible range.
 func _relayout() -> void:
+	# Snap on every layout (initial populate, resize, zoom) so the current
+	# scale always sits on a gap-free level; snapping an already-snapped
+	# scale is a no-op.
+	_thumb_scale = snap_thumb_scale(_thumb_scale)
 	_tile_w = LibraryItemScript.TILE_SIZE.x * _thumb_scale
 	_tile_h = LibraryItemScript.THUMB_SIZE * _thumb_scale + LibraryItemScript.CAPTION_HEIGHT
 
 	var sep: float = float(LibraryItemScript.GROUP_SEP)
 	var avail_w: float = grid_scroll.size.x - _GRID_MARGIN * 2.0 + sep
-	_cols = maxi(1, int(floor(avail_w / (_tile_w + sep))))
+	# round, not floor: snapped scales fill exactly, so the ratio is an integer
+	# and float error on either side must not drop a column.
+	_cols = maxi(1, int(round(avail_w / (_tile_w + sep))))
 
 	var count: int = _photos.size()
 	var rows: int = int(ceil(float(count) / float(_cols))) if count > 0 else 0
