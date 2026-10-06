@@ -39,6 +39,8 @@ The result is a small, fast editor with a serious processing engine underneath.
 
 ## Features
 
+- Library: add folders from disk and browse every supported image in them
+  (arrow keys to move around, Enter or double-click to open in the editor)
 - Exposure
 - Contrast
 - Highlights

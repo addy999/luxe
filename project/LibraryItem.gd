@@ -11,8 +11,8 @@ signal zoom_gestured(factor: float)
 const THUMB_SIZE: float = 200.0
 const CAPTION_HEIGHT: float = 28.0
 const TILE_SIZE: Vector2 = Vector2(200.0, THUMB_SIZE + CAPTION_HEIGHT)
-# Grid-column spacing LibraryView uses alongside TILE_SIZE for its column math.
-const GROUP_SEP: int = 12
+# Grid cell spacing (both axes) LibraryView uses alongside TILE_SIZE for layout.
+const GROUP_SEP: int = 28
 
 var _index: int = -1
 var _photo: Dictionary = {}

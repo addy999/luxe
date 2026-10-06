@@ -55,20 +55,9 @@ size_flags_horizontal = 3
 size_flags_vertical = 3
 horizontal_scroll_mode = 0
 
-[node name="GridMargin" type="MarginContainer" parent="GridPanel/GridScroll"]
+[node name="Content" type="Control" parent="GridPanel/GridScroll"]
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_constants/margin_left = 16
-theme_override_constants/margin_top = 16
-theme_override_constants/margin_right = 16
-theme_override_constants/margin_bottom = 16
-
-[node name="Grid" type="GridContainer" parent="GridPanel/GridScroll/GridMargin"]
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_constants/h_separation = 12
-theme_override_constants/v_separation = 12
-columns = 1
 
 [node name="EmptyState" type="CenterContainer" parent="."]
 layout_mode = 2
