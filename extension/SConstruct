@@ -44,6 +44,11 @@ Command-line variables (all optional, see defaults below):
                       NOTE: this is a best-effort default derived from reading
                       darktable's CMakeLists, not a verified build output, so
                       verify it once darktable has been built.
+    build_profile -- path to a godot-cpp build profile JSON restricting which
+                      engine class bindings get generated/compiled (see
+                      build_profile.json alongside this file). Defaults to
+                      that file; pass build_profile= (empty) to fall back to
+                      godot-cpp's full, untrimmed API surface.
 
 If dt_build_dir does not exist yet (darktable hasn't been built), the
 include/link flags below are still added, but linking will fail until the
@@ -51,6 +56,18 @@ directory and library exist. That's expected during early scaffolding.
 """
 
 import os
+
+# godot-cpp compiles a binding wrapper class for every engine class in
+# extension_api.json (Audio*, Navigation*, Physics*, ...) -- that's not the
+# engine itself, just thin C++ stubs, but it's still ~thousands of files. dt_backend.cpp
+# only ever touches RefCounted/Image/OS (`grep -oE
+# '#include <godot_cpp/classes/[a-z_0-9]+\.hpp>' src/*.cpp src/*.h`), so
+# build_profile.json restricts codegen to those three (+ ClassDB/FileAccess/
+# WorkerThreadPool/etc., which build_profile.py always force-includes since
+# godot-cpp's own internals need them). ARGUMENTS.setdefault lets this stay
+# the default while `scons build_profile=...` or `scons build_profile=`
+# (empty, i.e. full API) still override it on the command line.
+ARGUMENTS.setdefault("build_profile", os.path.join(Dir(".").srcnode().abspath, "build_profile.json"))
 
 env = SConscript("godot-cpp/SConstruct")
 
