@@ -13,3 +13,5 @@ compatibility_minimum = "4.1"
 
 macos.debug = "res://bin/libdt_backend.macos.template_debug.framework"
 macos.release = "res://bin/libdt_backend.macos.template_release.framework"
+linux.debug.x86_64 = "res://bin/libdt_backend.linux.template_debug.x86_64.so"
+linux.release.x86_64 = "res://bin/libdt_backend.linux.template_release.x86_64.so"

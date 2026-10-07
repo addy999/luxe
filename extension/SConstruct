@@ -152,6 +152,15 @@ if env["platform"] == "macos":
     # LC_RPATH in order and uses the first one that resolves, so both rpaths
     # can coexist without a dual-build.
     env.Append(LINKFLAGS=["-Wl,-rpath,@loader_path"])
+elif env["platform"] == "linux":
+    # Same two-rpath idea as macOS, ELF's RPATH/RUNPATH instead of LC_RPATH.
+    # libdarktable.so's own install path is wherever CMake put it (no bare
+    # @rpath equivalent to worry about on Linux -- SONAME is just the
+    # filename), so an absolute dev-loop rpath plus a bundle-relative
+    # $ORIGIN (set by the Linux bundling script once deps are copied
+    # alongside the exported binary) covers both cases the same way.
+    env.Append(LINKFLAGS=["-Wl,-rpath," + os.path.join(dt_build_dir, "bin")])
+    env.Append(LINKFLAGS=["-Wl,-rpath,$$ORIGIN"])
 
 # --- OpenMP: compile pragmas in, not just link libomp ----------------------
 # dt_link_flags.json already puts libomp on the link line (darktable's own
@@ -163,6 +172,11 @@ if env["platform"] == "macos":
 # without it the pragma is skipped and the loop stays serial.
 if env["platform"] == "macos":
     env.Append(CXXFLAGS=["-Xclang", "-fopenmp", "-fopenmp-version=51"])
+elif env["platform"] == "linux":
+    # Real gcc/clang on Linux accepts -fopenmp directly in the frontend; no
+    # -Xclang indirection needed (that's an Apple-clang-specific quirk).
+    env.Append(CXXFLAGS=["-fopenmp"])
+    env.Append(LINKFLAGS=["-fopenmp"])
 
 # darktable.h transitively pulls in dozens of third-party headers (GTK3,
 # glib, librsvg, json-glib, exiv2, lensfun, OpenCV, OpenEXR, ...). Rather
