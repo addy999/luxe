@@ -98,6 +98,7 @@ set -e
 grep -Ev 'Luxe\.app|gdextension_(library_loader|manager)|gdextension\.cpp' "$LOG" \
     | grep -E 'E2E_SMOKE|DtBackend|Godot Engine' || true
 
+[[ "$GODOT_STATUS" == "0" ]] || fail "Godot exited with status $GODOT_STATUS (crash/timeout?) - see $LOG"
 grep -q "E2E_SMOKE_RESULT: PASS" "$LOG" || fail "see $LOG"
 
 if [[ "$UPDATE_FIXTURE" == "1" ]]; then

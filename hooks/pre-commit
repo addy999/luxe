@@ -1,11 +1,17 @@
 #!/bin/bash
-# Pre-commit hook: rebuild the Godot GDExtension when its sources changed,
-# so a commit is never made against a stale build (frameworks are not
-# committed; see README for building them after clone).
+# Pre-commit hook, two checks:
 #
-# Runs `scons arch=arm64` in extension/ only when a staged file touches
-# extension/src, extension/SConstruct, or extension/dt_link_flags.json.
-# Skips entirely (exit 0) if the extension dir is missing.
+# 1. Rebuild the Godot GDExtension when its sources changed, so a commit is
+#    never made against a stale build (frameworks are not committed; see
+#    README for building them after clone). Runs `scons arch=arm64` only
+#    when a staged file touches extension/src, extension/SConstruct, or
+#    extension/dt_link_flags.json.
+#
+# 2. Run the e2e render regression test (scripts/e2e_smoke_test.sh) when
+#    staged changes could affect rendered pixels: the extension, Main.gd/
+#    Main.tscn, or the e2e test/fixture itself.
+#
+# Each check skips independently if its trigger paths aren't staged.
 #
 # Skip for a WIP commit with:  git commit --no-verify
 
@@ -15,45 +21,73 @@ ROOT="$(git rev-parse --show-toplevel)"
 EXT_DIR="$ROOT/extension"
 FRAMEWORK="$ROOT/project/bin/libdt_backend.macos.template_debug.framework"
 
-[ -d "$EXT_DIR" ] || exit 0
+# --- Check 1: rebuild the GDExtension ---------------------------------------
+if [ -d "$EXT_DIR" ]; then
+  STAGED_EXT=$(git diff --cached --name-only --diff-filter=ACMR -- 'extension/src' 'extension/SConstruct' 'extension/dt_link_flags.json')
+  if [ -n "$STAGED_EXT" ]; then
+    # Already fresh? (newest staged source older than the built binary)
+    NEWEST_SRC_MTIME=0
+    while IFS= read -r f; do
+      [ -f "$f" ] || continue
+      m=$(stat -f %m "$f" 2>/dev/null || echo 0)
+      [ "$m" -gt "$NEWEST_SRC_MTIME" ] && NEWEST_SRC_MTIME=$m
+    done <<< "$STAGED_EXT"
 
-# Only rebuild if staged changes touch the extension's build inputs.
-STAGED_EXT=$(git diff --cached --name-only --diff-filter=ACMR -- 'extension/src' 'extension/SConstruct' 'extension/dt_link_flags.json')
-if [ -z "$STAGED_EXT" ]; then
-  exit 0
-fi
+    NEEDS_BUILD=1
+    if [ -x "$FRAMEWORK/libdt_backend.macos.template_debug" ]; then
+      BIN_MTIME=$(stat -f %m "$FRAMEWORK/libdt_backend.macos.template_debug" 2>/dev/null || echo 0)
+      [ "$BIN_MTIME" -ge "$NEWEST_SRC_MTIME" ] && NEEDS_BUILD=0
+    fi
 
-# Already fresh? (newest staged source older than the built binary)
-NEWEST_SRC_MTIME=0
-while IFS= read -r f; do
-  [ -f "$f" ] || continue
-  m=$(stat -f %m "$f" 2>/dev/null || echo 0)
-  [ "$m" -gt "$NEWEST_SRC_MTIME" ] && NEWEST_SRC_MTIME=$m
-done <<< "$STAGED_EXT"
+    if [ "$NEEDS_BUILD" -eq 1 ]; then
+      echo "pre-commit: extension sources changed, rebuilding GDExtension (this can take a minute)..."
+      echo "pre-commit: changed: $STAGED_EXT"
 
-if [ -x "$FRAMEWORK/libdt_backend.macos.template_debug" ]; then
-  BIN_MTIME=$(stat -f %m "$FRAMEWORK/libdt_backend.macos.template_debug" 2>/dev/null || echo 0)
-  if [ "$BIN_MTIME" -ge "$NEWEST_SRC_MTIME" ]; then
-    exit 0
+      if ! (cd "$EXT_DIR" && scons arch=arm64 -j"$(sysctl -n hw.ncpu)"); then
+        echo ""
+        echo "pre-commit: scons build FAILED. Commit aborted."
+        echo "pre-commit: fix the build, or bypass with: git commit --no-verify"
+        exit 1
+      fi
+
+      if [ ! -x "$FRAMEWORK/libdt_backend.macos.template_debug" ]; then
+        echo "pre-commit: scons reported success but the framework binary is missing at"
+        echo "pre-commit:   $FRAMEWORK"
+        echo "pre-commit: commit aborted."
+        exit 1
+      fi
+
+      echo "pre-commit: GDExtension rebuilt OK."
+    fi
   fi
 fi
 
-echo "pre-commit: extension sources changed, rebuilding GDExtension (this can take a minute)..."
-echo "pre-commit: changed: $STAGED_EXT"
+# --- Check 2: e2e render regression test -----------------------------------
+# Only run when staged changes touch something that can change rendered
+# pixels: the extension itself, Main.gd/Main.tscn (the full UI wiring the
+# e2e test drives), or the e2e test/fixture. Slow (full RAW render + export),
+# so skip entirely otherwise.
+E2E_SCRIPT="$ROOT/scripts/e2e_smoke_test.sh"
+STAGED_RENDER=$(git diff --cached --name-only --diff-filter=ACMR -- \
+  'extension/src' 'extension/SConstruct' 'extension/dt_link_flags.json' \
+  'project/Main.gd' 'project/Main.tscn' \
+  'project/tests/e2e_smoke_test.gd' 'project/tests/fixtures/e2e_fixture.jpg')
 
-if ! (cd "$EXT_DIR" && scons arch=arm64 -j"$(sysctl -n hw.ncpu)"); then
+if [ -n "$STAGED_RENDER" ] && [ -x "$E2E_SCRIPT" ]; then
   echo ""
-  echo "pre-commit: scons build FAILED. Commit aborted."
-  echo "pre-commit: fix the build, or bypass with: git commit --no-verify"
-  exit 1
+  echo "pre-commit: render-affecting changes staged, running e2e smoke test..."
+  echo "pre-commit: changed: $STAGED_RENDER"
+
+  if ! "$E2E_SCRIPT"; then
+    echo ""
+    echo "pre-commit: e2e smoke test FAILED. Commit aborted."
+    echo "pre-commit: fix the regression, or if the pixel change is intentional,"
+    echo "pre-commit: regenerate the fixture with: scripts/e2e_smoke_test.sh '' '' '' --update-fixture"
+    echo "pre-commit: bypass entirely with: git commit --no-verify"
+    exit 1
+  fi
+
+  echo "pre-commit: e2e smoke test PASSED."
 fi
 
-if [ ! -x "$FRAMEWORK/libdt_backend.macos.template_debug" ]; then
-  echo "pre-commit: scons reported success but the framework binary is missing at"
-  echo "pre-commit:   $FRAMEWORK"
-  echo "pre-commit: commit aborted."
-  exit 1
-fi
-
-echo "pre-commit: GDExtension rebuilt OK."
 exit 0
