@@ -182,7 +182,11 @@ else:
     # regardless of how SCons/Python spelled it.
     _dt_link_target = _dt_link_target.replace("\\", "/")
     print("dt_backend: linking darktable via %s" % _dt_link_target)
-    env.Append(LINKFLAGS=[_dt_link_target])
+    # NOTE: do NOT add this to LINKFLAGS -- SCons places LINKFLAGS before
+    # $SOURCES, and an import archive (.dll.a) that precedes the object
+    # referencing it is culled by GNU ld (same ordering trap as the glib
+    # deps). It is instead prepended to the $_DT_LINK_TAIL below, which the
+    # Windows branch appends to the very end of the link command.
 
 # darktable normally locates its data/module dirs relative to its own
 # executable's path (via the vendored `whereami` submodule). That breaks
@@ -294,7 +298,16 @@ if os.path.isfile(flags_path):
         # very end of the link command instead, after $SOURCES and after
         # $_LIBFLAGS (which carries -ldarktable), so the consumer object and
         # -ldarktable both precede these provider archives.
-        tail = " ".join(dt_flags.get("link_flags", []) + dt_flags.get("link_libs", []))
+        # darktable's own import lib goes first (it is the consumer that
+        # -- together with the dt_backend object -- references the glib/gtk/...
+        # provider archives that follow it), then darktable's dependency
+        # link flags and libs. _dt_link_target was located in the Windows
+        # branch above (near the LIBPATH setup).
+        tail = " ".join(
+            [_dt_link_target]
+            + dt_flags.get("link_flags", [])
+            + dt_flags.get("link_libs", [])
+        )
         env["_DT_LINK_TAIL"] = tail
         if isinstance(env["SHLINKCOM"], list):
             env["SHLINKCOM"] = env["SHLINKCOM"] + ["$_DT_LINK_TAIL"]
