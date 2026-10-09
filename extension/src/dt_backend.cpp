@@ -22,7 +22,9 @@ extern "C" {
 #include <cmath>
 #include <vector>
 
-#include <dlfcn.h>
+#ifndef _WIN32
+#include <dlfcn.h> // dladdr(); POSIX-only, MinGW/Windows has no equivalent header
+#endif
 
 using namespace godot;
 
@@ -204,6 +206,25 @@ bool DtBackend::compute_dt_dirs(std::string &datadir, std::string &moduledir) {
         env_datadir, "' does not look like a valid datadir (no darktable.png found) -- ignoring override and falling through to bundle-relative detection");
   }
 
+#ifdef _WIN32
+  {
+    // Windows bundle layout is flat: Luxe.exe sits at the export root with
+    // share/darktable and lib/darktable as direct siblings (see
+    // bundle_darktable_deps_windows.sh). No rpath / Contents nesting like
+    // macOS -- just one level down from the executable's own directory.
+    const godot::String exe_dir = godot::OS::get_singleton()->get_executable_path().get_base_dir();
+    const std::string base = std::string(exe_dir.utf8().get_data());
+    const std::string candidate_datadir = base + "/share/darktable";
+    const std::string candidate_moduledir = base + "/lib/darktable";
+    if(datadir_looks_valid(candidate_datadir)) {
+      datadir = candidate_datadir;
+      moduledir = candidate_moduledir;
+      UtilityFunctions::print("DtBackend::compute_dt_dirs: using exe-relative dirs (Windows bundle layout)");
+      return true;
+    }
+  }
+#endif
+
   {
     const godot::String exe_path = godot::OS::get_singleton()->get_executable_path();
     const godot::String contents_dir = exe_path.get_base_dir().get_base_dir();
@@ -218,6 +239,7 @@ bool DtBackend::compute_dt_dirs(std::string &datadir, std::string &moduledir) {
     }
   }
 
+#ifndef _WIN32
   {
     Dl_info info;
     if(dladdr(reinterpret_cast<void *>(&dt_backend_dladdr_anchor), &info) != 0 && info.dli_fname) {
@@ -248,6 +270,7 @@ bool DtBackend::compute_dt_dirs(std::string &datadir, std::string &moduledir) {
       }
     }
   }
+#endif // !_WIN32
 
   UtilityFunctions::printerr(
       "DtBackend::compute_dt_dirs: could not locate darktable's datadir/moduledir. "
