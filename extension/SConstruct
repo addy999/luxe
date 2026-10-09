@@ -281,8 +281,28 @@ if os.path.isfile(flags_path):
     with open(flags_path) as f:
         dt_flags = json.load(f)
     env.Append(CPPPATH=dt_flags.get("includes", []))
-    env.Append(LINKFLAGS=dt_flags.get("link_flags", []))
-    env.Append(LINKFLAGS=dt_flags.get("link_libs", []))
+    if env["platform"] == "windows":
+        # GNU ld is order-sensitive for *archives*, and on Windows darktable's
+        # dependency libs (glib, gtk, exiv2, ...) are MinGW import archives
+        # (.dll.a), not real shared objects. An archive that appears on the
+        # command line BEFORE the object that references it contributes
+        # nothing (ld only pulls members that satisfy an already-undefined
+        # symbol), so putting them in LINKFLAGS -- which SCons places before
+        # $SOURCES -- leaves every g_*/third-party symbol undefined. On Linux
+        # the same entries are real .so files (position-insensitive), which is
+        # why the shared LINKFLAGS path below works there. Append them to the
+        # very end of the link command instead, after $SOURCES and after
+        # $_LIBFLAGS (which carries -ldarktable), so the consumer object and
+        # -ldarktable both precede these provider archives.
+        tail = " ".join(dt_flags.get("link_flags", []) + dt_flags.get("link_libs", []))
+        env["_DT_LINK_TAIL"] = tail
+        if isinstance(env["SHLINKCOM"], list):
+            env["SHLINKCOM"] = env["SHLINKCOM"] + ["$_DT_LINK_TAIL"]
+        else:
+            env["SHLINKCOM"] = "%s $_DT_LINK_TAIL" % env["SHLINKCOM"]
+    else:
+        env.Append(LINKFLAGS=dt_flags.get("link_flags", []))
+        env.Append(LINKFLAGS=dt_flags.get("link_libs", []))
     # Preprocessor defines matter for more than "does it compile": darktable
     # headers (imageop.h in particular) put optional struct fields behind
     # #ifdef HAVE_OPENCL / USE_LUA / etc. Omitting a define that darktable's
