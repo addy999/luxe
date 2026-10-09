@@ -14,6 +14,18 @@
 #include <godot_cpp/variant/packed_vector2_array.hpp>
 #include <godot_cpp/variant/string.hpp>
 
+#ifdef _WIN32
+// darktable's C headers transitively pull in glib/gwin32.h (via glib.h) and,
+// when _OPENMP is set, MinGW GCC's omp.h -- both contain C++ templates, which
+// are illegal inside the extern "C" block below. Pre-include them here with
+// normal C++ linkage so their include guards turn the nested includes into
+// no-ops once the extern "C" block is reached. macOS/Linux don't hit this
+// (gwin32.h is Windows-only; their omp.h is template-free), so keep it
+// guarded rather than change the include order on the proven platforms.
+#include <glib.h>
+#include <omp.h>
+#endif
+
 extern "C" {
 #include "common/darktable.h"
 #include "common/film.h"
