@@ -33,6 +33,14 @@ static func store_path(key: String) -> String:
 	return "%s/%s/%s.json" % [STORE_DIR, key.substr(0, 2), key]
 
 
+# True when a saved edit record exists for this (file_name, thumb_hash). Used by
+# the Library grid to flag edited photos without reading the record.
+static func has_record(file_name: String, hash: String) -> bool:
+	if hash == "":
+		return false
+	return FileAccess.file_exists(store_path(edit_key(file_name, hash)))
+
+
 # Serializes a live _params dict into JSON-native types (PackedVector2Array and
 # Rect2 have no JSON representation; everything else is a plain float).
 static func _params_to_json(params: Dictionary) -> Dictionary:

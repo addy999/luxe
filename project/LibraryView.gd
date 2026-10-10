@@ -72,6 +72,12 @@ var _tex_lru: Array[String] = []     # oldest first; access moves to the back
 # Paths with an in-flight request, so a scroll tick doesn't re-queue them.
 var _requested: Dictionary = {}      # path -> true
 
+# --- Edited-badge cache --------------------------------------------------------
+# path -> bool: whether a saved EditStore record exists for this photo. Computed
+# once per photo when its thumbnail first becomes ready (the badge needs the
+# on-disk thumb hash, same identity as the edit key), then redrawn with the tile.
+var _edited: Dictionary = {}
+
 # --- Bounded thumbnail workers (jpg/png decode) --------------------------------
 var _queue: Array[int] = []
 var _inflight: int = 0
@@ -316,6 +322,7 @@ func _set_photos(photos: Array[Dictionary]) -> void:
 	_tex_cache.clear()
 	_tex_lru.clear()
 	_requested.clear()
+	_edited.clear()
 	_mutex.lock()
 	_queue.clear()
 	_mutex.unlock()
@@ -480,6 +487,7 @@ func _refresh_tiles() -> void:
 		tile.set_tile_scale(_thumb_scale)
 		tile.size = Vector2(_tile_w, _tile_h)
 		tile.set_selected(index == _cursor)
+		tile.set_edited(_edited.get(_photos[index]["path"], false))
 		tile.position = _tile_position(index)
 		tile.visible = true
 		slot += 1
@@ -643,6 +651,7 @@ func _on_thumb_ready(generation: int, index: int, img: Image) -> void:
 		if img != null:
 			var tex: ImageTexture = ImageTexture.create_from_image(img)
 			_cache_put(path, tex)
+			_mark_edited(_photos[index])
 			_apply_texture_to_visible(index)
 
 	_pump()
@@ -661,8 +670,37 @@ func apply_raw_thumb(index: int, path: String, img: Image) -> bool:
 
 	var tex: ImageTexture = ImageTexture.create_from_image(img)
 	_cache_put(path, tex)
+	_mark_edited(_photos[index])
 	_apply_texture_to_visible(index)
 	return true
+
+
+# Records whether a saved edit exists for `photo`, keyed by the on-disk thumb
+# hash (same identity as the edit key). Computed once per photo; the thumbnail
+# is already on disk by the time this runs (called from the thumb-ready paths).
+func _mark_edited(photo: Dictionary) -> void:
+	var path: String = photo["path"]
+	if _edited.has(path):
+		return
+	var cache_key: String = ThumbnailCache.cache_key(path, photo["mtime"])
+	var img: Image = ThumbnailCache.load_cached(cache_key)
+	if img == null:
+		return
+	_edited[path] = EditStore.has_record(path.get_file(), EditStore.thumb_hash(img))
+
+
+# Recomputes a single photo's edited badge (e.g. after returning from the editor
+# where it may have just gained a saved record) and redraws its tile if visible.
+func refresh_edited_badge(path: String) -> void:
+	_edited.erase(path)
+	for index in range(_photos.size()):
+		if _photos[index]["path"] == path:
+			_mark_edited(_photos[index])
+			_apply_texture_to_visible(index)
+			for tile in _pool:
+				if tile.visible and tile.get_photo_index() == index:
+					tile.set_edited(_edited.get(path, false))
+			return
 
 
 # Pushes a cached texture onto whichever pool tile is currently bound to index.

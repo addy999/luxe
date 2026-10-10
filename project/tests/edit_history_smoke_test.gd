@@ -20,6 +20,7 @@ func _initialize() -> void:
 	_test_key_stability()
 	_test_atomic_write()
 	_test_rejections()
+	_test_has_record()
 	_cleanup()
 	print("EDIT_HISTORY_SMOKE: PASS")
 	quit(0)
@@ -167,6 +168,29 @@ func _test_rejections() -> void:
 		_die("load of bad param shape returned non-empty")
 		return
 	print("EDIT_HISTORY_SMOKE: rejections OK")
+
+
+func _test_has_record() -> void:
+	# Empty hash never has a record (and must not touch disk).
+	if EditStore.has_record("WHATEVER.CR2", ""):
+		_die("has_record true for empty hash")
+		return
+	# Unsaved photo: no record.
+	if EditStore.has_record("GHOST.CR2", "nohash"):
+		_die("has_record true before any save")
+		return
+	# After save: record exists for matching (name, hash), not for a different hash.
+	var key: String = EditStore.edit_key("REC.CR2", "rh")
+	if not EditStore.save(key, _sample_params(), {"file_name": "REC.CR2", "thumb_hash": "rh", "updated_at": 1}):
+		_die("has_record: save failed")
+		return
+	if not EditStore.has_record("REC.CR2", "rh"):
+		_die("has_record false after save")
+		return
+	if EditStore.has_record("REC.CR2", "other_hash"):
+		_die("has_record true for wrong hash")
+		return
+	print("EDIT_HISTORY_SMOKE: has_record OK")
 
 
 func _write_raw(key: String, text: String) -> void:

@@ -278,8 +278,11 @@ func _set_view(view: int) -> void:
 
 	if in_library:
 		# Leaving Edit: commit any pending debounced save before the backend may
-		# be hijacked by RAW thumb jobs.
+		# be hijacked by RAW thumb jobs, then refresh the edited photo's badge so
+		# a freshly-saved edit shows its dot on return to the grid.
 		_flush_pending_save()
+		if _edited_path != "":
+			library_view.refresh_edited_badge(_edited_path)
 
 	if not in_library:
 		# A render needs exclusive use of the backend pipe; stop and wait out
@@ -684,16 +687,27 @@ func _resolve_edit_key(path: String) -> void:
 	_edit_file_name = path.get_file()
 	var mtime: int = FileAccess.get_modified_time(path)
 	var cache_key: String = ThumbnailCache.cache_key(path, mtime)
-	var img: Image = ThumbnailCache.load_cached(cache_key)
-	if img == null:
-		if Library.is_raw(_edit_file_name):
-			img = _render_backend_thumb(cache_key)
-		else:
-			img = ThumbnailCache.build_thumbnail(path, cache_key)
-	if img == null:
+	_edit_thumb_hash = _resolve_thumb_hash(path, cache_key)
+	if _edit_thumb_hash == "":
 		return
-	_edit_thumb_hash = EditStore.thumb_hash(img)
 	_edit_key = EditStore.edit_key(_edit_file_name, _edit_thumb_hash)
+
+
+# Hashes the on-disk (JPEG, lossy) thumbnail so the key is identical whether the
+# thumb was just built/rendered or loaded from cache: build_thumbnail and
+# _render_backend_thumb return the pre-encode in-memory image, which hashes
+# differently from the decoded cache file. Builds/renders the thumb first if it
+# is missing, then always re-reads from disk. Returns "" if no thumb can be had.
+func _resolve_thumb_hash(path: String, cache_key: String) -> String:
+	if ThumbnailCache.load_cached(cache_key) == null:
+		if Library.is_raw(path.get_file()):
+			_render_backend_thumb(cache_key)
+		else:
+			ThumbnailCache.build_thumbnail(path, cache_key)
+	var disk: Image = ThumbnailCache.load_cached(cache_key)
+	if disk == null:
+		return ""
+	return EditStore.thumb_hash(disk)
 
 
 # Pushes a params dict into every slider/curve/crop control AND into _params,

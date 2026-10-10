@@ -19,7 +19,13 @@ var _photo: Dictionary = {}
 var _texture: Texture2D = null
 var _selected: bool = false
 var _hovered: bool = false
+var _edited: bool = false
 var _tile_scale: float = 1.0
+
+# Edited-marker dot: yellow, drawn in the thumbnail's top-right corner.
+const _EDITED_DOT_COLOR: Color = Color(0.98, 0.78, 0.13, 1.0)
+const _EDITED_DOT_RADIUS: float = 5.0
+const _EDITED_DOT_MARGIN: float = 8.0
 
 var _color_tile: Color
 var _color_tile_hover: Color
@@ -71,6 +77,7 @@ func setup(index: int, photo: Dictionary) -> void:
 	_photo = photo
 	_texture = null
 	_selected = false
+	_edited = false
 	queue_redraw()
 
 
@@ -83,6 +90,13 @@ func set_selected(selected: bool) -> void:
 
 func set_texture(tex: Texture2D) -> void:
 	_texture = tex
+	queue_redraw()
+
+
+func set_edited(edited: bool) -> void:
+	if _edited == edited:
+		return
+	_edited = edited
 	queue_redraw()
 
 
@@ -127,6 +141,12 @@ func _draw() -> void:
 		_draw_letterboxed(thumb_rect)
 	else:
 		_draw_raw_placeholder(thumb_rect)
+
+	if _edited:
+		var dot_center := Vector2(
+			thumb_rect.end.x - _EDITED_DOT_MARGIN - _EDITED_DOT_RADIUS,
+			thumb_rect.position.y + _EDITED_DOT_MARGIN + _EDITED_DOT_RADIUS)
+		draw_circle(dot_center, _EDITED_DOT_RADIUS, _EDITED_DOT_COLOR)
 
 	_draw_caption()
 
