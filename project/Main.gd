@@ -78,6 +78,16 @@ var _raw_thumb_stop: bool = false       # set when the backend is needed; in-fli
 var _edited_path: String = ""          # last successfully opened image path
 var _backend_path: String = ""         # image currently loaded in the backend
 
+# --- Persistent edit history (EditStore) --------------------------------------
+var _edit_key: String = ""             # EditStore record id for the open photo ("" = none)
+var _edit_thumb_hash: String = ""      # thumbnail content hash, stored in the record's meta
+var _edit_file_name: String = ""       # base name of the open photo, stored in the record's meta
+var _save_timer: Timer = null          # one-shot debounce for auto-save
+const _SAVE_DEBOUNCE_SEC: float = 0.8
+# True while open_photo restores params; suppresses the auto-save arm on the
+# load-time _request_render so merely opening a photo never writes a record.
+var _restoring: bool = false
+
 # Per-image as-shot CCT; the WB reset target.
 var _wb_default_temperature: float = 6500.0
 var _reset_buttons: Array[Button] = []
@@ -117,6 +127,22 @@ func _map_offset_to_module(key: String, offset: float) -> float:
 	if offset <= 0.0:
 		return lo + (offset + 50.0) / 50.0 * (dflt - lo)
 	return dflt + offset / 50.0 * (hi - dflt)
+
+
+# Inverse of _map_offset_to_module: recovers the -50..50 UI slider offset from a
+# stored module-space value, for restoring persisted edits into the sliders.
+func _map_module_to_offset(key: String, module_value: float) -> float:
+	var range_vals: Array = _MODULE_RANGES[key]
+	var lo: float = range_vals[0]
+	var dflt: float = range_vals[1]
+	var hi: float = range_vals[2]
+	if module_value <= dflt:
+		if dflt - lo == 0.0:
+			return 0.0
+		return (module_value - lo) / (dflt - lo) * 50.0 - 50.0
+	if hi - dflt == 0.0:
+		return 0.0
+	return (module_value - dflt) / (hi - dflt) * 50.0
 
 
 # Last values pushed to the backend, keyed like _params.
@@ -212,6 +238,12 @@ func _ready() -> void:
 	_gate_timer.timeout.connect(_on_render_gate_timeout)
 	add_child(_gate_timer)
 
+	_save_timer = Timer.new()
+	_save_timer.one_shot = true
+	_save_timer.wait_time = _SAVE_DEBOUNCE_SEC
+	_save_timer.timeout.connect(_on_save_timer_timeout)
+	add_child(_save_timer)
+
 	_setup_reset_buttons()
 	_setup_views()
 
@@ -243,6 +275,11 @@ func _setup_views() -> void:
 func _set_view(view: int) -> void:
 	_view = view
 	var in_library: bool = view == View.LIBRARY
+
+	if in_library:
+		# Leaving Edit: commit any pending debounced save before the backend may
+		# be hijacked by RAW thumb jobs.
+		_flush_pending_save()
 
 	if not in_library:
 		# A render needs exclusive use of the backend pipe; stop and wait out
@@ -444,6 +481,9 @@ func _on_file_dialog_file_selected(path: String) -> void:
 func open_photo(path: String) -> bool:
 	if backend == null:
 		return false
+	# Commit the previously edited photo's pending save before its key/params are
+	# replaced (open_photo is reachable directly from the file dialog in Edit).
+	_flush_pending_save()
 	# The RAW thumb queue may be mid-flight in the shared backend pipe; stop it
 	# and wait it out before anything else touches the backend.
 	_stop_raw_thumbs()
@@ -476,41 +516,36 @@ func open_photo(path: String) -> bool:
 	crop_button.disabled = false
 	crop_button.set_pressed_no_signal(false)
 
-	exposure_slider.value = 0.0
-	exposure_value_label.text = "%.2f" % 0.0
-	_params["exposure"] = 0.0
-	contrast_slider.value = 0.0
-	contrast_value_label.text = "%.2f" % 0.0
-	_params["contrast"] = 0.0
-	highlights_slider.value = 0.0
-	highlights_value_label.text = "%.2f" % 0.0
-	_params["highlights"] = _map_offset_to_module("highlights", 0.0)
-	shadows_slider.value = 0.0
-	shadows_value_label.text = "%.2f" % 0.0
-	_params["shadows"] = _map_offset_to_module("shadows", 0.0)
-	blacks_slider.value = 0.0
-	blacks_value_label.text = "%.2f" % 0.0
-	_params["blacks"] = 0.0
-	whites_slider.value = 0.0
-	whites_value_label.text = "%.2f" % 0.0
-	_params["whites"] = 0.0
-	dehaze_slider.value = 0.0
-	dehaze_value_label.text = "%.2f" % 0.0
-	_params["dehaze"] = 0.0
-	saturation_slider.value = 0.0
-	saturation_value_label.text = "%.2f" % 0.0
-	_params["saturation"] = _map_offset_to_module("saturation", 0.0)
-	_params["desaturation"] = 0.0
-	vibrance_slider.value = 0.0
-	vibrance_value_label.text = "%.2f" % 0.0
-	_params["vibrance"] = _map_offset_to_module("vibrance", 0.0)
-	tone_curve_editor.reset_to_default()
+	# Resolve this photo's EditStore identity, then restore its saved params (or
+	# as-shot defaults for a never-edited photo). Keyed by file name + a hash of
+	# the neutral thumbnail, so edits survive file moves/renames.
 	var as_shot_temperature: float = backend.get_white_balance_temperature()
-	white_balance_slider.value = as_shot_temperature
-	white_balance_value_label.text = "%dK" % roundi(as_shot_temperature)
-	_params["wb_temperature"] = as_shot_temperature
-	_params["crop"] = Rect2(0, 0, 1, 1)
 	_wb_default_temperature = as_shot_temperature
+	_resolve_edit_key(path)
+	var defaults: Dictionary = {
+		"exposure": 0.0,
+		"contrast": 0.0,
+		"highlights": _map_offset_to_module("highlights", 0.0),
+		"shadows": _map_offset_to_module("shadows", 0.0),
+		"blacks": 0.0,
+		"whites": 0.0,
+		"dehaze": 0.0,
+		"saturation": _map_offset_to_module("saturation", 0.0),
+		"desaturation": 0.0,
+		"vibrance": _map_offset_to_module("vibrance", 0.0),
+		"tonecurve": PackedVector2Array([Vector2(0.0, 0.0), Vector2(1.0, 1.0)]),
+		"wb_temperature": as_shot_temperature,
+		"crop": Rect2(0, 0, 1, 1),
+	}
+	var saved: Dictionary = EditStore.load(_edit_key) if _edit_key != "" else {}
+	# Merge over defaults so a record missing a key (older schema) still gets a
+	# sane value for it.
+	var restored: Dictionary = defaults.duplicate(true)
+	for key in saved:
+		if defaults.has(key):
+			restored[key] = saved[key]
+	_apply_params_to_ui(restored)
+
 	var default_edit_id: int = _pick_default_edit_mode_id(
 		backend.get_raw_width(), backend.get_raw_height())
 	_auto_floor_scale = _EDIT_MODES[default_edit_id]["scale"]
@@ -524,7 +559,11 @@ func open_photo(path: String) -> bool:
 		_edit_mode_id = default_edit_id
 		_edit_scale = _EDIT_MODES[default_edit_id]["scale"]
 	_set_view(View.EDIT)
+	# The load-time render pushes restored params to the backend; it must not arm
+	# auto-save (opening a photo is not an edit).
+	_restoring = true
 	_request_render()
+	_restoring = false
 	return true
 
 
@@ -576,18 +615,26 @@ func _raw_thumb_task(photo: Dictionary) -> void:
 	if img == null:
 		if backend.load_image(photo["path"]):
 			loaded = true
-			var bytes: PackedByteArray = backend.render_preview(
-				_WHOLE_IMAGE_VIEWPORT, _WHOLE_IMAGE_VIEWPORT, _RAW_THUMB_SCALE, 0.0, 0.0)
-			var w: int = backend.get_width()
-			var h: int = backend.get_height()
-			if w > 0 and h > 0 and bytes.size() >= w * h * 4:
-				img = Image.create_from_data(w, h, false, Image.FORMAT_RGBA8, bytes)
-				var long_edge: int = maxi(w, h)
-				if long_edge > ThumbnailCache.THUMB_MAX:
-					var s: float = float(ThumbnailCache.THUMB_MAX) / float(long_edge)
-					img.resize(maxi(1, roundi(w * s)), maxi(1, roundi(h * s)), Image.INTERPOLATE_LANCZOS)
-				img = ThumbnailCache.store_thumb(key, img)
+			img = _render_backend_thumb(key)
 	call_deferred("_on_raw_thumb_done", photo, img, loaded)
+
+
+# Renders a neutral thumbnail of the image CURRENTLY loaded in the backend via
+# the preview pipe, downsamples to THUMB_MAX, and stores it under `key`. Backend
+# + Image calls only (safe on a worker thread). Returns null on render failure.
+func _render_backend_thumb(key: String) -> Image:
+	var bytes: PackedByteArray = backend.render_preview(
+		_WHOLE_IMAGE_VIEWPORT, _WHOLE_IMAGE_VIEWPORT, _RAW_THUMB_SCALE, 0.0, 0.0)
+	var w: int = backend.get_width()
+	var h: int = backend.get_height()
+	if w <= 0 or h <= 0 or bytes.size() < w * h * 4:
+		return null
+	var img: Image = Image.create_from_data(w, h, false, Image.FORMAT_RGBA8, bytes)
+	var long_edge: int = maxi(w, h)
+	if long_edge > ThumbnailCache.THUMB_MAX:
+		var s: float = float(ThumbnailCache.THUMB_MAX) / float(long_edge)
+		img.resize(maxi(1, roundi(w * s)), maxi(1, roundi(h * s)), Image.INTERPOLATE_LANCZOS)
+	return ThumbnailCache.store_thumb(key, img)
 
 
 func _on_raw_thumb_done(photo: Dictionary, img: Image, loaded: bool) -> void:
@@ -620,7 +667,99 @@ func _reload_edited_image() -> void:
 		return
 	_backend_path = _edited_path
 	_applied_params.clear()   # forces _apply_params_to_backend to re-push every param
+	# Re-pushing already-persisted params is not an edit; don't arm auto-save.
+	_restoring = true
 	_request_render()
+	_restoring = false
+
+
+# Resolves _edit_key / _edit_thumb_hash / _edit_file_name for `path`, which is
+# assumed loaded in the backend. Reuses the disk thumbnail when present; for a
+# RAW with no cached thumb yet, renders one through the backend (which holds the
+# image at this point in open_photo). Clears the key if no thumbnail can be had,
+# so edits for that photo simply aren't persisted rather than keyed wrongly.
+func _resolve_edit_key(path: String) -> void:
+	_edit_key = ""
+	_edit_thumb_hash = ""
+	_edit_file_name = path.get_file()
+	var mtime: int = FileAccess.get_modified_time(path)
+	var cache_key: String = ThumbnailCache.cache_key(path, mtime)
+	var img: Image = ThumbnailCache.load_cached(cache_key)
+	if img == null:
+		if Library.is_raw(_edit_file_name):
+			img = _render_backend_thumb(cache_key)
+		else:
+			img = ThumbnailCache.build_thumbnail(path, cache_key)
+	if img == null:
+		return
+	_edit_thumb_hash = EditStore.thumb_hash(img)
+	_edit_key = EditStore.edit_key(_edit_file_name, _edit_thumb_hash)
+
+
+# Pushes a params dict into every slider/curve/crop control AND into _params,
+# without firing control signals (set_value_no_signal), so restoring saved edits
+# doesn't re-trigger renders or auto-save. The inverse of the per-control
+# value_changed handlers; the one place that rebuilds the full UI from _params.
+func _apply_params_to_ui(p: Dictionary) -> void:
+	_params["exposure"] = p["exposure"]
+	exposure_slider.set_value_no_signal(p["exposure"])
+	exposure_value_label.text = "%.2f" % p["exposure"]
+
+	_params["contrast"] = p["contrast"]
+	contrast_slider.set_value_no_signal(p["contrast"])
+	contrast_value_label.text = "%.2f" % p["contrast"]
+
+	# Offset-mapped keys store module space in _params; the slider shows the
+	# -50..50 UI offset, recovered via _map_module_to_offset.
+	_params["highlights"] = p["highlights"]
+	var hl_off: float = _map_module_to_offset("highlights", p["highlights"])
+	highlights_slider.set_value_no_signal(hl_off)
+	highlights_value_label.text = "%.2f" % hl_off
+
+	_params["shadows"] = p["shadows"]
+	var sh_off: float = _map_module_to_offset("shadows", p["shadows"])
+	shadows_slider.set_value_no_signal(sh_off)
+	shadows_value_label.text = "%.2f" % sh_off
+
+	# blacks stores the sign-inverted slider value (see _on_blacks handler).
+	_params["blacks"] = p["blacks"]
+	blacks_slider.set_value_no_signal(-p["blacks"])
+	blacks_value_label.text = "%.2f" % (-p["blacks"])
+
+	_params["whites"] = p["whites"]
+	whites_slider.set_value_no_signal(p["whites"])
+	whites_value_label.text = "%.2f" % p["whites"]
+
+	_params["dehaze"] = p["dehaze"]
+	dehaze_slider.set_value_no_signal(p["dehaze"])
+	dehaze_value_label.text = "%.2f" % p["dehaze"]
+
+	# saturation/desaturation are two _params keys driven by one slider: a
+	# positive offset is saturation above its module default, a negative offset
+	# (saturation pinned to default, desaturation > 0) reads back as negative.
+	_params["saturation"] = p["saturation"]
+	_params["desaturation"] = p["desaturation"]
+	var sat_off: float = 0.0
+	if p["desaturation"] > 0.0:
+		sat_off = -p["desaturation"] * 50.0
+	else:
+		sat_off = _map_module_to_offset("saturation", p["saturation"])
+	saturation_slider.set_value_no_signal(sat_off)
+	saturation_value_label.text = "%.2f" % sat_off
+
+	_params["vibrance"] = p["vibrance"]
+	var vib_off: float = _map_module_to_offset("vibrance", p["vibrance"])
+	vibrance_slider.set_value_no_signal(vib_off)
+	vibrance_value_label.text = "%.2f" % vib_off
+
+	_params["tonecurve"] = p["tonecurve"]
+	tone_curve_editor.set_points(p["tonecurve"])
+
+	_params["wb_temperature"] = p["wb_temperature"]
+	white_balance_slider.set_value_no_signal(p["wb_temperature"])
+	white_balance_value_label.text = "%dK" % roundi(p["wb_temperature"])
+
+	_params["crop"] = p["crop"]
 
 
 func _on_exposure_slider_value_changed(value: float) -> void:
@@ -747,6 +886,9 @@ func _setup_reset_buttons() -> void:
 func _request_render() -> void:
 	if backend == null or not _image_loaded or _exporting:
 		return
+	# Every slider/curve/crop handler funnels through here, so this is the one
+	# choke point for marking the edit dirty (suppressed during restore).
+	_mark_edit_dirty()
 	if _processing:
 		_render_queued = true
 		return
@@ -1269,8 +1411,38 @@ func _on_export_done(ok: bool, path: String) -> void:
 		push_error("Export failed for %s" % path.get_file())
 
 
+# --- Persistent edit history: auto-save ---------------------------------------
+
+# Arms the debounced save. No-op during restore, with no resolved edit key, or
+# with no image loaded, so only genuine edits to a keyed photo are persisted.
+func _mark_edit_dirty() -> void:
+	if _restoring or _edit_key == "" or not _image_loaded:
+		return
+	_save_timer.start(_SAVE_DEBOUNCE_SEC)
+
+
+func _on_save_timer_timeout() -> void:
+	if _edit_key == "" or not _image_loaded:
+		return
+	var meta: Dictionary = {
+		"file_name": _edit_file_name,
+		"thumb_hash": _edit_thumb_hash,
+		"updated_at": int(Time.get_unix_time_from_system()),
+	}
+	EditStore.save(_edit_key, _params, meta)
+
+
+# Writes a pending debounced save immediately. Called before the app quits and
+# when leaving Edit, so a fast quit never drops the last debounce window.
+func _flush_pending_save() -> void:
+	if _save_timer != null and not _save_timer.is_stopped():
+		_save_timer.stop()
+		_on_save_timer_timeout()
+
+
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_PREDELETE:
+		_flush_pending_save()
 		_cleanup_backend()
 		if what == NOTIFICATION_WM_CLOSE_REQUEST:
 			get_tree().quit()

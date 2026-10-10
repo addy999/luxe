@@ -41,6 +41,8 @@ The result is a small, fast editor with a serious processing engine underneath.
 
 - Library: add folders from disk and browse every supported image in them
   (arrow keys to move around, Enter or double-click to open in the editor)
+- Non-destructive edits: your adjustments save automatically and come back the
+  next time you open the photo, even after restarting the app
 - Exposure
 - Contrast
 - Highlights

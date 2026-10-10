@@ -72,6 +72,21 @@ func get_points() -> PackedVector2Array:
 	return PackedVector2Array(_points)
 
 
+# Restores a saved curve (e.g. from persisted edit history). Silently falls back
+# to the identity curve when the input has fewer than two points. Does NOT emit
+# curve_changed: callers restoring edit state push params to the backend
+# themselves and must not re-trigger a save.
+func set_points(points: PackedVector2Array) -> void:
+	if points.size() < 2:
+		_points = [Vector2(0.0, 0.0), Vector2(1.0, 1.0)]
+	else:
+		_points = []
+		for p in points:
+			_points.append(p)
+	_dragging_index = -1
+	queue_redraw()
+
+
 func _curve_rect() -> Rect2:
 	return Rect2(Vector2(PADDING, PADDING), size - Vector2(PADDING, PADDING) * 2.0)
 
