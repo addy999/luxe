@@ -411,6 +411,40 @@ func _edit_navigate(dir: int) -> void:
 		open_photo(next_path)
 
 
+# Returns true when a text-editing control currently holds keyboard focus, so
+# Edit-view key shortcuts yield to typing (LineEdit/TextEdit grab the key in
+# their own _gui_input).
+func _text_field_focused() -> bool:
+	var owner: Control = get_viewport().gui_get_focus_owner()
+	return owner is LineEdit or owner is TextEdit
+
+
+# _input runs before GUI focus navigation (step 1 of the viewport input order),
+# so the Edit-view photo-cycling keys (Left/Right) and reject key (X) are caught
+# here and marked handled, preventing a focused slider/control from eating the
+# arrow keys as ui_left/ui_right focus traversal or value nudges. See
+# docs/GODOT_FRONTEND_NOTES.md "Edit-view arrow-key input handling".
+func _input(event: InputEvent) -> void:
+	if _view != View.EDIT:
+		return
+	if not (event is InputEventKey):
+		return
+	var key_event := event as InputEventKey
+	if not key_event.is_pressed() or key_event.is_echo():
+		return
+	if _text_field_focused():
+		return
+	var kc: int = key_event.keycode
+	if kc == KEY_LEFT or kc == KEY_RIGHT:
+		# _edit_navigate no-ops on crop overlay / render / export in flight and
+		# off-library photos.
+		_edit_navigate(-1 if kc == KEY_LEFT else 1)
+		get_viewport().set_input_as_handled()
+	elif kc == KEY_X and _image_loaded:
+		_toggle_reject_edited_photo()
+		get_viewport().set_input_as_handled()
+
+
 func _unhandled_key_input(event: InputEvent) -> void:
 	if not event.is_pressed() or event.is_echo():
 		return
@@ -424,17 +458,6 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			_set_view(View.LIBRARY)
 			accept_event()
 		return
-	# Edit-view photo cycling (Left/Right); skipped while a crop overlay is
-	# open or a render/export is in flight, so navigation never races the pipe.
-	if _view == View.EDIT and _crop_overlay == null \
-			and not _processing and not _exporting:
-		if kc == KEY_LEFT or kc == KEY_RIGHT:
-			_edit_navigate(-1 if kc == KEY_LEFT else 1)
-			accept_event()
-			return
-	if _view == View.EDIT and kc == KEY_X and _image_loaded:
-		_toggle_reject_edited_photo()
-		accept_event()
 
 
 # Physical (device) pixel size of the screen.
