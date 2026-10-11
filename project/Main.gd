@@ -46,6 +46,7 @@ extends Control
 @onready var top_vsep: Control = $Root/TopBar/TopBarRow/VSep
 @onready var reject_button: Button = $Root/TopBar/TopBarRow/RejectButton
 @onready var hide_rejected_button: Button = $Root/TopBar/TopBarRow/HideRejectedButton
+@onready var filename_label: Label = $Root/TopBar/FilenameLabel
 
 # --- Edit-view QUICK ACTIONS cluster (RightPanel section, below VIEW) ---------
 @onready var quick_actions_header: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/QuickActionsHeader
@@ -269,7 +270,7 @@ func _ready() -> void:
 
 func _setup_views() -> void:
 	_edit_only_controls = [
-		export_button, fit_button,
+		filename_label, export_button, fit_button,
 		top_vsep, quick_actions_header, edit_cluster,
 	]
 	_library_only_controls = [
@@ -606,6 +607,7 @@ func open_photo(path: String) -> bool:
 	_image_loaded = true
 	_update_empty_state()
 	_edited_path = path
+	filename_label.text = path.get_file()
 	_backend_path = path
 	_raw_thumb_stop = false
 	_raw_thumb_queue.clear()

@@ -103,6 +103,14 @@ theme_type_variation = &"Muted"
 text = "Fit"
 horizontal_alignment = 2
 
+[node name="FilenameLabel" type="Label" parent="Root/TopBar" unique_id=9000001]
+layout_mode = 2
+mouse_filter = 2
+theme_type_variation = &"Muted"
+text = ""
+horizontal_alignment = 1
+vertical_alignment = 1
+
 [node name="LibraryView" parent="Root" unique_id=2075896440 instance=ExtResource("4_libview")]
 
 [node name="MiddleHBox" type="HBoxContainer" parent="Root" unique_id=1029653399]
