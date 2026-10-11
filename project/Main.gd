@@ -47,6 +47,7 @@ extends Control
 @onready var reject_button: Button = $Root/TopBar/TopBarRow/RejectButton
 @onready var hide_rejected_button: Button = $Root/TopBar/TopBarRow/HideRejectedButton
 @onready var filename_label: Label = $Root/TopBar/FilenameLabel
+@onready var filmstrip: Filmstrip = $Root/Filmstrip
 
 # --- Edit-view QUICK ACTIONS cluster (RightPanel section, below VIEW) ---------
 @onready var quick_actions_header: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/QuickActionsHeader
@@ -286,6 +287,11 @@ func _setup_views() -> void:
 	library_view.raw_thumb_requested.connect(_on_raw_thumb_requested)
 	library_view.zoom_requested.connect(_on_library_zoom_requested)
 	library_view.cursor_reject_state.connect(_on_cursor_reject_state)
+	# The filmstrip reads LibraryView state through its duck-typed source; this
+	# signal covers every mutation the strip needs to redraw for.
+	library_view.photos_changed.connect(_on_library_photos_changed)
+	filmstrip.photo_selected.connect(open_photo)
+	filmstrip.bind_source(library_view, "")
 	reject_button.pressed.connect(_on_reject_button_pressed)
 	hide_rejected_button.toggled.connect(_on_hide_rejected_toggled)
 	_set_view(View.LIBRARY)
@@ -311,6 +317,7 @@ func _set_view(view: int) -> void:
 
 	library_view.visible = in_library
 	middle_hbox.visible = not in_library
+	filmstrip.visible = not in_library
 	for control in _edit_only_controls:
 		control.visible = not in_library
 	for control in _library_only_controls:
@@ -357,6 +364,10 @@ func _set_view(view: int) -> void:
 		else:
 			zoom_slider.set_value_no_signal(_display_zoom * 100.0)
 			_update_zoom_readout()
+		# The strip was hidden a moment ago; sizes are stale, so reveal after
+		# layout settles (same deferred pattern as the display layout below).
+		filmstrip.set_selected(_edited_path)
+		filmstrip.reveal_selected.call_deferred()
 		# scroll_container.size is stale while MiddleHBox is hidden.
 		_apply_display_layout.call_deferred()
 
@@ -410,6 +421,14 @@ func _edit_navigate(dir: int) -> void:
 	var next_path: String = library_view.get_photo_master_path(nxt)
 	if next_path != "":
 		open_photo(next_path)
+
+
+# The strip only exists in Edit view, but it reads LibraryView state directly,
+# so it refreshes regardless of which view is active (cheap: pool redraws).
+func _on_library_photos_changed() -> void:
+	filmstrip.refresh()
+	if _view == View.EDIT:
+		filmstrip.reveal_selected()
 
 
 # Returns true when a text-editing control currently holds keyboard focus, so
@@ -755,7 +774,8 @@ func _on_raw_thumb_done(photo: Dictionary, img: Image, loaded: bool) -> void:
 	if loaded:
 		_backend_path = photo["path"]
 	if not _raw_thumb_stop and img != null:
-		library_view.apply_raw_thumb(photo["index"], photo["path"], img)
+		if library_view.apply_raw_thumb(photo["index"], photo["path"], img):
+			filmstrip.update_tile(photo["path"])
 	_pump_raw_thumbs()
 
 

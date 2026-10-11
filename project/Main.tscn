@@ -4,6 +4,7 @@
 [ext_resource type="Theme" uid="uid://dtluxetheme01" path="res://main_theme.tres" id="2_theme"]
 [ext_resource type="Script" uid="uid://ceu8uebg1suob" path="res://ToneCurveEditor.gd" id="3_tonecurve"]
 [ext_resource type="PackedScene" path="res://LibraryView.tscn" id="4_libview"]
+[ext_resource type="Script" path="res://Filmstrip.gd" id="5_filmstrip"]
 
 [node name="Main" type="Control" unique_id=445136820]
 layout_mode = 3
@@ -485,6 +486,11 @@ toggle_mode = true
 disabled = true
 tooltip_text = "Reject photo (X)"
 text = "⚑ Approved"
+
+[node name="Filmstrip" type="VBoxContainer" parent="Root"]
+layout_mode = 2
+theme_override_constants/separation = 0
+script = ExtResource("5_filmstrip")
 
 [node name="BottomBar" type="PanelContainer" parent="Root" unique_id=501252572]
 layout_mode = 2

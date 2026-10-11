@@ -28,6 +28,9 @@ signal zoom_requested(factor: float)
 signal cursor_reject_state(rejected: bool)
 # A reject flag was toggled; Main invalidates anything derived from it.
 signal reject_toggled(path: String, rejected: bool)
+# Photo list, badges, or textures changed in any way the filmstrip cares about
+# (rescan, filter toggle, reject toggle, thumb decoded).
+signal photos_changed()
 
 const LibraryItemScript := preload("res://LibraryItem.gd")
 
@@ -360,6 +363,7 @@ func _set_photos(photos: Array[Dictionary]) -> void:
 		tile.clear_texture()
 	grid_scroll.scroll_vertical = 0
 	_rebuild_visible()
+	photos_changed.emit()
 	empty_state.visible = _photos.is_empty()
 	_relayout()
 	_request_visible_thumbs()
@@ -703,6 +707,7 @@ func _on_thumb_ready(generation: int, index: int, img: Image) -> void:
 			_cache_put(path, tex)
 			_mark_edited(_photos[index])
 			_apply_texture_to_master(index)
+			photos_changed.emit()
 
 	_pump()
 
@@ -725,6 +730,7 @@ func apply_raw_thumb(index: int, path: String, img: Image) -> bool:
 	_cache_put(path, tex)
 	_mark_edited(photo)
 	_apply_texture_to_master(_visible[index])
+	photos_changed.emit()
 	return true
 
 
@@ -765,6 +771,7 @@ func refresh_edited_badge(path: String) -> void:
 		return
 	_mark_edited(_photos[mi])
 	_apply_texture_to_master(mi)
+	photos_changed.emit()
 	for tile in _pool:
 		var vi: int = tile.get_photo_index()
 		if tile.visible and vi >= 0 and vi < _visible.size() and _visible[vi] == mi:
@@ -827,6 +834,7 @@ func _toggle_reject_path(path: String) -> void:
 			_cursor = _visible.size() - 1
 		_relayout()
 		_request_visible_thumbs()
+		photos_changed.emit()
 	else:
 		# Still visible: refresh just the tile displaying this master index.
 		for tile in _pool:
@@ -871,6 +879,7 @@ func set_hide_rejected(hide: bool) -> void:
 	if _cursor >= 0:
 		_scroll_cursor_into_view()
 	_request_visible_thumbs()
+	photos_changed.emit()
 	cursor_reject_state.emit(_cursor_rejected())
 
 
@@ -926,3 +935,29 @@ func _cache_get(path: String) -> Texture2D:
 	_tex_lru.erase(path)
 	_tex_lru.append(path)
 	return _tex_cache[path]
+
+
+# --- Filmstrip data source (duck-typed; see Filmstrip.gd) -----------------------
+# Read-only views over the grid's own state, all VISIBLE-space so the strip
+# mirrors exactly what the grid shows, hide-rejected filter included.
+
+func filmstrip_count() -> int:
+	return _visible.size()
+
+
+func filmstrip_path(i: int) -> String:
+	if i < 0 or i >= _visible.size():
+		return ""
+	return _photos[_visible[i]]["path"]
+
+
+func filmstrip_texture(path: String) -> Texture2D:
+	return _cache_get(path)
+
+
+func filmstrip_edited(path: String) -> bool:
+	return _edited.get(path, false)
+
+
+func filmstrip_rejected(path: String) -> bool:
+	return _rejected.get(path, false)

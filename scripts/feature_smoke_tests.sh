@@ -74,7 +74,7 @@ echo
 # --- pick the test set --------------------------------------------------------
 # All per-feature tests (everything except the pipeline-level smoke_test.gd,
 # which smoke_test.sh already owns). Trailing args subset the list.
-TESTS="blacks_whites contrast crop dehaze saturation shadows_highlights tonecurve vibrance white_balance"
+TESTS="blacks_whites contrast crop dehaze filmstrip saturation shadows_highlights tonecurve vibrance white_balance"
 if [[ $# -gt 3 ]]; then
     TESTS=""
     for want in "${@:4}"; do
