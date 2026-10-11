@@ -10,8 +10,15 @@ extends SceneTree
 const TEST_PATH: String = "user://rejects_test.json"
 
 
+# quit() is deferred: _initialize keeps running after a _die, so a later
+# quit(0) would override the failure exit code and still print PASS. The flag
+# makes the first failure stick.
+var _failed: bool = false
+
+
 func _die(msg: String) -> void:
 	printerr("REJECT_SMOKE: FAIL: " + msg)
+	_failed = true
 	quit(1)
 
 
@@ -22,7 +29,10 @@ func _initialize() -> void:
 	_test_toggle()
 	_test_rejections()
 	_test_atomic_leftover_tmp()
+	await _test_lazy_resolve_hides()
 	_cleanup()
+	if _failed:
+		return
 	print("REJECT_SMOKE: PASS")
 	quit(0)
 
@@ -131,6 +141,68 @@ func _test_atomic_leftover_tmp() -> void:
 		_die("atomic: committed set missing key with stray .tmp present")
 		return
 	print("REJECT_SMOKE: atomic-leftover-tmp OK")
+
+
+# Regression: the rejected flag is resolved LAZILY (in _mark_edited, when a
+# thumbnail becomes ready), long after the scan built the visible map. If that
+# resolution does not rebuild the map, a photo whose reject flag is only
+# discovered at thumb-ready stays visible in a hiding grid until some unrelated
+# toggle rebuilds it. Drives the real LibraryView against on-disk fixtures.
+func _test_lazy_resolve_hides() -> void:
+	var dir: String = "user://test_reject_lazy"
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir))
+	var paths: Array[String] = []
+	for i in range(3):
+		var path: String = "%s/photo_%d.jpg" % [dir, i]
+		var img: Image = Image.create(40, 30, false, Image.FORMAT_RGB8)
+		img.fill(Color(0.1 * (i + 1), 0.4, 0.7))
+		img.save_jpg(path)
+		paths.append(ProjectSettings.globalize_path(path))
+
+	var view: Node = load("res://LibraryView.tscn").instantiate()
+	get_root().add_child(view)
+	await process_frame
+
+	# Persist a reject for photo_1 keyed the way the app keys it (on-disk thumb
+	# hash), so the flag can only be discovered once that thumb is built.
+	var photos: Array[Dictionary] = Library.scan_location(ProjectSettings.globalize_path(dir))
+	if photos.size() != 3:
+		_die("lazy-resolve: expected 3 fixture photos, got %d" % photos.size())
+		return
+	var target: Dictionary = photos[1]
+	var key_name: String = (target["path"] as String).get_file()
+	var cache_key: String = ThumbnailCache.cache_key(target["path"], target["mtime"])
+	var thumb: Image = ThumbnailCache.build_thumbnail(target["path"], cache_key)
+	if thumb == null:
+		_die("lazy-resolve: could not build fixture thumbnail")
+		return
+	# Re-read from disk: the stored JPEG is the canonical hash input.
+	var on_disk: Image = ThumbnailCache.load_cached(cache_key)
+	var hash: String = EditStore.thumb_hash(on_disk)
+	var rej_key: String = EditStore.edit_key(key_name, hash)
+
+	view._reject_set = {rej_key: true}
+	view._hide_rejected = true
+	view._set_photos(photos)
+
+	# Before any thumb resolves, the flag is unknown: all three are visible.
+	if view.get_photo_count() != 3:
+		_die("lazy-resolve: expected 3 visible before resolution, got %d" % view.get_photo_count())
+		return
+
+	# Thumb-ready for the rejected photo resolves its flag; the hiding grid
+	# must drop it immediately.
+	view._mark_edited(target)
+	view._reapply_hide_filter()
+	if view.get_photo_count() != 2:
+		_die("lazy-resolve: rejected photo still visible after resolution (count %d)"
+			% view.get_photo_count())
+		return
+	for vi in range(view.get_photo_count()):
+		if view.filmstrip_path(vi) == target["path"]:
+			_die("lazy-resolve: rejected path still present in the visible map")
+			return
+	print("REJECT_SMOKE: lazy-resolve-hides OK")
 
 
 func _write_raw(path: String, text: String) -> void:

@@ -10,8 +10,15 @@ const TEST_JSON: String = "user://library_locations_test.json"
 const TEST_THUMB: String = "user://thumbs"
 
 
+# quit() is deferred: _initialize keeps running after a _die, so a later
+# quit(0) would override the failure exit code and still print PASS. The flag
+# makes the first failure stick.
+var _failed: bool = false
+
+
 func _die(msg: String) -> void:
 	printerr("LIBRARY_SMOKE: FAIL: " + msg)
+	_failed = true
 	quit(1)
 
 
@@ -25,6 +32,8 @@ func _initialize() -> void:
 	_test_persistence()
 	_test_zoom_snap()
 	_cleanup()
+	if _failed:
+		return
 	print("LIBRARY_SMOKE: PASS")
 	quit(0)
 

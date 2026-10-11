@@ -9,8 +9,15 @@ extends SceneTree
 const TEST_DIR: String = "user://edits"
 
 
+# quit() is deferred: _initialize keeps running after a _die, so a later
+# quit(0) would override the failure exit code and still print PASS. The flag
+# makes the first failure stick.
+var _failed: bool = false
+
+
 func _die(msg: String) -> void:
 	printerr("EDIT_HISTORY_SMOKE: FAIL: " + msg)
+	_failed = true
 	quit(1)
 
 
@@ -22,6 +29,8 @@ func _initialize() -> void:
 	_test_rejections()
 	_test_has_record()
 	_cleanup()
+	if _failed:
+		return
 	print("EDIT_HISTORY_SMOKE: PASS")
 	quit(0)
 
