@@ -19,6 +19,6 @@ extension/dt_link_flags.json
 # Test output
 scripts/.smoke_out/
 scripts/.crop_out/
-project/tests/.feature_out/*.log
+project/tests/.feature_out
 project/tests/*.uid
 scripts/.e2e_out

@@ -94,34 +94,59 @@ export DT_BACKEND_MODULEDIR="$MODULEDIR"
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
-# --- run each feature test headless ------------------------------------------
+# --- run each feature test headless, in parallel -----------------------------
 # Each *_smoke_test.gd prints "<PREFIX>_SMOKE: PASS" and exits 0 on success;
 # _die() prints a diagnostic and exits 1. crop additionally needs an out_dir.
+#
+# Each test is a separate Godot process that cold-starts darktable (~2s). They
+# run concurrently via xargs -P. Each job runs under a private HOME ($OUT_DIR/
+# home.<test>) so both Godot's user:// (rejects.json / edit records / library
+# locations, which the state tests read-modify-write) and darktable's db-lock
+# cache dir are isolated: without that, concurrent jobs clobber each other's
+# shared state. A job writes its own $OUT_DIR/<test>.log and, on success, a
+# <test>.pass marker; the summary below reads those back (xargs can't return
+# per-job state).
+JOBS="${DT_SMOKE_JOBS:-$(sysctl -n hw.ncpu)}"
+
+run_one() {
+    local test="$1"
+    local log="$OUT_DIR/$test.log"
+    local home="$OUT_DIR/home.$test"
+    mkdir -p "$home"
+    local status
+    if [[ "$test" == "crop" ]]; then
+        HOME="$home" "$GODOT_BIN" --headless --path "$PROJECT_DIR" \
+            --script "res://tests/${test}_smoke_test.gd" \
+            -- "$RAW" "$OUT_DIR" > "$log" 2>&1
+    else
+        HOME="$home" "$GODOT_BIN" --headless --path "$PROJECT_DIR" \
+            --script "res://tests/${test}_smoke_test.gd" \
+            -- "$RAW" > "$log" 2>&1
+    fi
+    status=$?
+    if [[ $status -eq 0 ]] && grep -q "_SMOKE: PASS" "$log"; then
+        : > "$OUT_DIR/$test.pass"
+        echo "PASS  $test"
+    else
+        echo "FAIL  $test  (exit $status, log: $log)"
+    fi
+}
+export -f run_one
+export GODOT_BIN PROJECT_DIR OUT_DIR RAW
+
+# -P runs up to $JOBS concurrently; -n1 feeds one test name per invocation.
+printf '%s\n' $TESTS | xargs -P"$JOBS" -n1 -I{} bash -c 'run_one "$@"' _ {}
+
+# --- collect per-job results from the .pass markers --------------------------
 PASSED=()
 FAILED=()
 for test in $TESTS; do
-    LOG="$OUT_DIR/$test.log"
-    set +e
-    if [[ "$test" == "crop" ]]; then
-        "$GODOT_BIN" --headless --path "$PROJECT_DIR" \
-            --script "res://tests/${test}_smoke_test.gd" \
-            -- "$RAW" "$OUT_DIR" > "$LOG" 2>&1
-    else
-        "$GODOT_BIN" --headless --path "$PROJECT_DIR" \
-            --script "res://tests/${test}_smoke_test.gd" \
-            -- "$RAW" > "$LOG" 2>&1
-    fi
-    STATUS=$?
-    set -e
-
-    if [[ $STATUS -eq 0 ]] && grep -q "_SMOKE: PASS" "$LOG"; then
+    if [[ -f "$OUT_DIR/$test.pass" ]]; then
         PASSED+=("$test")
-        echo "PASS  $test"
     else
         FAILED+=("$test")
-        echo "FAIL  $test  (exit $STATUS, log: $LOG)"
         # Show the test's own diagnostic lines, skip Godot's engine noise.
-        grep -E '_SMOKE|_die|SCRIPT ERROR|At: ' "$LOG" | head -n 10 || true
+        grep -E '_SMOKE|_die|SCRIPT ERROR|At: ' "$OUT_DIR/$test.log" 2>/dev/null | head -n 10 || true
     fi
 done
 
