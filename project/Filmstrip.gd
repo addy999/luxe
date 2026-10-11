@@ -26,7 +26,7 @@ class_name Filmstrip
 signal photo_selected(path: String)
 
 # Fixed tile geometry (no zoom; the grid's zoom slider stays Library-only).
-const TILE_WIDTH: float = 112.0
+const TILE_WIDTH: float = 114.0
 const TILE_HEIGHT: float = 76.0
 const SEP: int = 6
 const MARGIN: float = 8.0
@@ -59,7 +59,9 @@ func _ready() -> void:
 	var theme_manager: Node = get_node_or_null("/root/ThemeManager")
 	if theme_manager != null:
 		theme_manager.theme_changed.connect(_on_theme_changed)
-	_update_colors(theme_manager != null and not theme_manager.is_dark)
+		_update_colors(theme_manager.is_dark)
+	else:
+		_update_colors(true)
 
 	# Toggle row: a thin strip-wide button row so a click anywhere on it works,
 	# not just on the small arrow glyph.
@@ -110,8 +112,8 @@ func _on_theme_changed(is_dark: bool) -> void:
 
 
 func _update_colors(is_dark: bool) -> void:
-	_color_tile = Color(0.184, 0.184, 0.184, 1.0) if is_dark else Color(0.93, 0.93, 0.93, 1.0)
-	_color_tile_hover = Color(0.227, 0.227, 0.227, 1.0) if is_dark else Color(0.88, 0.88, 0.88, 1.0)
+	_color_tile = Color(0.11, 0.11, 0.11, 1.0) if is_dark else Color(0.82, 0.82, 0.82, 1.0)
+	_color_tile_hover = Color(0.16, 0.16, 0.16, 1.0) if is_dark else Color(0.76, 0.76, 0.76, 1.0)
 	_color_border = Color(0.227, 0.227, 0.227, 1.0) if is_dark else Color(0.78, 0.78, 0.78, 1.0)
 	_color_accent = Color(0.29, 0.616, 0.878, 1.0) if is_dark else Color(0.12, 0.40, 0.65, 1.0)
 	_color_caption = Color(0.541, 0.541, 0.541, 1.0) if is_dark else Color(0.45, 0.45, 0.45, 1.0)
