@@ -20,6 +20,7 @@ func _initialize() -> void:
 	_test_collapse()
 	_test_binding()
 	_test_reveal()
+	await _test_strip_area_lays_out()
 	if _failed:
 		return
 	print("FILMSTRIP_SMOKE: PASS")
@@ -145,3 +146,27 @@ func _test_reveal() -> void:
 		_die("revealed tile not within the viewport neighborhood")
 		return
 	print("FILMSTRIP_SMOKE: reveal OK")
+
+
+# Regression: StripArea must be a layout container. A plain Control does not
+# lay out its children, so the ScrollContainer stayed 0-wide and clipped every
+# tile, rendering the strip as an empty grey box.
+func _test_strip_area_lays_out() -> void:
+	var pair: Array = await _make_strip(30)
+	var strip: Object = pair[0]
+	if not (strip._strip_area is Container):
+		_die("StripArea must be a Container so it sizes the ScrollContainer")
+		return
+	# Give the strip a real width the way the Edit-view VBox does, then let
+	# the container pass run.
+	strip.size = Vector2(900, 120)
+	strip._strip_area.size = Vector2(900, 92)
+	await process_frame
+	if strip._scroll.size.x <= 0.0:
+		_die("ScrollContainer width is 0; tiles would all be clipped")
+		return
+	if absf(strip._scroll.size.x - strip._strip_area.size.x) > 1.0:
+		_die("ScrollContainer (%f) should span StripArea (%f)" % [
+			strip._scroll.size.x, strip._strip_area.size.x])
+		return
+	print("FILMSTRIP_SMOKE: strip area layout OK")

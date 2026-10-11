@@ -44,7 +44,7 @@ var _selected_path: String = ""
 var _arrow: Button
 var _scroll: ScrollContainer
 var _content: Control
-var _strip_area: Control
+var _strip_area: MarginContainer
 var _pool: Array[FilmstripTile] = []   # recycled tiles, all children of _content
 
 # Palette mirrors LibraryItem's, re-derived on theme_changed.
@@ -74,7 +74,10 @@ func _ready() -> void:
 	add_child(toggle_row)
 	_arrow = toggle_row
 
-	_strip_area = Control.new()
+	# A MarginContainer, NOT a plain Control: a bare Control never lays out its
+	# children, so the ScrollContainer below would keep width 0 and clip every
+	# tile (the strip renders as an empty grey box).
+	_strip_area = MarginContainer.new()
 	_strip_area.name = "StripArea"
 	_strip_area.visible = false
 	_strip_area.custom_minimum_size = Vector2(0, MARGIN * 2.0 + TILE_HEIGHT)
