@@ -19,6 +19,8 @@ func _initialize() -> void:
 	_test_filtering()
 	_test_scan()
 	_test_next_index()
+	_test_visible_indices()
+	_test_next_unrejected()
 	_test_thumbnails()
 	_test_persistence()
 	_test_zoom_snap()
@@ -141,6 +143,73 @@ func _test_next_index() -> void:
 	if not _check_next(0, 1, 0, 3, 0, -1):
 		return
 	print("LIBRARY_SMOKE: next_index OK")
+
+
+# Builds a master list of n photos with paths p0..p(n-1).
+func _make_photos(n: int) -> Array[Dictionary]:
+	var photos: Array[Dictionary] = []
+	for i in range(n):
+		photos.append({"path": "p%d" % i, "name": "p%d" % i, "mtime": 0, "is_raw": false})
+	return photos
+
+
+func _test_visible_indices() -> void:
+	var photos: Array[Dictionary] = _make_photos(5)
+	var rejected: Dictionary = {"p1": true, "p3": true}
+	# hide_rejected = false -> identity map regardless of rejections.
+	var shown: Array[int] = Library.visible_indices(photos, rejected, false)
+	if shown != [0, 1, 2, 3, 4]:
+		_die("visible_indices (no hide) expected identity, got %s" % str(shown))
+		return
+	# hide_rejected = true -> rejected master indices dropped.
+	var hidden: Array[int] = Library.visible_indices(photos, rejected, true)
+	if hidden != [0, 2, 4]:
+		_die("visible_indices (hide) expected [0,2,4], got %s" % str(hidden))
+		return
+	# All rejected -> empty.
+	var all_rej: Dictionary = {"p0": true, "p1": true, "p2": true, "p3": true, "p4": true}
+	if Library.visible_indices(photos, all_rej, true) != []:
+		_die("visible_indices (all rejected) expected []")
+		return
+	# No rejections -> identity even when hiding.
+	if Library.visible_indices(photos, {}, true) != [0, 1, 2, 3, 4]:
+		_die("visible_indices (none rejected, hide) expected identity")
+		return
+	print("LIBRARY_SMOKE: visible_indices OK")
+
+
+func _test_next_unrejected() -> void:
+	var photos: Array[Dictionary] = _make_photos(6)
+	var rejected: Dictionary = {"p1": true, "p2": true, "p4": true}
+	# From 0, +1 skips the p1/p2 run to p3.
+	if Library.next_unrejected_index(photos, rejected, 0, 1) != 3:
+		_die("next_unrejected +1 from 0 expected 3")
+		return
+	# From 3, +1 skips p4 to p5.
+	if Library.next_unrejected_index(photos, rejected, 3, 1) != 5:
+		_die("next_unrejected +1 from 3 expected 5")
+		return
+	# From 5, +1 walks off the end -> -1 (stop, no wrap).
+	if Library.next_unrejected_index(photos, rejected, 5, 1) != -1:
+		_die("next_unrejected +1 from last expected -1")
+		return
+	# From 3, -1 skips p2/p1 to p0.
+	if Library.next_unrejected_index(photos, rejected, 3, -1) != 0:
+		_die("next_unrejected -1 from 3 expected 0")
+		return
+	# From 0, -1 walks off the start -> -1.
+	if Library.next_unrejected_index(photos, rejected, 0, -1) != -1:
+		_die("next_unrejected -1 from 0 expected -1")
+		return
+	# A rejected from_index still advances to the nearest keeper.
+	if Library.next_unrejected_index(photos, rejected, 2, 1) != 3:
+		_die("next_unrejected +1 from rejected 2 expected 3")
+		return
+	# Empty list -> -1.
+	if Library.next_unrejected_index([], {}, 0, 1) != -1:
+		_die("next_unrejected on empty list expected -1")
+		return
+	print("LIBRARY_SMOKE: next_unrejected OK")
 
 
 func _bump_mtime(path: String, old_mtime: int) -> int:

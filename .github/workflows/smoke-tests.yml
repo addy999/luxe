@@ -1,0 +1,45 @@
+name: smoke tests
+
+# Backend-free smoke tests only: the EditStore / Library / RejectStore
+# pure-logic tests run on a bare Godot headless binary with no GDExtension
+# and no darktable build. The per-slider and e2e tests need the compiled
+# libdt_backend + a darktable build, so they stay local / in the pre-commit
+# hook and are intentionally not run here.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend-free:
+    runs-on: ubuntu-latest
+    env:
+      GODOT_VERSION: "4.6-beta3"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Godot headless
+        run: |
+          url="https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          curl -L "$url" -o godot.zip
+          unzip -q godot.zip
+          mv "Godot_v${GODOT_VERSION}_linux.x86_64" /usr/local/bin/godot
+          chmod +x /usr/local/bin/godot
+
+      - name: Run backend-free smoke tests
+        run: |
+          fail=0
+          for t in edit_history library reject; do
+            echo "=== $t ==="
+            godot --headless --path project \
+              --script "res://tests/${t}_smoke_test.gd" 2>&1 | tee "/tmp/$t.log"
+            status=${PIPESTATUS[0]}
+            if [ "$status" = "0" ] && grep -q '_SMOKE: PASS' "/tmp/$t.log"; then
+              echo "PASS $t"
+            else
+              echo "FAIL $t (exit $status)"
+              fail=1
+            fi
+          done
+          exit $fail
