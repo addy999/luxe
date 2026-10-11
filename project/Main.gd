@@ -395,6 +395,9 @@ func _on_reject_button_pressed() -> void:
 
 func _on_hide_rejected_toggled(pressed: bool) -> void:
 	library_view.set_hide_rejected(pressed)
+	hide_rejected_button.text = "Show Rejected" if pressed else "Hide Rejected"
+	hide_rejected_button.tooltip_text = \
+		"Show rejected photos" if pressed else "Hide rejected photos"
 
 
 # Reject-button pressed-state sync; LibraryView emits this on every reject
