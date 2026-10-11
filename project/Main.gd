@@ -101,6 +101,11 @@ const _SAVE_DEBOUNCE_SEC: float = 0.8
 # load-time _request_render so merely opening a photo never writes a record.
 var _restoring: bool = false
 
+# --- Persistent UI state (UiStateStore) ---------------------------------------
+# Write-through: each change point (zoom step, filter toggle, photo open) saves
+# the whole dict; it's one tiny atomic file.
+var _ui_state: Dictionary = UiStateStore.defaults()
+
 # Per-image as-shot CCT; the WB reset target.
 var _wb_default_temperature: float = 6500.0
 var _reset_buttons: Array[Button] = []
@@ -259,7 +264,14 @@ func _ready() -> void:
 	add_child(_save_timer)
 
 	_setup_reset_buttons()
+	# Load before _setup_views: _set_view(LIBRARY) seeds the shared zoom slider
+	# from _library_thumb_zoom_pct, so the restored value must be in place first.
+	_ui_state = UiStateStore.load()
+	_library_thumb_zoom_pct = clampf(
+		float(_ui_state.get("library_zoom_pct", 100.0)),
+		_LIBRARY_ZOOM_MIN_PCT, _LIBRARY_ZOOM_MAX_PCT)
 	_setup_views()
+	_apply_restored_ui_state()
 
 	_animate_entrance()
 	_update_empty_state()
@@ -267,6 +279,34 @@ func _ready() -> void:
 	if not _init_backend():
 		return
 	_finish_ready()
+	_maybe_reopen_last_photo()
+
+
+# Applies persisted UI state on launch, after _setup_views connected the
+# controls: the hide-rejected filter and the library zoom. Same appliers as
+# the live change handlers, minus their write-back (the values came from
+# disk). The last photo is reopened separately, after the backend is up.
+func _apply_restored_ui_state() -> void:
+	if _ui_state.get("hide_rejected", false):
+		hide_rejected_button.set_pressed_no_signal(true)
+		library_view.set_hide_rejected(true)
+		# Label names the action the next click performs (see toggle handler).
+		hide_rejected_button.text = "Show Rejected"
+		hide_rejected_button.tooltip_text = "Show rejected photos"
+	# The grid is zero-width at this point: this just parks the RAW scale (snap
+	# is a no-op without a width); _finish_ready re-applies it snapped once
+	# layout has run.
+	library_view.set_thumb_zoom(_library_thumb_zoom_pct / 100.0)
+
+
+# Restores the last session's final state: reopen the last photo (its saved
+# edits come back through EditStore inside open_photo) straight into the Edit
+# view. Skipped when the file is gone, launching into Library as before.
+func _maybe_reopen_last_photo() -> void:
+	var path: String = _ui_state.get("last_photo", "")
+	if path == "" or not FileAccess.file_exists(path):
+		return
+	open_photo(path)
 
 
 func _setup_views() -> void:
@@ -395,6 +435,9 @@ func _on_reject_button_pressed() -> void:
 
 func _on_hide_rejected_toggled(pressed: bool) -> void:
 	library_view.set_hide_rejected(pressed)
+	_ui_state["hide_rejected"] = pressed
+	UiStateStore.save(_ui_state)
+	# Label names the action the next click performs, not the current state.
 	hide_rejected_button.text = "Show Rejected" if pressed else "Hide Rejected"
 	hide_rejected_button.tooltip_text = \
 		"Show rejected photos" if pressed else "Hide rejected photos"
@@ -564,6 +607,11 @@ func _finish_ready() -> void:
 	cluster_reject_button.toggled.connect(_on_cluster_reject_button_toggled)
 	cluster_reject_button.disabled = true
 
+	# Launch restore pass 2: apply the restored library zoom against the grid's
+	# real width now that layout has run (snap needs a width; _ready's pass ran
+	# at zero). Also syncs the shared slider to the snapped value.
+	_set_library_zoom(_library_thumb_zoom_pct)
+
 
 func _update_empty_state() -> void:
 	var empty: bool = not _image_loaded
@@ -698,6 +746,9 @@ func open_photo(path: String) -> bool:
 	_restoring = true
 	_request_render()
 	_restoring = false
+	# Write-through: this is now the photo the next launch reopens in Edit.
+	_ui_state["last_photo"] = path
+	UiStateStore.save(_ui_state)
 	return true
 
 
@@ -1254,7 +1305,11 @@ func _set_library_zoom(pct: float) -> void:
 	# Store the RAW (continuous) value: gestures accumulate multiplicatively
 	# off it, and snapping the stored value would re-snap each small factor
 	# back to the same step (pinch dead zone). Snap only for the slider/tiles.
+	var prev: float = _library_thumb_zoom_pct
 	_library_thumb_zoom_pct = clamp(pct, _LIBRARY_ZOOM_MIN_PCT, _LIBRARY_ZOOM_MAX_PCT)
+	if not is_equal_approx(prev, _library_thumb_zoom_pct):
+		_ui_state["library_zoom_pct"] = _library_thumb_zoom_pct
+		UiStateStore.save(_ui_state)
 	# Snap to the nearest gap-free zoom level so the slider itself steps
 	# between column counts instead of drifting through partial-column states.
 	var stepped: float = library_view.snap_thumb_scale(_library_thumb_zoom_pct / 100.0) * 100.0

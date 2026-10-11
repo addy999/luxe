@@ -1,0 +1,70 @@
+class_name UiStateStore
+
+# App-level UI state persisted across restarts: library thumbnail zoom,
+# hide-rejected filter, last opened photo. One flat versioned JSON at the top
+# of user:// (read/written whole, so new fields need no schema per record).
+# Mirrors Library.gd's versioned JSON + all-or-nothing validation and
+# RejectStore's atomic tmp+rename write.
+
+const STORE_PATH: String = "user://ui_state.json"
+const VERSION: int = 1
+
+
+# Defaults for every tracked field; load() merges a validated file over these.
+static func defaults() -> Dictionary:
+	return {
+		"library_zoom_pct": 100.0,
+		"hide_rejected": false,
+		"last_photo": "",
+	}
+
+
+# Whole-state load. Returns defaults() on missing file, malformed JSON,
+# version mismatch, or bad shape (all-or-nothing). Wrong-typed individual
+# fields fall back to their default instead of sinking the whole state.
+static func load(path: String = STORE_PATH) -> Dictionary:
+	var state: Dictionary = defaults()
+	if not FileAccess.file_exists(path):
+		return state
+	var text: String = FileAccess.get_file_as_string(path)
+	var parsed: Variant = JSON.parse_string(text)
+	if not (parsed is Dictionary):
+		return state
+	var data: Dictionary = parsed
+	if int(data.get("version", -1)) != VERSION:
+		return state
+	if not data.has("values") or not (data["values"] is Dictionary):
+		return state
+	var values: Dictionary = data["values"]
+	var zoom: Variant = values.get("library_zoom_pct", state["library_zoom_pct"])
+	if zoom is float or zoom is int:
+		state["library_zoom_pct"] = float(zoom)
+	var hide: Variant = values.get("hide_rejected", state["hide_rejected"])
+	if hide is bool:
+		state["hide_rejected"] = hide
+	var photo: Variant = values.get("last_photo", state["last_photo"])
+	if photo is String:
+		state["last_photo"] = photo
+	return state
+
+
+# Atomic tmp+rename write of the whole state; a crash mid-write cannot corrupt
+# an existing file. Returns false on any I/O failure.
+static func save(state: Dictionary, path: String = STORE_PATH) -> bool:
+	var payload: Dictionary = {"version": VERSION, "values": state}
+	var text: String = JSON.stringify(payload, "\t")
+
+	var tmp_path: String = path + ".tmp"
+	var file: FileAccess = FileAccess.open(tmp_path, FileAccess.WRITE)
+	if file == null:
+		return false
+	file.store_string(text)
+	file.close()
+
+	var err: int = DirAccess.rename_absolute(
+		ProjectSettings.globalize_path(tmp_path),
+		ProjectSettings.globalize_path(path))
+	if err != OK:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
+		return false
+	return true
