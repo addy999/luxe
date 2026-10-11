@@ -27,6 +27,11 @@ jobs:
           mv "Godot_v${GODOT_VERSION}_linux.x86_64" /usr/local/bin/godot
           chmod +x /usr/local/bin/godot
 
+      - name: Import project (build the global class cache)
+        run: |
+          rm -f project/dt_backend.gdextension
+          godot --headless --path project --import
+
       - name: Run backend-free smoke tests
         run: |
           fail=0

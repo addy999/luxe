@@ -35,7 +35,7 @@ Under the hood it is darktable. Luxe runs darktable's core library (`lib_darktab
 
 The result is a small, fast editor with a serious processing engine underneath.
 
-> Currently only support M-Series MacOS
+> Available for macOS (Apple Silicon), Linux (x86_64), and Windows (x86_64).
 
 ## Features
 
@@ -73,6 +73,13 @@ The UI also gives you:
 - **Light and dark themes**
 
 ## Progress
+
+**v0.1.4** -- Library view, non-destructive persistent edits, reject/approve workflow, Windows support
+
+<p align="center">
+  <img src="docs/img/v0.1.4.png" width="720" alt="Luxe v0.1.4">
+  <img src="docs/img/v0.1.4-2.png" width="720" alt="Luxe v0.1.4">
+</p>
 
 **v0.1.3** -- Speed up edits by 5x, add advanced sliders, add Crop
 
