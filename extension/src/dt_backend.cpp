@@ -66,6 +66,7 @@ void DtBackend::_bind_methods() {
   ClassDB::bind_method(D_METHOD("set_vibrance", "value"), &DtBackend::set_vibrance);
   ClassDB::bind_method(D_METHOD("set_tonecurve", "points"), &DtBackend::set_tonecurve);
   ClassDB::bind_method(D_METHOD("set_crop", "left", "top", "right", "bottom"), &DtBackend::set_crop);
+  ClassDB::bind_method(D_METHOD("set_orientation", "quarter_turns"), &DtBackend::set_orientation);
   ClassDB::bind_method(D_METHOD("set_white_balance_temperature", "kelvin"), &DtBackend::set_white_balance_temperature);
   ClassDB::bind_method(D_METHOD("get_white_balance_temperature"), &DtBackend::get_white_balance_temperature);
   ClassDB::bind_method(D_METHOD("process_fit", "max_width", "max_height"), &DtBackend::process_fit);
@@ -925,6 +926,41 @@ void DtBackend::set_crop(float left, float top, float right, float bottom) {
 
   dt_dev_add_history_item_ext(&dev, clipping_module, TRUE, TRUE);
   note_pipe_change(clipping_module);
+}
+
+void DtBackend::set_orientation(int quarter_turns) {
+  if(!image_loaded) {
+    UtilityFunctions::printerr("DtBackend::set_orientation: no image loaded");
+    return;
+  }
+
+  // Map clockwise 90-degree steps to dt_image_orientation_t flag combos
+  // (common/image.h). Each unit = 90 deg CW. 0 = ORIENTATION_NONE (identity).
+  // Literal values used to avoid pulling image.h into this translation unit.
+  //   0 -> ORIENTATION_NONE          (0)  no rotation (module disabled)
+  //   1 -> ORIENTATION_ROTATE_CW_90  (5)  FLIP_Y|SWAP_XY  (90 CW)
+  //   2 -> ORIENTATION_ROTATE_180    (3)  FLIP_X|FLIP_Y   (180)
+  //   3 -> ORIENTATION_ROTATE_CCW_90 (6)  FLIP_X|SWAP_XY  (270 CW == 90 CCW)
+  static const int kOrientation[4] = {0, 5, 3, 6};
+  int qt = ((quarter_turns % 4) + 4) % 4;
+  const int orientation = kOrientation[qt];
+
+  if(!flip_module) {
+    flip_module = dt_iop_get_module_from_list(dev.iop, "flip");
+    if(!flip_module) {
+      UtilityFunctions::printerr("DtBackend::set_orientation: could not find \"flip\" module in dev.iop");
+      return;
+    }
+  }
+
+  // The `orientation` field has no per-value $DESCRIPTION, so set it as a plain
+  // int rather than via dt_iop_set_enum (which resolves named values).
+  if(!dt_iop_set_int(flip_module, "orientation", orientation)) return;
+
+  flip_module->enabled = (orientation != 0) ? TRUE : FALSE;
+
+  dt_dev_add_history_item_ext(&dev, flip_module, flip_module->enabled, TRUE);
+  note_pipe_change(flip_module);
 }
 
 void DtBackend::note_pipe_change(dt_iop_module_t *module) {

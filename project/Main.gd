@@ -39,15 +39,23 @@ extends Control
 @onready var zoom_value_label: Label = $Root/TopBar/TopBarRow/ZoomValueLabel
 @onready var file_dialog: FileDialog = $FileDialog
 @onready var export_dialog: FileDialog = $ExportDialog
-@onready var crop_button: Button = $Root/TopBar/TopBarRow/CropButton
 @onready var view_tab_bar: TabBar = $Root/TopBar/TopBarRow/ViewTabBar
 @onready var library_view: LibraryView = $Root/LibraryView
 @onready var middle_hbox: HBoxContainer = $Root/MiddleHBox
 @onready var library_status_label: Label = $Root/BottomBar/BottomRow/LibraryStatusLabel
 @onready var top_vsep: Control = $Root/TopBar/TopBarRow/VSep
-@onready var crop_sep: Control = $Root/TopBar/TopBarRow/CropSep
 @onready var reject_button: Button = $Root/TopBar/TopBarRow/RejectButton
 @onready var hide_rejected_button: Button = $Root/TopBar/TopBarRow/HideRejectedButton
+
+# --- Edit-view QUICK ACTIONS cluster (RightPanel section, below VIEW) ---------
+@onready var quick_actions_header: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/QuickActionsHeader
+@onready var edit_cluster: HBoxContainer = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow
+@onready var cluster_prev_button: Button = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow/ClusterPrevButton
+@onready var cluster_next_button: Button = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow/ClusterNextButton
+@onready var cluster_crop_button: Button = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow/ClusterCropButton
+@onready var cluster_rotate_ccw_button: Button = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow/ClusterRotateCcwButton
+@onready var cluster_rotate_cw_button: Button = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow/ClusterRotateCwButton
+@onready var cluster_reject_button: Button = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow/ClusterRejectButton
 
 const CropOverlayScript := preload("res://CropOverlay.gd")
 
@@ -110,6 +118,7 @@ var _params: Dictionary = {
 	"tonecurve": PackedVector2Array([Vector2(0.0, 0.0), Vector2(1.0, 1.0)]),
 	"wb_temperature": 6500.0,
 	"crop": Rect2(0, 0, 1, 1),
+	"orientation": 0,
 }
 
 # --- Slider offsets vs. module defaults ----------------------------------------
@@ -261,7 +270,7 @@ func _ready() -> void:
 func _setup_views() -> void:
 	_edit_only_controls = [
 		export_button, fit_button,
-		crop_button, top_vsep, crop_sep,
+		top_vsep, quick_actions_header, edit_cluster,
 	]
 	_library_only_controls = [
 		reject_button, hide_rejected_button,
@@ -385,8 +394,12 @@ func _on_cursor_reject_state(rejected: bool) -> void:
 # Edit-view photo cycling: move to the prev/next non-rejected photo in the
 # current library, but only when the open photo belongs to that library.
 # Stops at the ends (no wrap). open_photo() flushes the pending save, waits
-# out in-flight tasks, reloads params, and re-renders.
+# out in-flight tasks, reloads params, and re-renders. No-ops outside Edit view
+# or while a crop overlay / render / export is in flight, so navigation (from
+# keys or the cluster buttons) never races the pipe.
 func _edit_navigate(dir: int) -> void:
+	if _view != View.EDIT or _crop_overlay != null or _processing or _exporting:
+		return
 	var idx: int = library_view.get_photo_index_master(_edited_path)
 	if idx < 0:
 		return
@@ -418,6 +431,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		if kc == KEY_LEFT or kc == KEY_RIGHT:
 			_edit_navigate(-1 if kc == KEY_LEFT else 1)
 			accept_event()
+			return
+	if _view == View.EDIT and kc == KEY_X and _image_loaded:
+		_toggle_reject_edited_photo()
+		accept_event()
 
 
 # Physical (device) pixel size of the screen.
@@ -487,8 +504,18 @@ func _finish_ready() -> void:
 	ThemeManager.theme_changed.connect(_on_theme_changed)
 	_on_theme_changed(ThemeManager.is_dark)
 
-	crop_button.toggled.connect(_on_crop_button_toggled)
-	crop_button.disabled = true
+	cluster_prev_button.pressed.connect(_edit_navigate.bind(-1))
+	cluster_next_button.pressed.connect(_edit_navigate.bind(1))
+	cluster_prev_button.disabled = true
+	cluster_next_button.disabled = true
+	cluster_crop_button.toggled.connect(_on_crop_button_toggled)
+	cluster_crop_button.disabled = true
+	cluster_rotate_ccw_button.pressed.connect(_on_rotate_ccw_button_pressed)
+	cluster_rotate_cw_button.pressed.connect(_on_rotate_cw_button_pressed)
+	cluster_rotate_ccw_button.disabled = true
+	cluster_rotate_cw_button.disabled = true
+	cluster_reject_button.toggled.connect(_on_cluster_reject_button_toggled)
+	cluster_reject_button.disabled = true
 
 
 func _update_empty_state() -> void:
@@ -565,8 +592,14 @@ func open_photo(path: String) -> bool:
 
 	_source_basename = path.get_file().get_basename()
 	export_button.disabled = false
-	crop_button.disabled = false
-	crop_button.set_pressed_no_signal(false)
+	cluster_prev_button.disabled = false
+	cluster_next_button.disabled = false
+	cluster_crop_button.disabled = false
+	cluster_crop_button.set_pressed_no_signal(false)
+	cluster_rotate_ccw_button.disabled = false
+	cluster_rotate_cw_button.disabled = false
+	cluster_reject_button.disabled = false
+	_sync_cluster_reject_button(path)
 
 	# Resolve this photo's EditStore identity, then restore its saved params (or
 	# as-shot defaults for a never-edited photo). Keyed by file name + a hash of
@@ -588,6 +621,7 @@ func open_photo(path: String) -> bool:
 		"tonecurve": PackedVector2Array([Vector2(0.0, 0.0), Vector2(1.0, 1.0)]),
 		"wb_temperature": as_shot_temperature,
 		"crop": Rect2(0, 0, 1, 1),
+		"orientation": 0,
 	}
 	var saved: Dictionary = EditStore.load(_edit_key) if _edit_key != "" else {}
 	# Merge over defaults so a record missing a key (older schema) still gets a
@@ -824,6 +858,8 @@ func _apply_params_to_ui(p: Dictionary) -> void:
 
 	_params["crop"] = p["crop"]
 
+	_params["orientation"] = int(p["orientation"])
+
 
 func _on_exposure_slider_value_changed(value: float) -> void:
 	exposure_value_label.text = "%.2f" % value
@@ -1043,6 +1079,10 @@ func _apply_params_to_backend() -> void:
 	if _params_differ("crop"):
 		var crop: Rect2 = _params["crop"]
 		backend.set_crop(crop.position.x, crop.position.y, crop.end.x, crop.end.y)
+	# set_orientation lands alongside this change in a parallel backend build;
+	# guarded so the app doesn't crash against an older binary.
+	if _params_differ("orientation") and backend.has_method("set_orientation"):
+		backend.set_orientation(_params["orientation"])
 	_snapshot_applied_params()
 
 
@@ -1368,7 +1408,7 @@ func _set_display_zoom(target_pct: float) -> void:
 # --- Crop ----------------------------------------------------------------------
 func _on_crop_button_toggled(pressed: bool) -> void:
 	if not _image_loaded:
-		crop_button.set_pressed_no_signal(false)
+		cluster_crop_button.set_pressed_no_signal(false)
 		return
 	if pressed:
 		_open_crop_overlay()
@@ -1411,16 +1451,66 @@ func _close_crop_overlay() -> void:
 
 func _on_crop_overlay_applied(rect: Rect2) -> void:
 	_close_crop_overlay()
-	crop_button.set_pressed_no_signal(false)
+	cluster_crop_button.set_pressed_no_signal(false)
 	_params["crop"] = rect
 	_request_render()
 
 
 func _on_crop_overlay_canceled() -> void:
 	_close_crop_overlay()
-	crop_button.set_pressed_no_signal(false)
+	cluster_crop_button.set_pressed_no_signal(false)
 	_params["crop"] = _crop_before_edit
 	_request_render()
+
+
+# --- Rotate ----------------------------------------------------------------------
+# orientation is quarter-turns clockwise, 0..3; backend.set_orientation (added by a
+# parallel change) applies it with the same contract, 0 = no-op.
+func _on_rotate_cw_button_pressed() -> void:
+	if not _image_loaded:
+		return
+	_params["orientation"] = (int(_params["orientation"]) + 1) % 4
+	_request_render()
+
+
+func _on_rotate_ccw_button_pressed() -> void:
+	if not _image_loaded:
+		return
+	_params["orientation"] = (int(_params["orientation"]) + 3) % 4
+	_request_render()
+
+
+# --- Reject (Edit view) ---------------------------------------------------------
+# Mirrors LibraryView's grid toggle so a photo's rejected state is the same
+# whether set from the grid or from Edit. The button already flipped its own
+# pressed state before this signal fires, so a failed toggle flips it back.
+func _on_cluster_reject_button_toggled(_pressed: bool) -> void:
+	if not _toggle_reject_edited_photo():
+		# Toggle rejected; restore the button to the real persisted state.
+		_sync_cluster_reject_button(_edited_path)
+
+
+# Attempts to toggle the open photo's rejected state; no-ops (returns false)
+# when it isn't part of the current library, same guard as _edit_navigate.
+# Returns true when the toggle happened.
+func _toggle_reject_edited_photo() -> bool:
+	if _edited_path == "" or library_view.get_photo_index_master(_edited_path) < 0:
+		return false
+	library_view.toggle_reject_path(_edited_path)
+	_sync_cluster_reject_button(_edited_path)
+	return true
+
+
+# Reads the photo's rejected state from LibraryView (the source of truth) and
+# updates the cluster button's pressed state and text label without re-emitting
+# toggled. The text ("⚑ Rejected" / "⚑ Approved") is the authoritative indicator.
+func _sync_cluster_reject_button(path: String) -> void:
+	var mi: int = library_view.get_photo_index_master(path)
+	var rejected: bool = false
+	if mi >= 0:
+		rejected = library_view.is_path_rejected(path)
+	cluster_reject_button.set_pressed_no_signal(rejected)
+	cluster_reject_button.text = "⚑ Rejected" if rejected else "⚑ Approved"
 
 
 func _on_export_button_pressed() -> void:

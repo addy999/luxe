@@ -796,6 +796,14 @@ func toggle_reject_cursor() -> void:
 	_toggle_reject_path(_photos[_visible[_cursor]]["path"])
 
 
+# Public entry for toggling a specific photo's rejected state from outside the
+# grid (Main's Edit-view reject button / 'x' key), by path rather than cursor.
+func toggle_reject_path(path: String) -> void:
+	if _master_index_of(path) < 0:
+		return
+	_toggle_reject_path(path)
+
+
 func _toggle_reject_path(path: String) -> void:
 	var now: bool = not _rejected.get(path, false)
 	_rejected[path] = now
@@ -883,6 +891,11 @@ func _cursor_rejected() -> bool:
 # list (independent of the hide filter), skipping rejected photos.
 func get_photo_index_master(path: String) -> int:
 	return _master_index_of(path)
+
+
+# Session rejected state for a path, for Main's Edit-view reject button sync.
+func is_path_rejected(path: String) -> bool:
+	return _rejected.get(path, false)
 
 
 func get_photo_master_path(master_index: int) -> String:

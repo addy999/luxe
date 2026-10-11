@@ -41,6 +41,7 @@ func _sample_params() -> Dictionary:
 		"tonecurve": PackedVector2Array([Vector2(0.0, 0.1), Vector2(0.5, 0.6), Vector2(1.0, 0.9)]),
 		"wb_temperature": 5200.0,
 		"crop": Rect2(0.1, 0.2, 0.7, 0.6),
+		"orientation": 2,
 	}
 
 
@@ -65,6 +66,10 @@ func _test_round_trip() -> void:
 		if not is_equal_approx(float(loaded[k]), float(params[k])):
 			_die("key %s round-trip mismatch: %s vs %s" % [k, loaded[k], params[k]])
 			return
+	# orientation (int quarter-turns 0..3): round-trips as a plain JSON number.
+	if int(loaded["orientation"]) != int(params["orientation"]):
+		_die("orientation round-trip mismatch: %s vs %s" % [loaded["orientation"], params["orientation"]])
+		return
 	# tonecurve (PackedVector2Array).
 	var curve: PackedVector2Array = loaded["tonecurve"]
 	var want_curve: PackedVector2Array = params["tonecurve"]

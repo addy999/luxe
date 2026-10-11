@@ -86,6 +86,7 @@ private:
   dt_iop_module_t *tonecurve_module = nullptr;
   dt_iop_module_t *channelmixer_rgb_module = nullptr;
   dt_iop_module_t *clipping_module = nullptr;
+  dt_iop_module_t *flip_module = nullptr;
 
   int processed_width = 0;
   int processed_height = 0;
@@ -155,6 +156,9 @@ public:
   float get_white_balance_temperature();
   // Normalized 0..1 crop EDGES (left, top, right, bottom); full frame disables the module.
   void set_crop(float left, float top, float right, float bottom);
+  // Non-destructive 90-degree rotation via the `flip` module. quarter_turns 0..3,
+  // each unit = 90 deg CLOCKWISE; 0 disables the module (exact identity).
+  void set_orientation(int quarter_turns);
   // L-channel spline points in [0,1]x[0,1], caller-sorted, 2..MAXNODES.
   void set_tonecurve(PackedVector2Array points);
   PackedByteArray process_fit(int max_width, int max_height);

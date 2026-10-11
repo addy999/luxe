@@ -103,17 +103,6 @@ theme_type_variation = &"Muted"
 text = "Fit"
 horizontal_alignment = 2
 
-[node name="CropSep" type="VSeparator" parent="Root/TopBar/TopBarRow" unique_id=2134658972]
-layout_mode = 2
-
-[node name="CropButton" type="Button" parent="Root/TopBar/TopBarRow" unique_id=555565887]
-layout_mode = 2
-size_flags_vertical = 4
-tooltip_text = "Crop"
-disabled = true
-toggle_mode = true
-text = "⛶ Crop"
-
 [node name="LibraryView" parent="Root" unique_id=2075896440 instance=ExtResource("4_libview")]
 
 [node name="MiddleHBox" type="HBoxContainer" parent="Root" unique_id=1029653399]
@@ -434,6 +423,60 @@ text = "Edit resolution"
 [node name="EditResOptionButton" type="OptionButton" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=876332709]
 layout_mode = 2
 size_flags_horizontal = 3
+
+[node name="QuickActionsHeader" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=610100010]
+layout_mode = 2
+theme_type_variation = &"GroupHeader"
+text = "QUICK ACTIONS"
+
+[node name="EditClusterRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=610100002]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="ClusterPrevButton" type="Button" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow" unique_id=610100007]
+layout_mode = 2
+focus_mode = 0
+disabled = true
+tooltip_text = "Previous photo"
+text = "◀"
+
+[node name="ClusterNextButton" type="Button" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow" unique_id=610100008]
+layout_mode = 2
+focus_mode = 0
+disabled = true
+tooltip_text = "Next photo"
+text = "▶"
+
+[node name="ClusterCropButton" type="Button" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow" unique_id=610100003]
+layout_mode = 2
+focus_mode = 0
+toggle_mode = true
+disabled = true
+tooltip_text = "Crop"
+text = "⛶ Crop"
+
+[node name="ClusterRotateCcwButton" type="Button" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow" unique_id=610100004]
+layout_mode = 2
+focus_mode = 0
+disabled = true
+tooltip_text = "Rotate counterclockwise"
+text = "↺"
+
+[node name="ClusterRotateCwButton" type="Button" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow" unique_id=610100005]
+layout_mode = 2
+focus_mode = 0
+disabled = true
+tooltip_text = "Rotate clockwise"
+text = "↻"
+
+[node name="ClusterRejectButton" type="Button" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow" unique_id=610100006]
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+toggle_mode = true
+disabled = true
+tooltip_text = "Reject photo (X)"
+text = "⚑ Approved"
 
 [node name="BottomBar" type="PanelContainer" parent="Root" unique_id=501252572]
 layout_mode = 2
