@@ -27,7 +27,7 @@ func _initialize() -> void:
 	_test_scan()
 	_test_next_index()
 	_test_visible_indices()
-	_test_next_unrejected()
+	_test_next_visible_master()
 	_test_thumbnails()
 	_test_persistence()
 	_test_zoom_snap()
@@ -187,38 +187,77 @@ func _test_visible_indices() -> void:
 	print("LIBRARY_SMOKE: visible_indices OK")
 
 
-func _test_next_unrejected() -> void:
+func _test_next_visible_master() -> void:
 	var photos: Array[Dictionary] = _make_photos(6)
 	var rejected: Dictionary = {"p1": true, "p2": true, "p4": true}
-	# From 0, +1 skips the p1/p2 run to p3.
-	if Library.next_unrejected_index(photos, rejected, 0, 1) != 3:
-		_die("next_unrejected +1 from 0 expected 3")
+	# Both modes derive the step set from visible_indices, same as LibraryView.
+	var hiding: Array[int] = Library.visible_indices(photos, rejected, true)
+	var showing: Array[int] = Library.visible_indices(photos, rejected, false)
+	if hiding != [0, 3, 5]:
+		_die("visible_indices (hide) expected [0,3,5], got %s" % str(hiding))
 		return
-	# From 3, +1 skips p4 to p5.
-	if Library.next_unrejected_index(photos, rejected, 3, 1) != 5:
-		_die("next_unrejected +1 from 3 expected 5")
+
+	# --- hide ON: navigation skips rejected photos ---
+	if Library.next_visible_master(hiding, 0, 1) != 3:
+		_die("hide ON +1 from 0 expected 3 (skip p1/p2)")
 		return
-	# From 5, +1 walks off the end -> -1 (stop, no wrap).
-	if Library.next_unrejected_index(photos, rejected, 5, 1) != -1:
-		_die("next_unrejected +1 from last expected -1")
+	if Library.next_visible_master(hiding, 3, 1) != 5:
+		_die("hide ON +1 from 3 expected 5 (skip p4)")
 		return
-	# From 3, -1 skips p2/p1 to p0.
-	if Library.next_unrejected_index(photos, rejected, 3, -1) != 0:
-		_die("next_unrejected -1 from 3 expected 0")
+	if Library.next_visible_master(hiding, 5, 1) != -1:
+		_die("hide ON +1 from last expected -1")
 		return
-	# From 0, -1 walks off the start -> -1.
-	if Library.next_unrejected_index(photos, rejected, 0, -1) != -1:
-		_die("next_unrejected -1 from 0 expected -1")
+	if Library.next_visible_master(hiding, 3, -1) != 0:
+		_die("hide ON -1 from 3 expected 0 (skip p2/p1)")
 		return
-	# A rejected from_index still advances to the nearest keeper.
-	if Library.next_unrejected_index(photos, rejected, 2, 1) != 3:
-		_die("next_unrejected +1 from rejected 2 expected 3")
+	if Library.next_visible_master(hiding, 0, -1) != -1:
+		_die("hide ON -1 from 0 expected -1")
 		return
-	# Empty list -> -1.
-	if Library.next_unrejected_index([], {}, 0, 1) != -1:
-		_die("next_unrejected on empty list expected -1")
+	# from_master not in the visible set (rejected + hidden) still steps to
+	# the nearest visible neighbor in dir.
+	if Library.next_visible_master(hiding, 2, 1) != 3:
+		_die("hide ON +1 from hidden 2 expected 3")
 		return
-	print("LIBRARY_SMOKE: next_unrejected OK")
+	if Library.next_visible_master(hiding, 2, -1) != 0:
+		_die("hide ON -1 from hidden 2 expected 0")
+		return
+	if Library.next_visible_master(hiding, 5, -1) != 3:
+		_die("hide ON -1 from 5 expected 3 (skip p4)")
+		return
+
+	# --- hide OFF: navigation stops ON rejected photos ---
+	if Library.next_visible_master(showing, 0, 1) != 1:
+		_die("hide OFF +1 from 0 expected 1 (rejected included)")
+		return
+	if Library.next_visible_master(showing, 1, 1) != 2:
+		_die("hide OFF +1 from rejected 1 expected 2")
+		return
+	if Library.next_visible_master(showing, 4, -1) != 3:
+		_die("hide OFF -1 from 4 expected 3 (rejected included)")
+		return
+	if Library.next_visible_master(showing, 5, -1) != 4:
+		_die("hide OFF -1 from 5 expected 4 (stops on rejected)")
+		return
+	if Library.next_visible_master(showing, 5, 1) != -1:
+		_die("hide OFF +1 from last expected -1")
+		return
+	if Library.next_visible_master(showing, 0, -1) != -1:
+		_die("hide OFF -1 from 0 expected -1")
+		return
+	# from-a-rejected-photo case: rejected photos are visible, so they step
+	# to the immediate neighbor.
+	if Library.next_visible_master(showing, 2, -1) != 1:
+		_die("hide OFF -1 from rejected 2 expected 1")
+		return
+
+	# Empty visible set -> -1 both directions.
+	if Library.next_visible_master([], 0, 1) != -1:
+		_die("empty visible +1 expected -1")
+		return
+	if Library.next_visible_master([], 0, -1) != -1:
+		_die("empty visible -1 expected -1")
+		return
+	print("LIBRARY_SMOKE: next_visible_master OK")
 
 
 func _bump_mtime(path: String, old_mtime: int) -> int:

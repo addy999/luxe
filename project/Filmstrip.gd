@@ -331,9 +331,6 @@ class FilmstripTile extends Control:
 		var thumb_rect := Rect2(Vector2.ZERO, size)
 		var bg: Color = strip._color_tile_hover if (_selected or _hovered) else strip._color_tile
 		draw_rect(thumb_rect, bg, true)
-		draw_rect(thumb_rect, strip._color_border, false, 1.0)
-		if _selected:
-			draw_rect(Rect2(Vector2.ONE, size - Vector2(2.0, 2.0)), strip._color_accent, false, 2.0)
 
 		var photo_path: String = _path
 		if photo_path.is_empty():
@@ -356,6 +353,12 @@ class FilmstripTile extends Control:
 				var tp: Vector2 = thumb_rect.position + (thumb_rect.size - ts) * 0.5
 				tp.y += font.get_ascent(font_size)
 				draw_string(font, tp, ext, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, strip._color_caption)
+
+		# Accent frame last so the thumbnail cannot paint over it; unselected
+		# tiles get no border at all (the gap between tiles is the separator).
+		if _selected:
+			draw_rect(Rect2(Vector2.ONE, size - Vector2(2.0, 2.0)),
+				strip._color_accent, false, 2.0)
 
 		# Badges mirror the grid: edited dot top-right, reject mark top-left.
 		if strip.tile_edited(photo_path):

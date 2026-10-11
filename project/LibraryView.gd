@@ -705,7 +705,8 @@ func _on_thumb_ready(generation: int, index: int, img: Image) -> void:
 		if img != null:
 			var tex: ImageTexture = ImageTexture.create_from_image(img)
 			_cache_put(path, tex)
-			_mark_edited(_photos[index])
+			if _mark_edited(_photos[index]):
+				_reapply_hide_filter()
 			_apply_texture_to_master(index)
 			photos_changed.emit()
 
@@ -726,10 +727,13 @@ func apply_raw_thumb(index: int, path: String, img: Image) -> bool:
 		return false
 
 	var photo: Dictionary = _photos[_visible[index]]
+	var master: int = _visible[index]
 	var tex: ImageTexture = ImageTexture.create_from_image(img)
 	_cache_put(path, tex)
-	_mark_edited(photo)
-	_apply_texture_to_master(_visible[index])
+	if _mark_edited(photo):
+		# The visible map may shift under `index`; master stays valid.
+		_reapply_hide_filter()
+	_apply_texture_to_master(master)
 	photos_changed.emit()
 	return true
 
@@ -739,16 +743,20 @@ func apply_raw_thumb(index: int, path: String, img: Image) -> bool:
 # per photo; the thumbnail is already on disk by the time this runs (called
 # from the thumb-ready paths). Also flushes a deferred reject toggle (made
 # before the thumb was on disk) once the hash becomes resolvable.
-func _mark_edited(photo: Dictionary) -> void:
+# Returns true when this call changed the photo's rejected state, so callers
+# can rebuild the visible map (the flag is resolved lazily here, long after the
+# scan, and a photo that resolves to rejected must leave a hiding grid).
+func _mark_edited(photo: Dictionary) -> bool:
 	var path: String = photo["path"]
 	# Edited AND rejected state already known with nothing pending: skip, so
 	# the on-disk thumb load below stays once per photo.
 	if _edited.has(path) and _rejected.has(path) and not _reject_pending.has(path):
-		return
+		return false
 	var cache_key: String = ThumbnailCache.cache_key(path, photo["mtime"])
 	var img: Image = ThumbnailCache.load_cached(cache_key)
 	if img == null:
-		return
+		return false
+	var was: bool = _rejected.get(path, false)
 	var hash: String = EditStore.thumb_hash(img)
 	if not _edited.has(path):
 		_edited[path] = EditStore.has_record(path.get_file(), hash)
@@ -760,6 +768,28 @@ func _mark_edited(photo: Dictionary) -> void:
 		_rejected[path] = want
 	elif not _rejected.has(path):
 		_rejected[path] = _reject_set.has(key)
+	return _rejected.get(path, false) != was
+
+
+# Rebuilds the visible map after a lazily-resolved reject flag changed, but
+# only while hiding (the map is the identity otherwise). Keeps the cursor on
+# its photo by path across the remap.
+func _reapply_hide_filter() -> void:
+	if not _hide_rejected:
+		return
+	var cursor_path: String = ""
+	if _cursor >= 0 and _cursor < _visible.size():
+		cursor_path = _photos[_visible[_cursor]]["path"]
+	_rebuild_visible()
+	_cursor = -1
+	if cursor_path != "":
+		for vi in range(_visible.size()):
+			if _photos[_visible[vi]]["path"] == cursor_path:
+				_cursor = vi
+				break
+	if _cursor < 0 and not _visible.is_empty():
+		_cursor = 0
+	_relayout()
 
 
 # Recomputes a single photo's edited badge (e.g. after returning from the editor
@@ -769,7 +799,8 @@ func refresh_edited_badge(path: String) -> void:
 	var mi: int = _master_index_of(path)
 	if mi < 0:
 		return
-	_mark_edited(_photos[mi])
+	if _mark_edited(_photos[mi]):
+		_reapply_hide_filter()
 	_apply_texture_to_master(mi)
 	photos_changed.emit()
 	for tile in _pool:
@@ -896,8 +927,8 @@ func _cursor_rejected() -> bool:
 	return _rejected.get(_photos[_visible[_cursor]]["path"], false)
 
 
-# Master-space accessors for Main's edit-view navigation: nav walks the FULL
-# list (independent of the hide filter), skipping rejected photos.
+# Master-space accessors for Main's edit-view navigation: nav walks the
+# visible set (_visible holds master indices), so it follows the hide filter.
 func get_photo_index_master(path: String) -> int:
 	return _master_index_of(path)
 
@@ -913,8 +944,10 @@ func get_photo_master_path(master_index: int) -> String:
 	return _photos[master_index]["path"]
 
 
-func next_unrejected_master(from_master: int, dir: int) -> int:
-	return Library.next_unrejected_index(_photos, _rejected, from_master, dir)
+# Prev/next master index for Main's edit-view navigation, walking the
+# currently-visible set; -1 at either end (stop, no wrap).
+func next_visible_master(from_master: int, dir: int) -> int:
+	return Library.next_visible_master(_visible, from_master, dir)
 
 
 # --- Texture LRU ---------------------------------------------------------------

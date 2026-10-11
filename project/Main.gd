@@ -403,8 +403,9 @@ func _on_cursor_reject_state(rejected: bool) -> void:
 	reject_button.set_pressed_no_signal(rejected)
 
 
-# Edit-view photo cycling: move to the prev/next non-rejected photo in the
-# current library, but only when the open photo belongs to that library.
+# Edit-view photo cycling: move to the prev/next photo in the current
+# library's visible set (follows the hide-rejected toggle), but only when the
+# open photo belongs to that library.
 # Stops at the ends (no wrap). open_photo() flushes the pending save, waits
 # out in-flight tasks, reloads params, and re-renders. No-ops outside Edit view
 # or while a crop overlay / render / export is in flight, so navigation (from
@@ -415,7 +416,7 @@ func _edit_navigate(dir: int) -> void:
 	var idx: int = library_view.get_photo_index_master(_edited_path)
 	if idx < 0:
 		return
-	var nxt: int = library_view.next_unrejected_master(idx, dir)
+	var nxt: int = library_view.next_visible_master(idx, dir)
 	if nxt < 0:
 		return
 	var next_path: String = library_view.get_photo_master_path(nxt)

@@ -99,18 +99,26 @@ static func visible_indices(photos: Array[Dictionary], rejected: Dictionary, hid
 	return result
 
 
-# Edit-view prev/next over the FULL list, skipping rejected photos, no wrap.
-# from_index: current master index. dir: -1 (prev) or +1 (next). Returns the
-# next master index in that direction whose photo is not rejected, or -1 if it
-# walks off either end (caller stops at the ends). A rejected from_index still
-# advances to the nearest non-rejected neighbor in `dir`.
-static func next_unrejected_index(photos: Array[Dictionary], rejected: Dictionary, from_index: int, dir: int) -> int:
-	var i: int = from_index + dir
-	while i >= 0 and i < photos.size():
-		if not rejected.get(photos[i]["path"], false):
-			return i
-		i += dir
-	return -1
+# Edit-view prev/next over a visible set, no wrap. `visible` holds master
+# indices in ascending order (LibraryView._visible). dir: -1 (prev) or +1
+# (next). Returns the master index of the nearest visible photo strictly past
+# from_master in `dir`, or -1 if it walks off either end (caller stops at the
+# ends). A from_master that is itself not in `visible` still steps to the
+# nearest visible neighbor in `dir`.
+static func next_visible_master(visible: Array[int], from_master: int, dir: int) -> int:
+	if dir > 0:
+		for m in visible:
+			if m > from_master:
+				return m
+		return -1
+	# dir < 0: track the last visible entry below from_master; entries at or
+	# past it break (a from_master match is the current photo, not a target).
+	var prev: int = -1
+	for m in visible:
+		if m >= from_master:
+			break
+		prev = m
+	return prev
 
 
 static func save_locations(locations: PackedStringArray, path: String = LOCATIONS_PATH) -> bool:
