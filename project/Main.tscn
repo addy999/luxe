@@ -42,6 +42,22 @@ layout_mode = 2
 size_flags_vertical = 4
 clip_tabs = false
 
+[node name="RejectButton" type="Button" parent="Root/TopBar/TopBarRow" unique_id=345480147]
+layout_mode = 2
+size_flags_vertical = 4
+toggle_mode = true
+focus_mode = 0
+text = "⚑ Reject"
+tooltip_text = "Reject photo (X)"
+
+[node name="HideRejectedButton" type="Button" parent="Root/TopBar/TopBarRow" unique_id=345480148]
+layout_mode = 2
+size_flags_vertical = 4
+toggle_mode = true
+focus_mode = 0
+text = "Hide Rejected"
+tooltip_text = "Hide rejected photos"
+
 [node name="TopSpacer" type="Control" parent="Root/TopBar/TopBarRow" unique_id=508932557]
 layout_mode = 2
 size_flags_horizontal = 3

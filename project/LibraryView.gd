@@ -23,6 +23,11 @@ signal raw_thumb_requested(index: int)
 # Multiplicative zoom request (centered on 1.0), same convention as Main.gd's
 # _zoom_by_factor. Emitted by pinch/Cmd-wheel gestures over tiles or empty grid area.
 signal zoom_requested(factor: float)
+# The cursor photo's reject flag changed (toggled, cursor moved, or filter
+# remapped) so the TopBar reject control can mirror it.
+signal cursor_reject_state(rejected: bool)
+# A reject flag was toggled; Main invalidates anything derived from it.
+signal reject_toggled(path: String, rejected: bool)
 
 const LibraryItemScript := preload("res://LibraryItem.gd")
 
@@ -78,6 +83,16 @@ var _requested: Dictionary = {}      # path -> true
 # on-disk thumb hash, same identity as the edit key), then redrawn with the tile.
 var _edited: Dictionary = {}
 
+# --- Reject flags / hide-rejected filter ---------------------------------------
+var _rejected: Dictionary = {}        # path -> bool (session display truth)
+var _reject_pending: Dictionary = {}  # path -> bool: toggled before thumb on disk; flushed on thumb-ready
+var _reject_set: Dictionary = {}      # persisted key-set from RejectStore.load_set
+var _hide_rejected: bool = false
+# Master indices currently displayed (identity map when the filter is off).
+# All display/geometry code walks this; the caches above stay keyed by
+# path/master-index and are never cleared by a filter toggle.
+var _visible: Array[int] = []
+
 # --- Bounded thumbnail workers (jpg/png decode) --------------------------------
 var _queue: Array[int] = []
 var _inflight: int = 0
@@ -111,6 +126,7 @@ func _ready() -> void:
 	_setup_add_location_dialog()
 
 	_locations = Library.load_locations()
+	_reject_set = RejectStore.load_set()
 	_rebuild_sidebar()
 	if _locations.size() > 0:
 		_select_location(_locations[0])
@@ -130,15 +146,18 @@ func on_view_entered() -> void:
 	_request_visible_thumbs()
 
 
+# Grid count/lookup are VISIBLE-space: the hide-rejected filter may shrink the
+# grid below _photos.size().
 func get_photo_count() -> int:
-	return _photos.size()
+	return _visible.size()
 
 
-# Returns the photo dict at index, or an empty Dictionary if out of range.
+# Returns the photo dict at the VISIBLE index, or an empty Dictionary if out
+# of range.
 func get_photo(index: int) -> Dictionary:
-	if index < 0 or index >= _photos.size():
+	if index < 0 or index >= _visible.size():
 		return {}
-	return _photos[index]
+	return _photos[_visible[index]]
 
 
 func _on_theme_changed(_is_dark: bool) -> void:
@@ -313,9 +332,18 @@ func _on_scan_done(results: Array[Dictionary], generation: int) -> void:
 
 # --- Photo list / grid reset ---------------------------------------------------
 
+# Recomputes the visible index map from the current reject flags + filter.
+# Must run whenever _photos is swapped or a reject/filter toggle changes
+# membership; display code reads only _visible afterwards.
+func _rebuild_visible() -> void:
+	_visible = Library.visible_indices(_photos, _rejected, _hide_rejected)
+
+
 # Swaps the displayed photo set and resets the virtualized grid: drops cached
 # textures (they belong to the old list), clears in-flight requests, rewinds
-# the scroll and cursor, then relays out.
+# the scroll and cursor, then relays out. Session reject state (_rejected,
+# _reject_pending) belongs to the old set too; the PERSISTED set (_reject_set)
+# spans locations and survives, so re-displayed photos re-seed from it.
 func _set_photos(photos: Array[Dictionary]) -> void:
 	_photos = photos
 	_cursor = -1
@@ -323,12 +351,15 @@ func _set_photos(photos: Array[Dictionary]) -> void:
 	_tex_lru.clear()
 	_requested.clear()
 	_edited.clear()
+	_rejected.clear()
+	_reject_pending.clear()
 	_mutex.lock()
 	_queue.clear()
 	_mutex.unlock()
 	for tile in _pool:
 		tile.clear_texture()
 	grid_scroll.scroll_vertical = 0
+	_rebuild_visible()
 	empty_state.visible = _photos.is_empty()
 	_relayout()
 	_request_visible_thumbs()
@@ -401,7 +432,7 @@ func _relayout() -> void:
 	# and float error on either side must not drop a column.
 	_cols = maxi(1, int(round(avail_w / (_tile_w + sep))))
 
-	var count: int = _photos.size()
+	var count: int = _visible.size()
 	var rows: int = int(ceil(float(count) / float(_cols))) if count > 0 else 0
 	var total_h: float = 0.0
 	if rows > 0:
@@ -413,10 +444,10 @@ func _relayout() -> void:
 	_refresh_tiles()
 
 
-# Returns [start, end) photo indices that should have a live tile, including the
-# buffer rows above and below the viewport.
+# Returns [start, end) VISIBLE indices that should have a live tile, including
+# the buffer rows above and below the viewport.
 func _visible_index_range() -> Vector2i:
-	var count: int = _photos.size()
+	var count: int = _visible.size()
 	if count == 0 or _cols <= 0:
 		return Vector2i(0, 0)
 	var sep: float = float(LibraryItemScript.GROUP_SEP)
@@ -460,9 +491,11 @@ func _ensure_pool(size: int) -> void:
 
 # Binds pool tiles to the visible index range: positions them, pulls textures
 # from the cache, and marks the cursor tile selected. Cheap enough to run on
-# every scroll tick (only a few dozen tiles).
+# every scroll tick (only a few dozen tiles). `vi` is a VISIBLE index (what
+# the tile stores); `index` = _visible[vi] is its master index, used for cache
+# and badge keys so those stay stable across filter toggles.
 func _refresh_tiles() -> void:
-	if _photos.is_empty():
+	if _visible.is_empty():
 		for tile in _pool:
 			tile.visible = false
 		return
@@ -472,11 +505,15 @@ func _refresh_tiles() -> void:
 	_ensure_pool(need)
 
 	var slot: int = 0
-	for index in range(r.x, r.y):
+	for vi in range(r.x, r.y):
+		var index: int = _visible[vi]
+		var path: String = _photos[index]["path"]
 		var tile: LibraryItem = _pool[slot]
-		if tile.get_photo_index() != index:
-			tile.setup(index, _photos[index])
-			var path: String = _photos[index]["path"]
+		# Rebind when the slot's visible index OR its bound photo changed: a
+		# filter rebuild keeps the same `vi` but repoints it at a new master
+		# photo, so the index check alone would leave the stale texture up.
+		if tile.get_photo_index() != vi or tile.get_bound_path() != path:
+			tile.setup(vi, _photos[index])
 			if _tex_cache.has(path):
 				tile.set_texture(_cache_get(path))
 			else:
@@ -486,9 +523,11 @@ func _refresh_tiles() -> void:
 		# every refresh or _draw uses a stale size and clips the thumbnail.
 		tile.set_tile_scale(_thumb_scale)
 		tile.size = Vector2(_tile_w, _tile_h)
-		tile.set_selected(index == _cursor)
+		tile.set_selected(vi == _cursor)
 		tile.set_edited(_edited.get(_photos[index]["path"], false))
-		tile.position = _tile_position(index)
+		tile.set_rejected(_rejected.get(_photos[index]["path"], false))
+		tile.set_dim_enabled(not _hide_rejected)
+		tile.position = _tile_position(vi)
 		tile.visible = true
 		slot += 1
 
@@ -521,7 +560,7 @@ func _on_grid_gui_input(event: InputEvent) -> void:
 		return
 	var key_event: InputEventKey = event
 	var cols: int = maxi(1, _cols)
-	var count: int = _photos.size()
+	var count: int = _visible.size()
 	var handled: bool = true
 
 	match key_event.keycode:
@@ -539,6 +578,8 @@ func _on_grid_gui_input(event: InputEvent) -> void:
 			_set_cursor(count - 1 if count > 0 else -1)
 		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
 			_activate(_cursor)
+		KEY_X:
+			toggle_reject_cursor()
 		_:
 			handled = false
 
@@ -554,6 +595,7 @@ func _set_cursor(index: int) -> void:
 		_scroll_cursor_into_view()
 	_refresh_tiles()
 	_request_visible_thumbs()
+	cursor_reject_state.emit(_cursor_rejected())
 
 
 # Scrolls the minimum amount to bring the cursor's row fully into view.
@@ -573,9 +615,10 @@ func _scroll_cursor_into_view() -> void:
 
 
 func _activate(index: int) -> void:
-	if index < 0 or index >= _photos.size():
+	# `index` is VISIBLE-space (tiles store visible indices; _cursor is one).
+	if index < 0 or index >= _visible.size():
 		return
-	photo_activated.emit(_photos[index]["path"])
+	photo_activated.emit(_photos[_visible[index]]["path"])
 
 
 # --- Thumbnail loading ---------------------------------------------------------------
@@ -600,13 +643,19 @@ func _on_thumb_timer_timeout() -> void:
 
 	var r: Vector2i = _visible_index_range()
 	var to_enqueue: Array[int] = []
-	for index in range(r.x, r.y):
+	# `r` is visible-space. RAW requests emit the VISIBLE index `vi` (it
+	# round-trips through Main back into apply_raw_thumb, which expects
+	# visible-space); the jpg queue appends the MASTER index `_visible[vi]`
+	# because its worker (_pump/_thumb_task/_on_thumb_ready) reads _photos
+	# directly.
+	for vi in range(r.x, r.y):
+		var index: int = _visible[vi]
 		var path: String = _photos[index]["path"]
 		if _tex_cache.has(path) or _requested.has(path):
 			continue
 		_requested[path] = true
 		if _photos[index].get("is_raw", false):
-			raw_thumb_requested.emit(index)
+			raw_thumb_requested.emit(vi)
 		else:
 			to_enqueue.append(index)
 
@@ -645,6 +694,7 @@ func _on_thumb_ready(generation: int, index: int, img: Image) -> void:
 	_inflight -= 1
 	_mutex.unlock()
 
+	# `index` is MASTER-space (that is what _on_thumb_timer_timeout queued).
 	if generation == _scan_generation and index >= 0 and index < _photos.size():
 		var path: String = _photos[index]["path"]
 		_requested.erase(path)
@@ -652,64 +702,197 @@ func _on_thumb_ready(generation: int, index: int, img: Image) -> void:
 			var tex: ImageTexture = ImageTexture.create_from_image(img)
 			_cache_put(path, tex)
 			_mark_edited(_photos[index])
-			_apply_texture_to_visible(index)
+			_apply_texture_to_master(index)
 
 	_pump()
 
 
-# Applies a backend-rendered RAW thumbnail. Guards against stale results (list
-# rescanned or selection changed since the request was made). Returns true on
-# success, false if the index/path no longer match or img is null.
+# Applies a backend-rendered RAW thumbnail. `index` is VISIBLE-space (it
+# round-trips from raw_thumb_requested); the path check makes a stale index
+# safe (list rescanned, selection or hide-filter changed since the request).
+# Returns true on success, false if the index/path no longer match or img is
+# null.
 func apply_raw_thumb(index: int, path: String, img: Image) -> bool:
-	if index < 0 or index >= _photos.size() or _photos[index]["path"] != path:
+	if index < 0 or index >= _visible.size() or _photos[_visible[index]]["path"] != path:
 		_requested.erase(path)
 		return false
 	_requested.erase(path)
 	if img == null:
 		return false
 
+	var photo: Dictionary = _photos[_visible[index]]
 	var tex: ImageTexture = ImageTexture.create_from_image(img)
 	_cache_put(path, tex)
-	_mark_edited(_photos[index])
-	_apply_texture_to_visible(index)
+	_mark_edited(photo)
+	_apply_texture_to_master(_visible[index])
 	return true
 
 
-# Records whether a saved edit exists for `photo`, keyed by the on-disk thumb
-# hash (same identity as the edit key). Computed once per photo; the thumbnail
-# is already on disk by the time this runs (called from the thumb-ready paths).
+# Records whether a saved edit or a reject flag exists for `photo`, keyed by
+# the on-disk thumb hash (same identity as the edit/reject keys). Computed once
+# per photo; the thumbnail is already on disk by the time this runs (called
+# from the thumb-ready paths). Also flushes a deferred reject toggle (made
+# before the thumb was on disk) once the hash becomes resolvable.
 func _mark_edited(photo: Dictionary) -> void:
 	var path: String = photo["path"]
-	if _edited.has(path):
+	# Edited AND rejected state already known with nothing pending: skip, so
+	# the on-disk thumb load below stays once per photo.
+	if _edited.has(path) and _rejected.has(path) and not _reject_pending.has(path):
 		return
 	var cache_key: String = ThumbnailCache.cache_key(path, photo["mtime"])
 	var img: Image = ThumbnailCache.load_cached(cache_key)
 	if img == null:
 		return
-	_edited[path] = EditStore.has_record(path.get_file(), EditStore.thumb_hash(img))
+	var hash: String = EditStore.thumb_hash(img)
+	if not _edited.has(path):
+		_edited[path] = EditStore.has_record(path.get_file(), hash)
+	var key: String = EditStore.edit_key(path.get_file(), hash)
+	if _reject_pending.has(path):
+		var want: bool = _reject_pending[path]
+		_reject_pending.erase(path)
+		_set_reject_persisted(key, want)
+		_rejected[path] = want
+	elif not _rejected.has(path):
+		_rejected[path] = _reject_set.has(key)
 
 
 # Recomputes a single photo's edited badge (e.g. after returning from the editor
 # where it may have just gained a saved record) and redraws its tile if visible.
 func refresh_edited_badge(path: String) -> void:
 	_edited.erase(path)
-	for index in range(_photos.size()):
-		if _photos[index]["path"] == path:
-			_mark_edited(_photos[index])
-			_apply_texture_to_visible(index)
-			for tile in _pool:
-				if tile.visible and tile.get_photo_index() == index:
-					tile.set_edited(_edited.get(path, false))
+	var mi: int = _master_index_of(path)
+	if mi < 0:
+		return
+	_mark_edited(_photos[mi])
+	_apply_texture_to_master(mi)
+	for tile in _pool:
+		var vi: int = tile.get_photo_index()
+		if tile.visible and vi >= 0 and vi < _visible.size() and _visible[vi] == mi:
+			tile.set_edited(_edited.get(path, false))
 			return
 
 
-# Pushes a cached texture onto whichever pool tile is currently bound to index.
-func _apply_texture_to_visible(index: int) -> void:
-	var path: String = _photos[index]["path"]
+# Pushes a cached texture onto whichever pool tile currently displays this
+# MASTER index. Tiles store visible indices, so the match resolves through the
+# _visible map; a tile still holding a stale visible index from before a
+# filter change resolves to a different master index and won't match.
+func _apply_texture_to_master(master_index: int) -> void:
+	if master_index < 0 or master_index >= _photos.size():
+		return
+	var path: String = _photos[master_index]["path"]
 	for tile in _pool:
-		if tile.visible and tile.get_photo_index() == index:
+		var vi: int = tile.get_photo_index()
+		if tile.visible and vi >= 0 and vi < _visible.size() and _visible[vi] == master_index:
 			tile.set_texture(_cache_get(path))
 			return
+
+
+# --- Reject flags / hide-rejected filter ---------------------------------------
+
+# Toggles the cursor photo's rejected state. No-op if no photo is selected.
+func toggle_reject_cursor() -> void:
+	if _cursor < 0 or _cursor >= _visible.size():
+		return
+	_toggle_reject_path(_photos[_visible[_cursor]]["path"])
+
+
+func _toggle_reject_path(path: String) -> void:
+	var now: bool = not _rejected.get(path, false)
+	_rejected[path] = now
+	# Persist now when the on-disk thumb hash is resolvable; else defer to the
+	# thumb-ready flush in _mark_edited.
+	var resolved: bool = false
+	var mi: int = _master_index_of(path)
+	if mi >= 0:
+		var photo: Dictionary = _photos[mi]
+		var img: Image = ThumbnailCache.load_cached(ThumbnailCache.cache_key(path, photo["mtime"]))
+		if img != null:
+			_set_reject_persisted(EditStore.edit_key(path.get_file(), EditStore.thumb_hash(img)), now)
+			resolved = true
+	if not resolved:
+		_reject_pending[path] = now
+	if _hide_rejected:
+		# Membership may have changed (rejected leaves the visible set,
+		# un-rejected rejoins it): rebuild the map + clamp the cursor.
+		_rebuild_visible()
+		if _cursor >= _visible.size():
+			_cursor = _visible.size() - 1
+		_relayout()
+		_request_visible_thumbs()
+	else:
+		# Still visible: refresh just the tile displaying this master index.
+		for tile in _pool:
+			var vi: int = tile.get_photo_index()
+			if vi >= 0 and vi < _visible.size() and _visible[vi] == mi:
+				tile.set_rejected(now)
+				break
+	reject_toggled.emit(path, now)
+	cursor_reject_state.emit(_cursor_rejected())
+
+
+func _set_reject_persisted(key: String, rejected: bool) -> void:
+	if rejected:
+		_reject_set[key] = true
+	else:
+		_reject_set.erase(key)
+	RejectStore.save_set(_reject_set)
+
+
+# Toggles the hide-rejected filter. The cursor follows its photo across the
+# remap by path; no cache is cleared (textures survive the filter).
+func set_hide_rejected(hide: bool) -> void:
+	if _hide_rejected == hide:
+		return
+	var cursor_path: String = ""
+	if _cursor >= 0 and _cursor < _visible.size():
+		cursor_path = _photos[_visible[_cursor]]["path"]
+	_hide_rejected = hide
+	_rebuild_visible()
+	_cursor = -1
+	if cursor_path != "":
+		for vi in range(_visible.size()):
+			if _photos[_visible[vi]]["path"] == cursor_path:
+				_cursor = vi
+				break
+	if _cursor < 0 and not _visible.is_empty():
+		# Hiding keeps a sensible cursor; showing allows none.
+		_cursor = 0 if hide else -1
+	for tile in _pool:
+		tile.set_dim_enabled(not hide)
+	_relayout()
+	if _cursor >= 0:
+		_scroll_cursor_into_view()
+	_request_visible_thumbs()
+	cursor_reject_state.emit(_cursor_rejected())
+
+
+func _master_index_of(path: String) -> int:
+	for i in range(_photos.size()):
+		if _photos[i]["path"] == path:
+			return i
+	return -1
+
+
+func _cursor_rejected() -> bool:
+	if _cursor < 0 or _cursor >= _visible.size():
+		return false
+	return _rejected.get(_photos[_visible[_cursor]]["path"], false)
+
+
+# Master-space accessors for Main's edit-view navigation: nav walks the FULL
+# list (independent of the hide filter), skipping rejected photos.
+func get_photo_index_master(path: String) -> int:
+	return _master_index_of(path)
+
+
+func get_photo_master_path(master_index: int) -> String:
+	if master_index < 0 or master_index >= _photos.size():
+		return ""
+	return _photos[master_index]["path"]
+
+
+func next_unrejected_master(from_master: int, dir: int) -> int:
+	return Library.next_unrejected_index(_photos, _rejected, from_master, dir)
 
 
 # --- Texture LRU ---------------------------------------------------------------

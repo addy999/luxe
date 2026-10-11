@@ -20,12 +20,21 @@ var _texture: Texture2D = null
 var _selected: bool = false
 var _hovered: bool = false
 var _edited: bool = false
+var _rejected: bool = false
+var _show_dim: bool = true   # when false (hide-rejected on), rejected tiles aren't filtered here; just skip the dim overlay
 var _tile_scale: float = 1.0
 
 # Edited-marker dot: yellow, drawn in the thumbnail's top-right corner.
 const _EDITED_DOT_COLOR: Color = Color(0.98, 0.78, 0.13, 1.0)
 const _EDITED_DOT_RADIUS: float = 5.0
 const _EDITED_DOT_MARGIN: float = 8.0
+
+# Rejected state: dim overlay over the thumbnail + red marker in the top-left
+# corner (edited dot keeps the top-right).
+const _REJECT_DIM_COLOR: Color = Color(0.0, 0.0, 0.0, 0.5)
+const _REJECT_MARK_COLOR: Color = Color(0.86, 0.22, 0.22, 1.0)
+const _REJECT_MARK_RADIUS: float = 5.0
+const _REJECT_MARK_MARGIN: float = 8.0
 
 var _color_tile: Color
 var _color_tile_hover: Color
@@ -78,6 +87,7 @@ func setup(index: int, photo: Dictionary) -> void:
 	_texture = null
 	_selected = false
 	_edited = false
+	_rejected = false
 	queue_redraw()
 
 
@@ -100,6 +110,20 @@ func set_edited(edited: bool) -> void:
 	queue_redraw()
 
 
+func set_rejected(rejected: bool) -> void:
+	if _rejected == rejected:
+		return
+	_rejected = rejected
+	queue_redraw()
+
+
+func set_dim_enabled(enabled: bool) -> void:
+	if _show_dim == enabled:
+		return
+	_show_dim = enabled
+	queue_redraw()
+
+
 func has_texture() -> bool:
 	return _texture != null
 
@@ -111,6 +135,11 @@ func clear_texture() -> void:
 
 func get_photo_index() -> int:
 	return _index
+
+
+# The master path of the photo currently bound to this tile ("" if unbound).
+func get_bound_path() -> String:
+	return _photo.get("path", "")
 
 
 func set_tile_scale(scale: float) -> void:
@@ -141,6 +170,14 @@ func _draw() -> void:
 		_draw_letterboxed(thumb_rect)
 	else:
 		_draw_raw_placeholder(thumb_rect)
+
+	if _rejected and _show_dim:
+		draw_rect(thumb_rect, _REJECT_DIM_COLOR, true)
+	if _rejected:
+		var mark_center := Vector2(
+			thumb_rect.position.x + _REJECT_MARK_MARGIN + _REJECT_MARK_RADIUS,
+			thumb_rect.position.y + _REJECT_MARK_MARGIN + _REJECT_MARK_RADIUS)
+		draw_circle(mark_center, _REJECT_MARK_RADIUS, _REJECT_MARK_COLOR)
 
 	if _edited:
 		var dot_center := Vector2(

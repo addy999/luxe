@@ -41,6 +41,10 @@ The result is a small, fast editor with a serious processing engine underneath.
 
 - Library: add folders from disk and browse every supported image in them
   (arrow keys to move around, Enter or double-click to open in the editor)
+- Reject flags: mark photos you want to cull with the `x` key or the Reject
+  button; rejected photos are dimmed in the grid, can be hidden entirely with
+  "Hide Rejected", and the flags persist across restarts. In the editor, Left/
+  Right arrows step through the folder's keepers, skipping rejected photos.
 - Non-destructive edits: your adjustments save automatically and come back the
   next time you open the photo, even after restarting the app (edited photos are
   flagged with a yellow dot in the Library grid)

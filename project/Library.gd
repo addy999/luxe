@@ -87,6 +87,32 @@ static func next_index(index: int, dx: int, dy: int, cols: int, count: int) -> i
 	return clampi(index + dx, 0, count - 1)
 
 
+# Builds the filtered index map: master indices i into `photos` that are kept.
+# When hide_rejected is false this returns [0, 1, 2, ... n-1] (identity). When
+# true, indices whose photo path is in `rejected` (path->bool, true) are dropped.
+static func visible_indices(photos: Array[Dictionary], rejected: Dictionary, hide_rejected: bool) -> Array[int]:
+	var result: Array[int] = []
+	for i in range(photos.size()):
+		if hide_rejected and rejected.get(photos[i]["path"], false):
+			continue
+		result.append(i)
+	return result
+
+
+# Edit-view prev/next over the FULL list, skipping rejected photos, no wrap.
+# from_index: current master index. dir: -1 (prev) or +1 (next). Returns the
+# next master index in that direction whose photo is not rejected, or -1 if it
+# walks off either end (caller stops at the ends). A rejected from_index still
+# advances to the nearest non-rejected neighbor in `dir`.
+static func next_unrejected_index(photos: Array[Dictionary], rejected: Dictionary, from_index: int, dir: int) -> int:
+	var i: int = from_index + dir
+	while i >= 0 and i < photos.size():
+		if not rejected.get(photos[i]["path"], false):
+			return i
+		i += dir
+	return -1
+
+
 static func save_locations(locations: PackedStringArray, path: String = LOCATIONS_PATH) -> bool:
 	var payload: Dictionary = {"version": 1, "locations": Array(locations)}
 	var text: String = JSON.stringify(payload, "\t")

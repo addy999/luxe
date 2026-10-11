@@ -46,6 +46,8 @@ extends Control
 @onready var library_status_label: Label = $Root/BottomBar/BottomRow/LibraryStatusLabel
 @onready var top_vsep: Control = $Root/TopBar/TopBarRow/VSep
 @onready var crop_sep: Control = $Root/TopBar/TopBarRow/CropSep
+@onready var reject_button: Button = $Root/TopBar/TopBarRow/RejectButton
+@onready var hide_rejected_button: Button = $Root/TopBar/TopBarRow/HideRejectedButton
 
 const CropOverlayScript := preload("res://CropOverlay.gd")
 
@@ -56,6 +58,7 @@ var _view: int = View.LIBRARY
 # TabBar.current_tab emits tab_changed on assignment; guards _set_view recursion.
 var _switching_view: bool = false
 var _edit_only_controls: Array[Control] = []
+var _library_only_controls: Array[Control] = []
 
 var _crop_overlay: Control = null
 var _crop_bar: HBoxContainer = null
@@ -260,6 +263,9 @@ func _setup_views() -> void:
 		export_button, fit_button,
 		crop_button, top_vsep, crop_sep,
 	]
+	_library_only_controls = [
+		reject_button, hide_rejected_button,
+	]
 	view_tab_bar.add_tab("Library")
 	view_tab_bar.add_tab("Edit")
 	# Connected after both tabs exist: adding the first tab to an empty TabBar
@@ -269,6 +275,9 @@ func _setup_views() -> void:
 	library_view.status_changed.connect(_on_library_status_changed)
 	library_view.raw_thumb_requested.connect(_on_raw_thumb_requested)
 	library_view.zoom_requested.connect(_on_library_zoom_requested)
+	library_view.cursor_reject_state.connect(_on_cursor_reject_state)
+	reject_button.pressed.connect(_on_reject_button_pressed)
+	hide_rejected_button.toggled.connect(_on_hide_rejected_toggled)
 	_set_view(View.LIBRARY)
 
 
@@ -294,6 +303,8 @@ func _set_view(view: int) -> void:
 	middle_hbox.visible = not in_library
 	for control in _edit_only_controls:
 		control.visible = not in_library
+	for control in _library_only_controls:
+		control.visible = in_library
 	resolution_label.visible = not in_library
 	library_status_label.visible = in_library
 
@@ -357,18 +368,56 @@ func _on_library_status_changed(status: String) -> void:
 	library_status_label.text = status
 
 
+func _on_reject_button_pressed() -> void:
+	library_view.toggle_reject_cursor()
+
+
+func _on_hide_rejected_toggled(pressed: bool) -> void:
+	library_view.set_hide_rejected(pressed)
+
+
+# Reject-button pressed-state sync; LibraryView emits this on every reject
+# toggle AND every cursor move, so the button always tracks the cursor photo.
+func _on_cursor_reject_state(rejected: bool) -> void:
+	reject_button.set_pressed_no_signal(rejected)
+
+
+# Edit-view photo cycling: move to the prev/next non-rejected photo in the
+# current library, but only when the open photo belongs to that library.
+# Stops at the ends (no wrap). open_photo() flushes the pending save, waits
+# out in-flight tasks, reloads params, and re-renders.
+func _edit_navigate(dir: int) -> void:
+	var idx: int = library_view.get_photo_index_master(_edited_path)
+	if idx < 0:
+		return
+	var nxt: int = library_view.next_unrejected_master(idx, dir)
+	if nxt < 0:
+		return
+	var next_path: String = library_view.get_photo_master_path(nxt)
+	if next_path != "":
+		open_photo(next_path)
+
+
 func _unhandled_key_input(event: InputEvent) -> void:
 	if not event.is_pressed() or event.is_echo():
 		return
-	if (event as InputEventKey).keycode != KEY_ESCAPE:
+	var kc: int = (event as InputEventKey).keycode
+	if kc == KEY_ESCAPE:
+		if _crop_overlay != null:
+			_on_crop_overlay_canceled()
+			accept_event()
+			return
+		if _view == View.EDIT:
+			_set_view(View.LIBRARY)
+			accept_event()
 		return
-	if _crop_overlay != null:
-		_on_crop_overlay_canceled()
-		accept_event()
-		return
-	if _view == View.EDIT:
-		_set_view(View.LIBRARY)
-		accept_event()
+	# Edit-view photo cycling (Left/Right); skipped while a crop overlay is
+	# open or a render/export is in flight, so navigation never races the pipe.
+	if _view == View.EDIT and _crop_overlay == null \
+			and not _processing and not _exporting:
+		if kc == KEY_LEFT or kc == KEY_RIGHT:
+			_edit_navigate(-1 if kc == KEY_LEFT else 1)
+			accept_event()
 
 
 # Physical (device) pixel size of the screen.
