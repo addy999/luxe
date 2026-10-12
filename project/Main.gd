@@ -277,6 +277,12 @@ func _ready() -> void:
 	_library_thumb_zoom_pct = clampf(
 		float(_ui_state.get("library_zoom_pct", 100.0)),
 		_LIBRARY_ZOOM_MIN_PCT, _LIBRARY_ZOOM_MAX_PCT)
+	# LibraryView's own _ready (runs before this, as a child) already defaulted
+	# to _locations[0]; re-home it on the restored photo's actual location so
+	# the filmstrip/grid don't show the wrong library after a restart.
+	var last_photo: String = _ui_state.get("last_photo", "")
+	if last_photo != "" and FileAccess.file_exists(last_photo):
+		library_view.select_location_for_path(last_photo)
 	_setup_views()
 	_apply_restored_ui_state()
 

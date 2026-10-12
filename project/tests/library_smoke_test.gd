@@ -31,6 +31,7 @@ func _initialize() -> void:
 	_test_thumbnails()
 	_test_persistence()
 	_test_zoom_snap()
+	await _test_select_location_for_path()
 	_cleanup()
 	if _failed:
 		return
@@ -373,6 +374,44 @@ func _test_zoom_snap() -> void:
 			_die("snap_scale not idempotent at lo %.3f" % lo)
 			return
 	print("LIBRARY_SMOKE: zoom snap OK")
+
+# Regression: on restart, LibraryView._ready always defaults to _locations[0],
+# so reopening a persisted last_photo from a DIFFERENT configured location left
+# the grid/filmstrip showing the wrong library's photos. select_location_for_path
+# must re-home the view onto whichever configured location actually contains
+# the given path.
+func _test_select_location_for_path() -> void:
+	var view: Node = load("res://LibraryView.tscn").instantiate()
+	get_root().add_child(view)
+	await process_frame
+
+	view._locations = PackedStringArray(["user://lib_a", "user://lib_b"])
+
+	if not view.select_location_for_path("user://lib_b/photo.jpg"):
+		_die("select_location_for_path: expected match in lib_b")
+		return
+	if view._selected_location != "user://lib_b":
+		_die("select_location_for_path: expected lib_b selected, got %s" % view._selected_location)
+		return
+
+	# Already-selected location is a no-op, not re-selected.
+	if not view.select_location_for_path("user://lib_b/other.jpg"):
+		_die("select_location_for_path: expected repeat match in lib_b")
+		return
+	if view._selected_location != "user://lib_b":
+		_die("select_location_for_path: repeat match should not change selection")
+		return
+
+	if view.select_location_for_path("user://lib_c/photo.jpg"):
+		_die("select_location_for_path: unexpected match outside configured locations")
+		return
+	if view._selected_location != "user://lib_b":
+		_die("select_location_for_path: no-match should not disturb current selection")
+		return
+
+	view.queue_free()
+	print("LIBRARY_SMOKE: select_location_for_path OK")
+
 
 func _remove_dir_recursive(dir_path: String) -> void:
 	var dir: DirAccess = DirAccess.open(dir_path)
