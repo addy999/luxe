@@ -84,10 +84,17 @@ var _image_loaded: bool = false
 
 # --- RAW library thumbnails (shares the backend pipe with editing) ------------
 const _RAW_THUMB_SCALE: float = 0.25   # ~320-360px on a 1440x900 F mip
+# The renderer is serial (one RAW decode/render at a time), so this queue is
+# the only thing standing between "scrolled past it" and "it eventually
+# loads" - see the comment on _on_raw_thumb_requested for why it stays
+# uncapped.
 var _raw_thumb_queue: Array[Dictionary] = []   # {index, path, mtime}
 var _raw_thumb_busy: bool = false
 var _raw_thumb_task_id: int = -1
 var _raw_thumb_stop: bool = false       # set when the backend is needed; in-flight result is discarded
+var _stall_logged: bool = false         # throttles the "pump stalled in Library" diagnostic to once per stall
+const _RT_DEBUG: bool = true            # per-photo RAW thumbnail pipeline tracing (temporary, for the "stops after 111" bug)
+var _rt_applied: int = 0                # count of RAW thumbs successfully applied this session (debug)
 var _edited_path: String = ""          # last successfully opened image path
 var _backend_path: String = ""         # image currently loaded in the backend
 
@@ -348,6 +355,15 @@ func _set_view(view: int) -> void:
 		_flush_pending_save()
 		if _edited_path != "":
 			library_view.refresh_edited_badge(_edited_path)
+		# Cancel any pending/in-flight edit render before Library takes over the
+		# backend. A render armed by a slider edit just before the switch would
+		# otherwise fire HERE, in Library view: _start_process sets
+		# _raw_thumb_stop and never clears it (the RAW pump then stalls), and it
+		# runs _apply_params_to_backend against a backend a thumb job may have
+		# hijacked, dereferencing stale module pointers (the PAC crash). The
+		# pending edit is already in _params + EditStore, so it re-renders when
+		# the photo is next opened.
+		_quiesce_edit_render()
 
 	if not in_library:
 		# A render needs exclusive use of the backend pipe; stop and wait out
@@ -472,10 +488,13 @@ func _edit_navigate(dir: int) -> void:
 
 # The strip only exists in Edit view, but it reads LibraryView state directly,
 # so it refreshes regardless of which view is active (cheap: pool redraws).
+# Deliberately does NOT call reveal_selected() here: this fires on every
+# background thumb decode anywhere in the library, so re-revealing on each
+# tick would yank the scroll back to the selected photo while the user is
+# browsing elsewhere in the strip. reveal_selected() is called once, where
+# the selection actually changes (entering Edit / opening a photo, below).
 func _on_library_photos_changed() -> void:
 	filmstrip.refresh()
-	if _view == View.EDIT:
-		filmstrip.reveal_selected()
 
 
 # Returns true when a text-editing control currently holds keyboard focus, so
@@ -681,7 +700,7 @@ func open_photo(path: String) -> bool:
 	filename_label.text = path.get_file()
 	_backend_path = path
 	_raw_thumb_stop = false
-	_raw_thumb_queue.clear()
+	_clear_raw_thumb_queue()
 
 	_applied_params.clear()
 	_reset_render_gate()
@@ -753,27 +772,71 @@ func open_photo(path: String) -> bool:
 
 
 # --- RAW library thumbnails ----------------------------------------------------
-# LibraryView asks for a thumbnail per visible, untextured RAW tile; this runs
-# the request through the shared backend pipe, one image at a time, yielding
-# to edit renders/exports/open_photo whenever the backend is needed elsewhere.
+# LibraryView (grid or filmstrip) asks for a thumbnail per visible, untextured
+# RAW tile; this runs the request through the shared backend pipe, one image
+# at a time, yielding to edit renders/exports/open_photo whenever the backend
+# is needed elsewhere. Requests made while in Edit view (the filmstrip's own
+# viewport can reach indices the grid never scrolled to) are queued but not
+# dispatched: _raw_thumbs_allowed() below requires View.LIBRARY, so they wait
+# until the user returns to Library (_set_view re-pumps the queue there).
+#
+# The queue is deliberately UNCAPPED: it's naturally bounded by how many
+# distinct photos exist in the library (the in-queue dedup below plus
+# LibraryView's own _requested flag both prevent true duplicate growth), and
+# everything in it eventually gets serviced once back in Library, where the
+# pump runs continuously. A capped-with-eviction version of this was tried
+# and reverted (2026-10-11): scrolling the filmstrip in Edit view queues many
+# requests that can't be dispatched yet, and cancelling the oldest ones past
+# a cap silently abandoned anything the user scrolled past before reaching
+# their current position - it only got a second chance if something else
+# (scrolling back over it in the filmstrip, or visiting it in the grid)
+# happened to re-request it. That read as "a block in the middle never
+# loads, but the start and end do" - the start was already cached by the
+# grid before Edit was entered, the end was whatever survived in the capped
+# queue, and the middle was the abandoned majority.
 
 func _on_raw_thumb_requested(index: int) -> void:
-	if backend == null or _view != View.LIBRARY:
+	if backend == null:
+		if _RT_DEBUG: printerr("[RT] req vi=", index, " DROP backend_null")
 		return
 	if index < 0 or index >= library_view.get_photo_count():
+		if _RT_DEBUG: printerr("[RT] req vi=", index, " DROP oob (count=", library_view.get_photo_count(), ")")
 		return
 	var photo: Dictionary = library_view.get_photo(index)
 	if photo.is_empty():
+		if _RT_DEBUG: printerr("[RT] req vi=", index, " DROP empty-photo")
 		return
 	for queued in _raw_thumb_queue:
 		if queued["path"] == photo["path"]:
+			if _RT_DEBUG: printerr("[RT] req vi=", index, " ", String(photo["path"]).get_file(), " DEDUP (already queued)")
 			return
-	_raw_thumb_queue.append({
+	# push_front, not append: the queue is a stack, not a strict FIFO. Scroll
+	# requests arrive in the order things come into view, so appending serves
+	# the OLDEST-scrolled-past photo before whatever the user is looking at
+	# right now - a single-image-at-a-time serial renderer then takes a long
+	# time to work through a big backlog in that order, which reads as a hard
+	# cap on however many it gets through before the user gives up waiting.
+	# Prioritizing the newest request keeps the just-requested (i.e. visible)
+	# range loading as you scroll; older, scrolled-past entries just sit
+	# further back and still drain eventually once nothing newer arrives.
+	_raw_thumb_queue.push_front({
 		"index": index,
 		"path": photo["path"],
 		"mtime": photo["mtime"],
 	})
+	if _RT_DEBUG: printerr("[RT] req vi=", index, " ", String(photo["path"]).get_file(), " QUEUED (qsize=", _raw_thumb_queue.size(), ")")
 	_pump_raw_thumbs()
+
+
+# Drops every pending RAW thumb request, releasing each path's in-flight flag
+# on LibraryView first. A bare _raw_thumb_queue.clear() orphans those flags:
+# the paths stay marked "already requested" with no queue entry left to
+# resolve them (nothing but a full _requested wipe, i.e. switching library
+# locations, would ever clear them), so their tiles are stuck as placeholders.
+func _clear_raw_thumb_queue() -> void:
+	for queued in _raw_thumb_queue:
+		library_view.cancel_thumb_request(queued["path"])
+	_raw_thumb_queue.clear()
 
 
 func _raw_thumbs_allowed() -> bool:
@@ -784,9 +847,24 @@ func _raw_thumbs_allowed() -> bool:
 
 func _pump_raw_thumbs() -> void:
 	if _raw_thumb_busy or not _raw_thumbs_allowed() or _raw_thumb_queue.is_empty():
+		# Diagnostic: in Library with a non-empty queue and no job running, the
+		# pump should always dispatch. If it can't, something is holding a gate
+		# shut (a render/export that straddled the view switch, a stuck crop);
+		# log the breakdown once per stall so a recurrence is explainable rather
+		# than another guess. Reset when the pump actually drains or the queue
+		# empties.
+		if _view == View.LIBRARY and not _raw_thumb_busy \
+				and not _raw_thumb_queue.is_empty() and not _stall_logged:
+			_stall_logged = true
+			printerr("RAW pump stalled in Library (queue=", _raw_thumb_queue.size(),
+				"): processing=", _processing, " exporting=", _exporting,
+				" gate_pending=", _render_gate_pending(), " crop=", _crop_overlay != null,
+				" stop=", _raw_thumb_stop, " backend=", backend != null)
 		return
+	_stall_logged = false
 	var photo: Dictionary = _raw_thumb_queue.pop_front()
 	_raw_thumb_busy = true
+	if _RT_DEBUG: printerr("[RT] dispatch ", String(photo["path"]).get_file(), " (qremaining=", _raw_thumb_queue.size(), ")")
 	_raw_thumb_task_id = WorkerThreadPool.add_task(_raw_thumb_task.bind(photo))
 
 
@@ -824,13 +902,41 @@ func _render_backend_thumb(key: String) -> Image:
 
 func _on_raw_thumb_done(photo: Dictionary, img: Image, loaded: bool) -> void:
 	_raw_thumb_busy = false
+	if _RT_DEBUG:
+		var dims: String = "null" if img == null else str(img.get_width()) + "x" + str(img.get_height())
+		printerr("[RT] done ", String(photo["path"]).get_file(),
+			" loaded=", loaded, " img=", dims, " stop=", _raw_thumb_stop,
+			" (cache_hit=", (img != null and not loaded), ")")
 	# A cache hit never touched the backend; claiming it did would force a
 	# pointless edited-image reload on the next Edit entry.
 	if loaded:
 		_backend_path = photo["path"]
-	if not _raw_thumb_stop and img != null:
-		if library_view.apply_raw_thumb(photo["index"], photo["path"], img):
+	# A real decode/render failure (vs. the job just being interrupted by a
+	# view switch) would otherwise be silent, surfacing only as a thumbnail
+	# that never fills in.
+	if img == null and not _raw_thumb_stop:
+		printerr("RAW thumb render failed for ", photo["path"], " (loaded=", loaded, ")")
+	if _raw_thumb_stop:
+		# A view switch interrupted this job before it could land: discard the
+		# result, but still clear the in-flight flag on LibraryView's side.
+		# Skipping this (the previous bug) left the path permanently marked
+		# "already requested" with nothing ever going to resolve it, so that
+		# tile stayed a placeholder forever until an unrelated full _requested
+		# wipe (e.g. switching library locations) happened to clear it.
+		library_view.cancel_thumb_request(photo["path"])
+	else:
+		var applied: bool = library_view.apply_raw_thumb(photo["index"], photo["path"], img)
+		if applied:
+			# apply_raw_thumb clears the in-flight flag whether img is a real
+			# decode or null (load/render failure), so a failed RAW photo gets
+			# the same placeholder-forever treatment avoided above.
+			_rt_applied += 1
 			filmstrip.update_tile(photo["path"])
+		elif _RT_DEBUG:
+			printerr("[RT] apply REJECTED ", String(photo["path"]).get_file(),
+				" vi=", photo["index"], " (index/path mismatch or img null)")
+	if _RT_DEBUG and (img != null or _raw_thumb_stop):
+		printerr("[RT] applied_total=", _rt_applied)
 	_pump_raw_thumbs()
 
 
@@ -1128,12 +1234,29 @@ func _reset_render_gate() -> void:
 
 
 func _on_render_gate_timeout() -> void:
-	if backend == null or not _image_loaded or _exporting:
+	# Never render outside Edit: a timer armed by a slider edit can fire after
+	# the user has already switched to Library, where the backend is shared with
+	# RAW thumb jobs (see _quiesce_edit_render / _start_process guard).
+	if backend == null or not _image_loaded or _exporting or _view != View.EDIT:
 		return
 	if _processing:
 		_render_queued = true
 		return
 	_start_process()
+
+
+# Cancels the edit-render machinery so nothing renders once Library owns the
+# backend: stops the debounce-gate timer, drops a queued render, and waits out
+# any in-flight render task (brief main-thread stall, same tradeoff as
+# open_photo). The deferred _on_process_done for a waited-out task still runs
+# harmlessly (texture_rect is hidden in Library).
+func _quiesce_edit_render() -> void:
+	if _gate_timer != null:
+		_gate_timer.stop()
+	_render_queued = false
+	if _processing and _current_task_id != -1:
+		WorkerThreadPool.wait_for_task_completion(_current_task_id)
+		_processing = false
 
 
 func _params_differ(key: String) -> bool:
@@ -1187,7 +1310,10 @@ func _apply_params_to_backend() -> void:
 
 
 func _start_process() -> void:
-	if backend == null or not _image_loaded or _exporting:
+	# Edit-view only: renders mutate shared backend state (_apply_params_to_backend
+	# pushes cached module pointers), which is unsafe once Library owns the
+	# backend for RAW thumbs.
+	if backend == null or not _image_loaded or _exporting or _view != View.EDIT:
 		return
 
 	# A render needs exclusive use of the backend pipe; wait out any mid-flight
@@ -1246,12 +1372,25 @@ func _on_process_done(bytes: PackedByteArray, width: int, height: int) -> void:
 		_update_resolution_label(width, height)
 
 	_processing = false
+	# The render held the backend (_start_process set _raw_thumb_stop); release
+	# it now that the render is done. Without this the flag stays set and the RAW
+	# pump stays blocked (stop=true) even back in Library - the stall the
+	# _pump_raw_thumbs() call below would otherwise still no-op on. A render
+	# re-queued just below re-acquires it.
+	_raw_thumb_stop = false
 
 	if _render_queued and _image_loaded and not _exporting:
 		_render_queued = false
 		_request_render()
 	elif _image_loaded and not _exporting:
 		export_button.disabled = false
+
+	# Re-kick the pump: a render blocks _raw_thumbs_allowed() (the _processing /
+	# _raw_thumb_stop gates), and nothing else restarts it when those clear, so
+	# RAW thumbs queued while the render ran would stall until an unrelated fresh
+	# request kicked it. Self-guards on view/busy/queue, so it's a no-op when
+	# still in Edit, a new render just started, or nothing is queued.
+	_pump_raw_thumbs()
 
 
 func _apply_display_layout() -> void:
@@ -1666,6 +1805,11 @@ func _on_export_done(ok: bool, path: String) -> void:
 	export_button.disabled = not _image_loaded
 	if not ok:
 		push_error("Export failed for %s" % path.get_file())
+
+	# Same stall guard as _on_process_done: a long export blocks the RAW pump
+	# (_exporting gate); re-kick it on completion in case the user returned to
+	# Library while it ran. Self-guards, so it's a no-op if still in Edit.
+	_pump_raw_thumbs()
 
 
 # --- Persistent edit history: auto-save ---------------------------------------

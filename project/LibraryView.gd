@@ -79,6 +79,7 @@ var _tex_cache: Dictionary = {}      # path -> Texture2D
 var _tex_lru: Array[String] = []     # oldest first; access moves to the back
 # Paths with an in-flight request, so a scroll tick doesn't re-queue them.
 var _requested: Dictionary = {}      # path -> true
+const _RT_DEBUG: bool = true         # per-photo RAW thumbnail tracing (temporary, for the "stops after 111" bug)
 
 # --- Edited-badge cache --------------------------------------------------------
 # path -> bool: whether a saved EditStore record exists for this photo. Computed
@@ -646,29 +647,63 @@ func _on_thumb_timer_timeout() -> void:
 		return
 
 	var r: Vector2i = _visible_index_range()
-	var to_enqueue: Array[int] = []
-	# `r` is visible-space. RAW requests emit the VISIBLE index `vi` (it
-	# round-trips through Main back into apply_raw_thumb, which expects
-	# visible-space); the jpg queue appends the MASTER index `_visible[vi]`
-	# because its worker (_pump/_thumb_task/_on_thumb_ready) reads _photos
-	# directly.
 	for vi in range(r.x, r.y):
-		var index: int = _visible[vi]
-		var path: String = _photos[index]["path"]
-		if _tex_cache.has(path) or _requested.has(path):
-			continue
-		_requested[path] = true
-		if _photos[index].get("is_raw", false):
-			raw_thumb_requested.emit(vi)
-		else:
-			to_enqueue.append(index)
+		_request_thumb_for_visible(vi)
 
-	if not to_enqueue.is_empty():
+
+# Requests a thumbnail for one VISIBLE index, if not already cached or
+# in flight. Shared by the debounced grid-scroll dispatch above and by
+# request_thumb() below (the filmstrip's own visible range can extend
+# beyond the grid's current viewport, since it scrolls independently).
+# RAW requests emit the VISIBLE index `vi` (it round-trips through Main
+# back into apply_raw_thumb, which expects visible-space); the jpg queue
+# takes the MASTER index `index` because its worker (_pump/_thumb_task/
+# _on_thumb_ready) reads _photos directly.
+func _request_thumb_for_visible(vi: int) -> void:
+	if vi < 0 or vi >= _visible.size():
+		return
+	var index: int = _visible[vi]
+	var path: String = _photos[index]["path"]
+	if _tex_cache.has(path):
+		return
+	if _requested.has(path):
+		# A RAW photo marked in-flight but with no texture yet. If this keeps
+		# printing for the dead block, its _requested flag leaked (never resolved
+		# by apply_raw_thumb / cancel_thumb_request) and nothing will re-queue it.
+		if _RT_DEBUG and _photos[index].get("is_raw", false):
+			printerr("[RT] lib SKIP already-requested vi=", vi, " ", path.get_file())
+		return
+	_requested[path] = true
+	if _photos[index].get("is_raw", false):
+		if _RT_DEBUG: printerr("[RT] lib emit vi=", vi, " ", path.get_file())
+		raw_thumb_requested.emit(vi)
+	else:
+		# push_front, not append: see the matching comment on Main.gd's
+		# _raw_thumb_queue. THUMB_WORKERS=2 parallel decode usually keeps this
+		# queue short enough that order doesn't matter, but prioritizing the
+		# newest request still keeps whatever's currently in view responsive
+		# first under a fast-scroll backlog.
 		_mutex.lock()
-		for index in to_enqueue:
-			_queue.append(index)
+		_queue.push_front(index)
 		_mutex.unlock()
 		_pump()
+
+
+# Public entry point for the filmstrip (or any other visible-space client)
+# to trigger a thumbnail load directly, without waiting for the grid to
+# scroll the same index into its own viewport.
+func request_thumb(vi: int) -> void:
+	_request_thumb_for_visible(vi)
+
+
+# Clears the in-flight flag for a path without applying a texture: for a RAW
+# request Main decided to discard (interrupted by a view switch, or evicted
+# from its queue to bound the backlog) rather than deliver. Without this the
+# path stays marked "already requested" forever with nothing left to resolve
+# it, so the tile never gets another chance until _requested is wiped wholesale
+# (e.g. by switching library locations).
+func cancel_thumb_request(path: String) -> void:
+	_requested.erase(path)
 
 
 func _pump() -> void:

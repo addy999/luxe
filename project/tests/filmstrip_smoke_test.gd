@@ -31,6 +31,7 @@ func _initialize() -> void:
 class StubSource:
 	var paths: PackedStringArray = PackedStringArray()
 	var textures: Dictionary = {}   # path -> Texture2D
+	var requested: Array[int] = []  # visible indices passed to request_thumb
 
 	func filmstrip_count() -> int:
 		return paths.size()
@@ -46,6 +47,9 @@ class StubSource:
 
 	func filmstrip_rejected(_path: String) -> bool:
 		return false
+
+	func request_thumb(vi: int) -> void:
+		requested.append(vi)
 
 
 func _make_strip(count: int) -> Array:
@@ -111,6 +115,11 @@ func _test_binding() -> void:
 		return
 	if strip._pool[0].get_bound_path() != src.paths[0]:
 		_die("first tile bound to wrong path: %s" % strip._pool[0].get_bound_path())
+		return
+	# Untextured visible tiles must ask the source to load a thumb, so the
+	# strip can fill photos the grid never scrolled to.
+	if not src.requested.has(0):
+		_die("relayout should call request_thumb for untextured visible tile 0")
 		return
 	# Texture propagation: assign one, refresh, tile picks it up.
 	var img: Image = Image.create(8, 8, false, Image.FORMAT_RGB8)

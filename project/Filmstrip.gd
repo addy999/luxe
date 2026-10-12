@@ -13,11 +13,16 @@ class_name Filmstrip
 #   filmstrip_texture(path) -> Texture2D       (null if not decoded yet)
 #   filmstrip_edited(path) -> bool
 #   filmstrip_rejected(path) -> bool
+#   request_thumb(vi: int) -> void            (VISIBLE-space; triggers a load)
 #
-# Thumbs are CACHED-ONLY: an undecoded photo shows its extension placeholder.
-# Rendering a RAW thumb needs the shared backend pipe (a reload + re-render of
-# the photo being edited), so the strip never requests one; tiles fill as the
-# Library grid decodes them (thumb_ready -> update_tile).
+# An undecoded tile shows its extension placeholder and calls
+# source.request_thumb(vi) to trigger a load through the grid's own queue
+# (same path the grid uses when scrolling); this reaches photos the grid
+# itself isn't currently showing, since the strip scrolls independently.
+# RAW requests still only execute while LibraryView.on_view_entered would ask
+# for them (the backend pipe is busy serving the edited photo otherwise); see
+# Main._on_raw_thumb_requested, which queues but defers dispatch until back
+# in Library view. Tiles fill in as thumbs arrive (thumb_ready -> update_tile).
 #
 # Virtualization is the grid's technique at fixed tile size: a recycled pool
 # of custom-draw Controls over a Content whose minimum width spans the full
@@ -248,7 +253,10 @@ func _refresh_tiles() -> void:
 		if not tile.visible:
 			continue
 		var idx: int = rng.x + i
-		tile.bind(idx, source.filmstrip_path(idx))
+		var path: String = source.filmstrip_path(idx)
+		tile.bind(idx, path)
+		if path != "" and source.filmstrip_texture(path) == null:
+			source.request_thumb(idx)
 
 
 # --- Tile helpers (called by _Tile) ---------------------------------------------

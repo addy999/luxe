@@ -18,8 +18,18 @@ static func cache_path(key: String) -> String:
 
 
 static func load_cached(key: String) -> Image:
-	var img: Image = Image.load_from_file(cache_path(key))
-	return img
+	var path: String = cache_path(key)
+	# A cache miss is the expected, common case (every photo's first-ever
+	# thumbnail request), not an error: checking existence first avoids
+	# routing through Image.load_from_file's noisy ERROR-logged failure path.
+	# Fast-scrolling a large, never-before-cached library hits this on every
+	# newly visible photo; at THUMB_WORKERS=2 concurrency that was enough
+	# engine-level error logging from worker threads to crash a 4.6 beta
+	# build. A rare race between this check and the load below still falls
+	# through to the same (now rare instead of routine) failure path.
+	if not FileAccess.file_exists(path):
+		return null
+	return Image.load_from_file(path)
 
 
 # Decodes the source image, downsamples to fit THUMB_MAX on the long edge

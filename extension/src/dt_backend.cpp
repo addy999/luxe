@@ -434,8 +434,6 @@ bool DtBackend::load_image(String path) {
     dt_dev_pixelpipe_create_nodes(&preview_pipe, &dev);
     dt_dev_pixelpipe_synch_all(&preview_pipe, &dev);
     preview_pipe_ready = true;
-    UtilityFunctions::print("DtBackend::load_image: preview pipe using DT_MIPMAP_F ",
-                            preview_mipmap_buf.width, "x", preview_mipmap_buf.height);
   } else {
     UtilityFunctions::printerr("DtBackend::load_image: preview pipe unavailable "
                                "(DT_MIPMAP_F buffer or dt_dev_pixelpipe_init_preview() failed); "
