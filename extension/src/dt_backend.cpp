@@ -472,6 +472,7 @@ bool DtBackend::load_image(String path) {
   tonecurve_module = nullptr;
   channelmixer_rgb_module = nullptr;
   clipping_module = nullptr;
+  flip_module = nullptr;
   _dehaze_ambient = 0.0f;
   dehaze_value = 0.0f;
   return true;
@@ -1287,6 +1288,7 @@ void DtBackend::cleanup() {
     tonecurve_module = nullptr;
     channelmixer_rgb_module = nullptr;
     clipping_module = nullptr;
+    flip_module = nullptr;
     _dehaze_ambient = 0.0f;
     dehaze_value = 0.0f;
     }
@@ -1330,6 +1332,7 @@ void DtBackend::unload_image() {
   tonecurve_module = nullptr;
   channelmixer_rgb_module = nullptr;
   clipping_module = nullptr;
+  flip_module = nullptr;
   _dehaze_ambient = 0.0f;
   dehaze_value = 0.0f;
 

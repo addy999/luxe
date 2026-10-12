@@ -302,6 +302,21 @@ func _select_location(dir_path: String) -> void:
 	_scan_selected_location()
 
 
+# Finds the configured location containing path (prefix match, same
+# normalized form as _is_duplicate_or_nested) and selects it if it isn't
+# already selected. Used on launch to re-home the sidebar/grid/filmstrip on
+# whichever library the restored last-opened photo actually belongs to,
+# instead of always defaulting to _locations[0]. Returns false (no-op) if no
+# configured location contains path.
+func select_location_for_path(path: String) -> bool:
+	for loc: String in _locations:
+		if path == loc or path.begins_with(loc.path_join("")):
+			if loc != _selected_location:
+				_select_location(loc)
+			return true
+	return false
+
+
 # --- Scanning ---------------------------------------------------------------------
 
 func _scan_selected_location() -> void:

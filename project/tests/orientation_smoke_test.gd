@@ -97,5 +97,24 @@ func _initialize() -> void:
 		_die("quarter_turns=0 is not identity (center dist=%.4f)" % idist)
 		return
 
+	# Regression: load_image() rebuilds dev.iop, which frees the previous
+	# "flip" module instance. A cached flip_module pointer not reset across
+	# reloads goes stale, so re-run the 90cw check against a freshly reloaded
+	# image the way opening a second photo in the app would.
+	if not backend.load_image(input_path):
+		_die("second load_image failed")
+		return
+	backend.set_orientation(1)
+	var r1b: PackedByteArray = backend.render_view(1000000, 1000000, 0.5, 0.0, 0.0)
+	var w1b: int = backend.get_width()
+	var h1b: int = backend.get_height()
+	print("ORIENT_SMOKE: post-reload 90cw frame %dx%d" % [w1b, h1b])
+	if w1b != fh or h1b != fw:
+		_die("post-reload 90cw did not swap dims: got %dx%d expected %dx%d" % [w1b, h1b, fh, fw])
+		return
+	if r1b.size() == 0:
+		_die("post-reload 90cw render returned empty buffer")
+		return
+
 	print("ORIENT_SMOKE: PASS")
 	quit(0)
