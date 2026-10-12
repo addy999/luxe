@@ -93,6 +93,17 @@ static func read_status() -> Dictionary:
 	}
 
 
+# Blanks the mid-render `inprogress` marker (keeping done/total/complete). Called
+# after a DELIBERATE worker kill (GUI quit / re-target) so the next worker's
+# startup skip-list fold does not mistake the interrupted photo for a crash.
+# No-op when nothing was in flight.
+static func clear_inprogress() -> void:
+	var s: Dictionary = read_status()
+	if String(s["inprogress"]) == "":
+		return
+	write_status(int(s["done"]), int(s["total"]), "", bool(s["complete"]))
+
+
 # --- Skip (poison-RAW) list: worker reads at startup, folds in crashes, writes back. ---
 
 static func read_skip() -> PackedStringArray:

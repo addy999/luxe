@@ -86,6 +86,11 @@ func _spawn() -> void:
 func stop() -> void:
 	if _pid != -1 and OS.is_process_running(_pid):
 		OS.kill(_pid)
+		# Deliberate kill, not a crash: blank the worker's mid-render marker so the
+		# next launch re-renders the interrupted photo instead of skip-listing it.
+		# A genuine crash goes through the respawn path (not stop()), which leaves
+		# inprogress set so the offender IS skip-listed.
+		ThumbWorkerIPC.clear_inprogress()
 	_pid = -1
 	if _poll_timer != null:
 		_poll_timer.stop()

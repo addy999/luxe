@@ -678,10 +678,11 @@ func _on_thumb_timer_timeout() -> void:
 # in flight. Shared by the debounced grid-scroll dispatch above and by
 # request_thumb() below (the filmstrip's own visible range can extend
 # beyond the grid's current viewport, since it scrolls independently).
-# A RAW tile is a no-op here: the background worker process is the sole RAW
-# thumbnail producer and the disk-poll path (refresh_visible_from_cache /
-# fill_path_from_cache) fills it once rendered, so there is no in-process job
-# to dedup and _requested is left untouched. The jpg queue takes the MASTER
+# RAW and JPG both go through the in-process queue; _thumb_task branches on
+# is_raw: a JPG is decoded in-process if not cached, a RAW is DISK-CACHE-ONLY
+# (the background worker process is the sole RAW renderer, this just loads
+# whatever the worker already wrote so cached RAW tiles display even after the
+# worker has exited, without any backend contention). The queue takes the MASTER
 # index `index` because its worker (_pump/_thumb_task/_on_thumb_ready) reads
 # _photos directly.
 func _request_thumb_for_visible(vi: int) -> void:
@@ -690,8 +691,6 @@ func _request_thumb_for_visible(vi: int) -> void:
 	var index: int = _visible[vi]
 	var path: String = _photos[index]["path"]
 	if _tex_cache.has(path):
-		return
-	if _photos[index].get("is_raw", false):
 		return
 	if _requested.has(path):
 		return
@@ -777,12 +776,17 @@ func _pump() -> void:
 
 
 # Runs off the main thread: no scene node access, only Library/ThumbnailCache statics.
+# JPG/PNG: load from cache, else decode in-process. RAW: load from cache ONLY
+# (Image.load_from_file can't decode a RAW, and rendering one needs the backend,
+# which belongs to the worker process); a cache miss returns null and the tile
+# stays a placeholder until the worker renders it (then the indexer poll or a
+# later re-request fills it).
 func _thumb_task(photo: Dictionary, index: int, generation: int) -> void:
 	var path: String = photo["path"]
 	var mtime: int = photo["mtime"]
 	var key: String = ThumbnailCache.cache_key(path, mtime)
 	var img: Image = ThumbnailCache.load_cached(key)
-	if img == null:
+	if img == null and not photo.get("is_raw", false):
 		img = ThumbnailCache.build_thumbnail(path, key)
 	call_deferred("_on_thumb_ready", generation, index, img)
 
