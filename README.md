@@ -172,8 +172,16 @@ Contributions are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full
 
 1. Read [Getting started](#getting-started) and build darktable, godot-cpp, and the GDExtension.
 2. Run `scripts/smoke_test.sh` to confirm the pipeline works end to end.
-3. Install the tracked git hooks once after cloning: `scripts/install-hooks.sh` (the pre-commit hook rebuilds the GDExtension when its sources change and aborts the commit on a build failure).
-4. Keep changes focused, make sure the smoke test passes, and explain the "why" in the commit message.
+3. Install the tracked git hooks once after cloning: `scripts/install-hooks.sh`. The pre-commit hook rebuilds the GDExtension when its sources change and then runs every backend smoke test (`scripts/*smoke_test*.sh`), aborting the commit on a build or test failure.
+4. Keep changes focused, make sure the smoke tests pass, and explain the "why" in the commit message.
+
+Tests live under `project/tests/`, split by what they need to run:
+
+- `unit/` — backend-free pure-logic tests (EditStore, Library, RejectStore, UiState, Filmstrip). Run on a bare Godot binary via `scripts/run_unit_tests.sh`; these are what CI runs on every push/PR.
+- `feature/` — per-adjustment tests driving the real darktable backend. Run in parallel via `scripts/feature_smoke_tests.sh` (needs a darktable build).
+- `pipeline/` — the RAW→PNG oracle (`smoke_test.sh`) and the full-UI end-to-end regression (`e2e_smoke_test.sh`).
+
+Each runner globs its directory, so a new `*_smoke_test.gd` dropped into the right folder is picked up automatically with no list to update.
 
 ## License
 

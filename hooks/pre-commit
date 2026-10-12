@@ -7,11 +7,11 @@
 #    when a staged file touches extension/src, extension/SConstruct, or
 #    extension/dt_link_flags.json.
 #
-# 2. Run the e2e render regression test (scripts/e2e_smoke_test.sh) when
-#    staged changes could affect rendered pixels: the extension, Main.gd/
-#    Main.tscn, or the e2e test/fixture itself.
+# 2. Run every .sh with "smoke_test" in its name (repo-wide, tracked files
+#    only), unconditionally on every commit: the e2e render regression, the
+#    feature suites, and the RAW -> PNG pipeline oracle.
 #
-# Each check skips independently if its trigger paths aren't staged.
+# Check 1 skips if its trigger paths aren't staged.
 #
 # Skip for a WIP commit with:  git commit --no-verify
 
@@ -62,32 +62,19 @@ if [ -d "$EXT_DIR" ]; then
   fi
 fi
 
-# --- Check 2: e2e render regression test -----------------------------------
-# Only run when staged changes touch something that can change rendered
-# pixels: the extension itself, Main.gd/Main.tscn (the full UI wiring the
-# e2e test drives), or the e2e test/fixture. Slow (full RAW render + export),
-# so skip entirely otherwise.
-E2E_SCRIPT="$ROOT/scripts/e2e_smoke_test.sh"
-STAGED_RENDER=$(git diff --cached --name-only --diff-filter=ACMR -- \
-  'extension/src' 'extension/SConstruct' 'extension/dt_link_flags.json' \
-  'project/Main.gd' 'project/Main.tscn' \
-  'project/tests/e2e_smoke_test.gd' 'project/tests/fixtures/e2e_fixture.jpg')
-
-if [ -n "$STAGED_RENDER" ] && [ -x "$E2E_SCRIPT" ]; then
+# --- Check 2: all smoke_test scripts ---------------------------------------
+# Every tracked .sh with "smoke_test" in its name: e2e render regression,
+# feature suites, RAW -> PNG pipeline oracle. Unconditional on every commit.
+while IFS= read -r script; do
   echo ""
-  echo "pre-commit: render-affecting changes staged, running e2e smoke test..."
-  echo "pre-commit: changed: $STAGED_RENDER"
-
-  if ! "$E2E_SCRIPT"; then
+  echo "pre-commit: running $script ..."
+  if ! "$ROOT/$script"; then
     echo ""
-    echo "pre-commit: e2e smoke test FAILED. Commit aborted."
-    echo "pre-commit: fix the regression, or if the pixel change is intentional,"
-    echo "pre-commit: regenerate the fixture with: scripts/e2e_smoke_test.sh '' '' '' --update-fixture"
-    echo "pre-commit: bypass entirely with: git commit --no-verify"
+    echo "pre-commit: $script FAILED. Commit aborted."
+    echo "pre-commit: fix the failure, or bypass with: git commit --no-verify"
     exit 1
   fi
-
-  echo "pre-commit: e2e smoke test PASSED."
-fi
+  echo "pre-commit: $script PASSED."
+done < <(git ls-files '*.sh' | grep 'smoke_test')
 
 exit 0

@@ -1,10 +1,14 @@
 name: smoke tests
 
-# Backend-free smoke tests only: the EditStore / Library / RejectStore
-# pure-logic tests run on a bare Godot headless binary with no GDExtension
-# and no darktable build. The per-slider and e2e tests need the compiled
-# libdt_backend + a darktable build, so they stay local / in the pre-commit
-# hook and are intentionally not run here.
+# Backend-free unit tests only: the pure-logic tests under
+# project/tests/unit/ (EditStore / Library / RejectStore / UiState /
+# Filmstrip) run on a bare Godot headless binary with no GDExtension and no
+# darktable build. The per-slider feature tests and the RAW->PNG / full-UI
+# oracles need the compiled libdt_backend + a darktable build, so they stay
+# local / in the pre-commit hook and are intentionally not run here.
+#
+# The set is whatever scripts/run_unit_tests.sh globs out of
+# project/tests/unit/, so adding a backend-free test needs no change here.
 
 on:
   push:
@@ -32,19 +36,5 @@ jobs:
           rm -f project/dt_backend.gdextension
           godot --headless --path project --import
 
-      - name: Run backend-free smoke tests
-        run: |
-          fail=0
-          for t in edit_history library reject; do
-            echo "=== $t ==="
-            godot --headless --path project \
-              --script "res://tests/${t}_smoke_test.gd" 2>&1 | tee "/tmp/$t.log"
-            status=${PIPESTATUS[0]}
-            if [ "$status" = "0" ] && grep -q '_SMOKE: PASS' "/tmp/$t.log"; then
-              echo "PASS $t"
-            else
-              echo "FAIL $t (exit $status)"
-              fail=1
-            fi
-          done
-          exit $fail
+      - name: Run backend-free unit tests
+        run: scripts/run_unit_tests.sh godot

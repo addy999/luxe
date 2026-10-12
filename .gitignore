@@ -20,5 +20,9 @@ extension/dt_link_flags.json
 scripts/.smoke_out/
 scripts/.crop_out/
 project/tests/.feature_out
-project/tests/*.uid
+project/tests/.unit_out
 scripts/.e2e_out
+
+# Godot regenerates test .uid files on import; don't track them (any depth).
+project/tests/**/*.uid
+project/tests/*.uid

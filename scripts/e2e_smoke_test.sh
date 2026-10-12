@@ -85,11 +85,11 @@ LOG="$OUT_DIR/godot.log"
 set +e
 if [[ "$UPDATE_FIXTURE" == "1" ]]; then
     "$GODOT_BIN" --headless --path "$PROJECT_DIR" \
-        --script res://tests/e2e_smoke_test.gd \
+        --script res://tests/pipeline/e2e_smoke_test.gd \
         -- "$RAW" "$OUT_DIR" "--update-fixture" > "$LOG" 2>&1
 else
     "$GODOT_BIN" --headless --path "$PROJECT_DIR" \
-        --script res://tests/e2e_smoke_test.gd \
+        --script res://tests/pipeline/e2e_smoke_test.gd \
         -- "$RAW" "$OUT_DIR" > "$LOG" 2>&1
 fi
 GODOT_STATUS=$?

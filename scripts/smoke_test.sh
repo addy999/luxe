@@ -94,7 +94,7 @@ echo "=== Rendering (RAW -> EV $EV1 / EV $EV2 -> PNG) ==="
 LOG="$OUT_DIR/godot.log"
 set +e
 "$GODOT_BIN" --headless --path "$PROJECT_DIR" \
-    --script res://tests/smoke_test.gd \
+    --script res://tests/pipeline/smoke_test.gd \
     -- "$RAW" "$OUT_DIR" "$EV1" "$EV2" > "$LOG" 2>&1
 GODOT_STATUS=$?
 set -e

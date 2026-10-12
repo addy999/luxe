@@ -1,10 +1,11 @@
 #!/bin/bash
 #
-# Feature-level smoke test runner: runs every per-feature test in
-# project/tests/*_smoke_test.gd headless through the real DtBackend
+# Feature-level smoke test runner: runs every backend feature test in
+# project/tests/feature/*_smoke_test.gd headless through the real DtBackend
 # GDExtension, same environment contract as smoke_test.sh (which stays the
 # pipeline-level oracle for RAW -> PNG output; this script covers the
-# per-slider feature assertions).
+# per-slider feature assertions). Backend-free pure-logic tests live in
+# project/tests/unit/ and run in CI via run_unit_tests.sh.
 #
 # Usage:
 #   feature_smoke_tests.sh [RAW_FILE] [DT_BUILD_DIR] [GODOT_BIN] [test...]
@@ -72,11 +73,18 @@ echo "GODOT:      $GODOT_BIN"
 echo
 
 # --- pick the test set --------------------------------------------------------
-# All per-feature tests (everything except the pipeline-level smoke_test.gd,
-# which smoke_test.sh already owns). Trailing args subset the list.
-# The backend-free ones (edit_history, filmstrip, library, reject, ui_state)
-# ignore the RAW argument and run through the same loop.
-TESTS="blacks_whites contrast crop dehaze edit_history filmstrip library orientation raw_thumb reject saturation shadows_highlights tonecurve ui_state vibrance white_balance"
+# Every backend feature test is a *_smoke_test.gd under project/tests/feature/.
+# Globbing the directory is the single source of truth: drop a new test in and
+# it runs, with no list to keep in sync here. (The backend-free pure-logic
+# tests live in project/tests/unit/ and run in CI via run_unit_tests.sh; the
+# RAW->PNG and full-UI oracles live in project/tests/pipeline/ and run via
+# smoke_test.sh / e2e_smoke_test.sh.) Trailing args subset the list by name.
+TESTS=""
+for f in "$PROJECT_DIR"/tests/feature/*_smoke_test.gd; do
+    [[ -f "$f" ]] || continue
+    TESTS="$TESTS $(basename "$f" _smoke_test.gd)"
+done
+TESTS="${TESTS# }"
 if [[ $# -gt 3 ]]; then
     TESTS=""
     for want in "${@:4}"; do
@@ -116,11 +124,11 @@ run_one() {
     local status
     if [[ "$test" == "crop" ]]; then
         HOME="$home" "$GODOT_BIN" --headless --path "$PROJECT_DIR" \
-            --script "res://tests/${test}_smoke_test.gd" \
+            --script "res://tests/feature/${test}_smoke_test.gd" \
             -- "$RAW" "$OUT_DIR" > "$log" 2>&1
     else
         HOME="$home" "$GODOT_BIN" --headless --path "$PROJECT_DIR" \
-            --script "res://tests/${test}_smoke_test.gd" \
+            --script "res://tests/feature/${test}_smoke_test.gd" \
             -- "$RAW" > "$log" 2>&1
     fi
     status=$?
