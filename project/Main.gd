@@ -60,6 +60,7 @@ extends Control
 @onready var cluster_reject_button: Button = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow/ClusterRejectButton
 
 const CropOverlayScript := preload("res://CropOverlay.gd")
+const ThumbnailIndexerScript := preload("res://ThumbnailIndexer.gd")
 
 # --- View switching (Library vs Edit) ------------------------------------------
 enum View { LIBRARY, EDIT }
@@ -80,6 +81,9 @@ var _crop_before_edit: Rect2 = Rect2(0, 0, 1, 1)
 var backend: DtBackend = null
 var image_texture: ImageTexture = null
 
+# --- Background thumbnail indexer (worker process, spawned once per session) --
+var _thumb_indexer: Node = null
+
 var _image_loaded: bool = false
 
 # --- RAW library thumbnails (shares the backend pipe with editing) ------------
@@ -93,8 +97,6 @@ var _raw_thumb_busy: bool = false
 var _raw_thumb_task_id: int = -1
 var _raw_thumb_stop: bool = false       # set when the backend is needed; in-flight result is discarded
 var _stall_logged: bool = false         # throttles the "pump stalled in Library" diagnostic to once per stall
-const _RT_DEBUG: bool = true            # per-photo RAW thumbnail pipeline tracing (temporary, for the "stops after 111" bug)
-var _rt_applied: int = 0                # count of RAW thumbs successfully applied this session (debug)
 var _edited_path: String = ""          # last successfully opened image path
 var _backend_path: String = ""         # image currently loaded in the backend
 
@@ -259,6 +261,11 @@ func _configure_dt_backend_env() -> void:
 
 
 func _ready() -> void:
+	var _user_args: PackedStringArray = OS.get_cmdline_user_args()
+	if _user_args.has("--thumb-worker"):
+		_run_thumb_worker(_user_args)
+		return
+
 	_gate_timer = Timer.new()
 	_gate_timer.one_shot = true
 	_gate_timer.timeout.connect(_on_render_gate_timeout)
@@ -343,6 +350,7 @@ func _setup_views() -> void:
 	# The filmstrip reads LibraryView state through its duck-typed source; this
 	# signal covers every mutation the strip needs to redraw for.
 	library_view.photos_changed.connect(_on_library_photos_changed)
+	library_view.locations_changed.connect(_on_library_locations_changed)
 	filmstrip.photo_selected.connect(open_photo)
 	filmstrip.bind_source(library_view, "")
 	reject_button.pressed.connect(_on_reject_button_pressed)
@@ -637,6 +645,41 @@ func _finish_ready() -> void:
 	# at zero). Also syncs the shared slider to the snapped value.
 	_set_library_zoom(_library_thumb_zoom_pct)
 
+	_start_thumb_indexer()
+
+
+# (Re)targets the background RAW-thumbnail worker at every saved library
+# location (not just the one currently browsed) so the grid and filmstrip both
+# fill in regardless of where the user navigates. Safe to call repeatedly: the
+# indexer node is created once and reused; each call restarts the worker on the
+# current root set, so a library added/removed mid-session gets covered.
+func _start_thumb_indexer() -> void:
+	var locations: PackedStringArray = Library.load_locations()
+	if locations.is_empty():
+		return
+	var roots: PackedStringArray = PackedStringArray()
+	for location in locations:
+		roots.append(ProjectSettings.globalize_path(location))
+	if _thumb_indexer == null:
+		_thumb_indexer = ThumbnailIndexerScript.new()
+		add_child(_thumb_indexer)
+	_thumb_indexer.start(roots, self)
+
+
+# A library location was added or removed: re-point the worker at the new set.
+func _on_library_locations_changed() -> void:
+	_start_thumb_indexer()
+
+
+# Polled by ThumbnailIndexer (~1x/second) while the worker fills the on-disk
+# cache. Refreshes whichever view's visible tiles from disk: the grid always
+# (cheap, also warms the cache for a later return to Library), and the filmstrip
+# when it is showing (Edit view), since its visible range differs from the grid's.
+func refresh_visible_from_cache() -> void:
+	library_view.refresh_visible_from_cache()
+	if filmstrip != null and filmstrip.visible:
+		filmstrip.refresh_from_cache()
+
 
 func _update_empty_state() -> void:
 	var empty: bool = not _image_loaded
@@ -779,66 +822,40 @@ func open_photo(path: String) -> bool:
 
 # --- RAW library thumbnails ----------------------------------------------------
 # LibraryView (grid or filmstrip) asks for a thumbnail per visible, untextured
-# RAW tile; this runs the request through the shared backend pipe, one image
-# at a time, yielding to edit renders/exports/open_photo whenever the backend
-# is needed elsewhere. Requests made while in Edit view (the filmstrip's own
-# viewport can reach indices the grid never scrolled to) are queued but not
-# dispatched: _raw_thumbs_allowed() below requires View.LIBRARY, so they wait
-# until the user returns to Library (_set_view re-pumps the queue there).
-#
-# The queue is deliberately UNCAPPED: it's naturally bounded by how many
-# distinct photos exist in the library (the in-queue dedup below plus
-# LibraryView's own _requested flag both prevent true duplicate growth), and
-# everything in it eventually gets serviced once back in Library, where the
-# pump runs continuously. A capped-with-eviction version of this was tried
-# and reverted (2026-10-11): scrolling the filmstrip in Edit view queues many
-# requests that can't be dispatched yet, and cancelling the oldest ones past
-# a cap silently abandoned anything the user scrolled past before reaching
-# their current position - it only got a second chance if something else
-# (scrolling back over it in the filmstrip, or visiting it in the grid)
-# happened to re-request it. That read as "a block in the middle never
-# loads, but the start and end do" - the start was already cached by the
-# grid before Edit was entered, the end was whatever survived in the capped
-# queue, and the middle was the abandoned majority.
+# RAW tile; this runs the request through the shared backend pipe, one image at
+# a time, yielding to edit renders/exports/open_photo whenever the backend is
+# needed elsewhere. Requests made in Edit view are queued but not dispatched
+# (_raw_thumbs_allowed() below requires View.LIBRARY) and drain when the user
+# returns to Library (_set_view re-pumps the queue). The queue is uncapped: the
+# in-queue dedup below plus LibraryView's _requested flag bound it to the
+# distinct-photo count.
 
 func _on_raw_thumb_requested(index: int) -> void:
 	if backend == null:
-		if _RT_DEBUG: printerr("[RT] req vi=", index, " DROP backend_null")
 		return
 	if index < 0 or index >= library_view.get_photo_count():
-		if _RT_DEBUG: printerr("[RT] req vi=", index, " DROP oob (count=", library_view.get_photo_count(), ")")
 		return
 	var photo: Dictionary = library_view.get_photo(index)
 	if photo.is_empty():
-		if _RT_DEBUG: printerr("[RT] req vi=", index, " DROP empty-photo")
 		return
 	for queued in _raw_thumb_queue:
 		if queued["path"] == photo["path"]:
-			if _RT_DEBUG: printerr("[RT] req vi=", index, " ", String(photo["path"]).get_file(), " DEDUP (already queued)")
 			return
-	# push_front, not append: the queue is a stack, not a strict FIFO. Scroll
-	# requests arrive in the order things come into view, so appending serves
-	# the OLDEST-scrolled-past photo before whatever the user is looking at
-	# right now - a single-image-at-a-time serial renderer then takes a long
-	# time to work through a big backlog in that order, which reads as a hard
-	# cap on however many it gets through before the user gives up waiting.
-	# Prioritizing the newest request keeps the just-requested (i.e. visible)
-	# range loading as you scroll; older, scrolled-past entries just sit
-	# further back and still drain eventually once nothing newer arrives.
+	# push_front makes the queue a stack: the serial renderer serves the most
+	# recently requested (i.e. visible) photo first, older scrolled-past entries
+	# drain behind it.
 	_raw_thumb_queue.push_front({
 		"index": index,
 		"path": photo["path"],
 		"mtime": photo["mtime"],
 	})
-	if _RT_DEBUG: printerr("[RT] req vi=", index, " ", String(photo["path"]).get_file(), " QUEUED (qsize=", _raw_thumb_queue.size(), ")")
 	_pump_raw_thumbs()
 
 
-# Drops every pending RAW thumb request, releasing each path's in-flight flag
-# on LibraryView first. A bare _raw_thumb_queue.clear() orphans those flags:
-# the paths stay marked "already requested" with no queue entry left to
-# resolve them (nothing but a full _requested wipe, i.e. switching library
-# locations, would ever clear them), so their tiles are stuck as placeholders.
+# Drops every pending RAW thumb request, clearing each path's in-flight flag on
+# LibraryView first. A bare _raw_thumb_queue.clear() would orphan those flags:
+# the paths stay marked "already requested" with no queue entry left to resolve
+# them, so their tiles stick as placeholders.
 func _clear_raw_thumb_queue() -> void:
 	for queued in _raw_thumb_queue:
 		library_view.cancel_thumb_request(queued["path"])
@@ -870,7 +887,6 @@ func _pump_raw_thumbs() -> void:
 	_stall_logged = false
 	var photo: Dictionary = _raw_thumb_queue.pop_front()
 	_raw_thumb_busy = true
-	if _RT_DEBUG: printerr("[RT] dispatch ", String(photo["path"]).get_file(), " (qremaining=", _raw_thumb_queue.size(), ")")
 	_raw_thumb_task_id = WorkerThreadPool.add_task(_raw_thumb_task.bind(photo))
 
 
@@ -908,11 +924,6 @@ func _render_backend_thumb(key: String) -> Image:
 
 func _on_raw_thumb_done(photo: Dictionary, img: Image, loaded: bool) -> void:
 	_raw_thumb_busy = false
-	if _RT_DEBUG:
-		var dims: String = "null" if img == null else str(img.get_width()) + "x" + str(img.get_height())
-		printerr("[RT] done ", String(photo["path"]).get_file(),
-			" loaded=", loaded, " img=", dims, " stop=", _raw_thumb_stop,
-			" (cache_hit=", (img != null and not loaded), ")")
 	# A cache hit never touched the backend; claiming it did would force a
 	# pointless edited-image reload on the next Edit entry.
 	if loaded:
@@ -933,16 +944,7 @@ func _on_raw_thumb_done(photo: Dictionary, img: Image, loaded: bool) -> void:
 	else:
 		var applied: bool = library_view.apply_raw_thumb(photo["index"], photo["path"], img)
 		if applied:
-			# apply_raw_thumb clears the in-flight flag whether img is a real
-			# decode or null (load/render failure), so a failed RAW photo gets
-			# the same placeholder-forever treatment avoided above.
-			_rt_applied += 1
 			filmstrip.update_tile(photo["path"])
-		elif _RT_DEBUG:
-			printerr("[RT] apply REJECTED ", String(photo["path"]).get_file(),
-				" vi=", photo["index"], " (index/path mismatch or img null)")
-	if _RT_DEBUG and (img != null or _raw_thumb_stop):
-		printerr("[RT] applied_total=", _rt_applied)
 	_pump_raw_thumbs()
 
 
@@ -1859,7 +1861,79 @@ func _exit_tree() -> void:
 	_cleanup_backend()
 
 
+# --- Thumbnail worker mode (headless, no UI) -----------------------------------
+# Entered instead of the normal GUI path when "--thumb-worker" is a user arg
+# (OS.get_cmdline_user_args(), after the required "--" separator). Scans every
+# root passed after the flag, renders a disk-cached thumbnail for every photo
+# missing one, then quits. Own DtBackend, own darktable config/cache dir (set
+# via env vars before the backend is created) so this process's darktable never
+# collides with the GUI instance's.
+func _run_thumb_worker(args: PackedStringArray) -> void:
+	var roots: PackedStringArray = PackedStringArray()
+	var past_flag: bool = false
+	for arg in args:
+		if arg == "--thumb-worker":
+			past_flag = true
+			continue
+		if not past_flag:
+			continue
+		if arg.begins_with("--"):
+			continue
+		roots.append(arg)
+
+	_configure_dt_backend_env()
+	var config_dir: String = ProjectSettings.globalize_path("user://thumb_worker_dt/config")
+	var cache_dir: String = ProjectSettings.globalize_path("user://thumb_worker_dt/cache")
+	DirAccess.make_dir_recursive_absolute(config_dir)
+	DirAccess.make_dir_recursive_absolute(cache_dir)
+	OS.set_environment("DT_BACKEND_CONFIGDIR", config_dir)
+	OS.set_environment("DT_BACKEND_CACHEDIR", cache_dir)
+
+	backend = DtBackend.new()
+	var ok: bool = backend.init(0, 0)
+	if not ok:
+		get_tree().quit(1)
+		return
+
+	# Dedupe across roots by path: the same photo could be reachable from two
+	# overlapping/nested locations.
+	var photos_by_path: Dictionary = {}
+	for root in roots:
+		for photo in Library.scan_location(root):
+			photos_by_path[photo["path"]] = photo
+
+	for path in photos_by_path:
+		var photo: Dictionary = photos_by_path[path]
+		_index_one_photo(photo)
+		await get_tree().process_frame
+
+	get_tree().quit(0)
+
+
+# Renders and caches one photo if it isn't already cached. Defensive: any
+# failure is logged and skipped rather than propagated, so one bad RAW doesn't
+# stop the rest of the scan from indexing (a hard darktable segfault can't be
+# caught here, so the caller just logs and continues).
+func _index_one_photo(photo: Dictionary) -> void:
+	var path: String = photo["path"]
+	var key: String = ThumbnailCache.cache_key(path, photo["mtime"])
+	if ThumbnailCache.load_cached(key) != null:
+		return
+	if photo["is_raw"]:
+		if not backend.load_image(path):
+			printerr("[thumb-worker] load_image failed for ", path)
+			return
+		var img: Image = _render_backend_thumb(key)
+		if img == null:
+			printerr("[thumb-worker] render failed for ", path)
+	else:
+		if ThumbnailCache.build_thumbnail(path, key) == null:
+			printerr("[thumb-worker] build_thumbnail failed for ", path)
+
+
 func _cleanup_backend() -> void:
+	if _thumb_indexer != null:
+		_thumb_indexer.stop()
 	if backend != null:
 		backend.cleanup()
 		backend = null

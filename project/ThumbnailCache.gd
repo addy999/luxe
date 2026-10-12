@@ -69,7 +69,19 @@ static func store_thumb(key: String, img: Image) -> Image:
 	if err != OK and err != ERR_ALREADY_EXISTS:
 		return img
 
-	img.save_jpg(out_path, 0.85)
+	# Unique per writer (pid + random) so the GUI's in-process JPG workers and
+	# a separate worker process never collide on the same tmp path.
+	var tmp_path: String = out_path + ".tmp." + str(OS.get_process_id()) + "." + str(randi())
+	var save_err: int = img.save_jpg(tmp_path, 0.85)
+	if save_err != OK:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
+		return img
+
+	var rename_err: int = DirAccess.rename_absolute(
+		ProjectSettings.globalize_path(tmp_path),
+		ProjectSettings.globalize_path(out_path))
+	if rename_err != OK:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
 
 	return img
 

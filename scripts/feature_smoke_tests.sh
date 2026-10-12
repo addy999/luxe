@@ -74,9 +74,9 @@ echo
 # --- pick the test set --------------------------------------------------------
 # All per-feature tests (everything except the pipeline-level smoke_test.gd,
 # which smoke_test.sh already owns). Trailing args subset the list.
-# The backend-free ones (edit_history, filmstrip, library, reject) ignore the
-# RAW argument and run through the same loop.
-TESTS="blacks_whites contrast crop dehaze edit_history filmstrip library orientation raw_thumb reject saturation shadows_highlights tonecurve vibrance white_balance"
+# The backend-free ones (edit_history, filmstrip, library, reject, ui_state)
+# ignore the RAW argument and run through the same loop.
+TESTS="blacks_whites contrast crop dehaze edit_history filmstrip library orientation raw_thumb reject saturation shadows_highlights tonecurve ui_state vibrance white_balance"
 if [[ $# -gt 3 ]]; then
     TESTS=""
     for want in "${@:4}"; do

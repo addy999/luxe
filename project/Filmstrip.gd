@@ -61,6 +61,8 @@ var _color_caption: Color
 
 
 func _ready() -> void:
+	if OS.get_cmdline_user_args().has("--thumb-worker"):
+		return
 	var theme_manager: Node = get_node_or_null("/root/ThemeManager")
 	if theme_manager != null:
 		theme_manager.theme_changed.connect(_on_theme_changed)
@@ -140,6 +142,21 @@ func refresh() -> void:
 	if source == null:
 		return
 	_relayout()
+
+
+# Polled by Main's ThumbnailIndexer while the strip is visible: retries the
+# on-disk cache for each visible untextured tile and paints it on a hit. The
+# strip can't render RAW thumbs itself (the backend is busy with the edited
+# photo), so this disk poll is its only fill path in Edit view.
+func refresh_from_cache() -> void:
+	if source == null or not open:
+		return
+	var rng: Vector2i = _visible_range()
+	for idx in range(rng.x, rng.y + 1):
+		var path: String = source.filmstrip_path(idx)
+		if path != "" and source.filmstrip_texture(path) == null:
+			if source.fill_path_from_cache(path):
+				update_tile(path)
 
 
 # Pushes one photo's fresh texture into whichever tile shows it (called from

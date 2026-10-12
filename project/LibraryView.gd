@@ -31,6 +31,9 @@ signal reject_toggled(path: String, rejected: bool)
 # Photo list, badges, or textures changed in any way the filmstrip cares about
 # (rescan, filter toggle, reject toggle, thumb decoded).
 signal photos_changed()
+# The saved library location set changed (added or removed); Main.gd re-targets
+# the background thumbnail worker at the new root set.
+signal locations_changed()
 
 const LibraryItemScript := preload("res://LibraryItem.gd")
 
@@ -79,7 +82,6 @@ var _tex_cache: Dictionary = {}      # path -> Texture2D
 var _tex_lru: Array[String] = []     # oldest first; access moves to the back
 # Paths with an in-flight request, so a scroll tick doesn't re-queue them.
 var _requested: Dictionary = {}      # path -> true
-const _RT_DEBUG: bool = true         # per-photo RAW thumbnail tracing (temporary, for the "stops after 111" bug)
 
 # --- Edited-badge cache --------------------------------------------------------
 # path -> bool: whether a saved EditStore record exists for this photo. Computed
@@ -104,6 +106,8 @@ var _mutex: Mutex = Mutex.new()
 
 
 func _ready() -> void:
+	if OS.get_cmdline_user_args().has("--thumb-worker"):
+		return
 	# Resolved by node path, not the ThemeManager identifier: autoloads are not
 	# registered in --script mode, where a direct identifier fails to compile.
 	var theme_manager: Node = get_node_or_null("/root/ThemeManager")
@@ -200,6 +204,7 @@ func _on_add_location_dir_selected(dir_path: String) -> void:
 		return
 	_locations.append(dir_path)
 	Library.save_locations(_locations)
+	locations_changed.emit()
 	_rebuild_sidebar()
 	_select_location(dir_path)
 
@@ -236,6 +241,7 @@ func _on_remove_location_pressed(dir_path: String) -> void:
 		return
 	_locations.remove_at(idx)
 	Library.save_locations(_locations)
+	locations_changed.emit()
 	if _selected_location == dir_path:
 		_selected_location = ""
 		_set_photos([])
@@ -687,15 +693,9 @@ func _request_thumb_for_visible(vi: int) -> void:
 	if _tex_cache.has(path):
 		return
 	if _requested.has(path):
-		# A RAW photo marked in-flight but with no texture yet. If this keeps
-		# printing for the dead block, its _requested flag leaked (never resolved
-		# by apply_raw_thumb / cancel_thumb_request) and nothing will re-queue it.
-		if _RT_DEBUG and _photos[index].get("is_raw", false):
-			printerr("[RT] lib SKIP already-requested vi=", vi, " ", path.get_file())
 		return
 	_requested[path] = true
 	if _photos[index].get("is_raw", false):
-		if _RT_DEBUG: printerr("[RT] lib emit vi=", vi, " ", path.get_file())
 		raw_thumb_requested.emit(vi)
 	else:
 		# push_front, not append: see the matching comment on Main.gd's
@@ -714,6 +714,60 @@ func _request_thumb_for_visible(vi: int) -> void:
 # scroll the same index into its own viewport.
 func request_thumb(vi: int) -> void:
 	_request_thumb_for_visible(vi)
+
+
+# Polled by Main's ThumbnailIndexer: retries ThumbnailCache.load_cached for
+# each currently-visible untextured tile in case the background worker wrote
+# it since the last check. A hit is applied the same way as an in-process
+# render (cache_put + apply + _requested erase), so it doesn't fight the RAW
+# pump if that resolves the same path. No-ops when every tile is textured.
+func refresh_visible_from_cache() -> void:
+	if _visible.is_empty():
+		return
+	var r: Vector2i = _visible_index_range()
+	var any_filled: bool = false
+	for vi in range(r.x, r.y):
+		if _fill_master_from_cache(_visible[vi]):
+			any_filled = true
+	if any_filled:
+		photos_changed.emit()
+
+
+# Loads one photo's thumbnail from the on-disk cache into _tex_cache by PATH
+# (resolves the master index), for callers that only know the path. Returns
+# true if a texture became available. Emits photos_changed on a fresh fill.
+func fill_path_from_cache(path: String) -> bool:
+	if path == "" or _tex_cache.has(path):
+		return _tex_cache.has(path)
+	var master: int = get_photo_index_master(path)
+	if master < 0:
+		return false
+	if _fill_master_from_cache(master):
+		photos_changed.emit()
+		return true
+	return false
+
+
+# Core disk-cache fill for one master-indexed photo: no-op if already cached or
+# not yet written. Otherwise decodes, caches, clears the in-flight flag, and
+# repaints the tile. Returns true only on a fresh fill. Does not emit
+# photos_changed (callers batch that).
+func _fill_master_from_cache(master: int) -> bool:
+	var photo: Dictionary = _photos[master]
+	var path: String = photo["path"]
+	if _tex_cache.has(path):
+		return false
+	var key: String = ThumbnailCache.cache_key(path, photo["mtime"])
+	var img: Image = ThumbnailCache.load_cached(key)
+	if img == null:
+		return false
+	var tex: ImageTexture = ImageTexture.create_from_image(img)
+	_cache_put(path, tex)
+	_requested.erase(path)
+	if _mark_edited(photo):
+		_reapply_hide_filter()
+	_apply_texture_to_master(master)
+	return true
 
 
 # Clears the in-flight flag for a path without applying a texture: for a RAW

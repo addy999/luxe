@@ -299,8 +299,25 @@ bool DtBackend::init(int display_width, int display_height) {
     return true;
   }
 
-  gchar *configdir = g_build_filename(g_get_user_cache_dir(), "godot-darktable-poc", "config", NULL);
-  gchar *cachedir = g_build_filename(g_get_user_cache_dir(), "godot-darktable-poc", "cache", NULL);
+  const char *env_configdir = std::getenv("DT_BACKEND_CONFIGDIR");
+  const char *env_cachedir = std::getenv("DT_BACKEND_CACHEDIR");
+
+  gchar *configdir;
+  if(env_configdir && env_configdir[0] != '\0') {
+    configdir = g_strdup(env_configdir);
+    UtilityFunctions::print("DtBackend::init: using DT_BACKEND_CONFIGDIR override: ", env_configdir);
+  } else {
+    configdir = g_build_filename(g_get_user_cache_dir(), "godot-darktable-poc", "config", NULL);
+  }
+
+  gchar *cachedir;
+  if(env_cachedir && env_cachedir[0] != '\0') {
+    cachedir = g_strdup(env_cachedir);
+    UtilityFunctions::print("DtBackend::init: using DT_BACKEND_CACHEDIR override: ", env_cachedir);
+  } else {
+    cachedir = g_build_filename(g_get_user_cache_dir(), "godot-darktable-poc", "cache", NULL);
+  }
+
   g_mkdir_with_parents(configdir, 0700);
   g_mkdir_with_parents(cachedir, 0700);
 
