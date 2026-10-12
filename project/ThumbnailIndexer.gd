@@ -7,10 +7,21 @@ extends Node
 # writes straight to the shared on-disk ThumbnailCache, so this node's only job
 # is to periodically ask the current view to re-check the cache for its visible
 # placeholder tiles.
+#
+# B1 additions: progress is read from thumb_worker_status.json each poll tick
+# and forwarded to poll_target.on_index_progress(done, total). If the worker
+# process dies with work still outstanding (crash, not a clean completion), it
+# is respawned (same roots) up to MAX_RESPAWNS times; the worker's own
+# startup-time skip-list fold isolates whatever RAW crashed it. A dead worker
+# never blocks the GUI: once respawns are exhausted, polling just stops.
+
+const MAX_RESPAWNS: int = 8
 
 var _pid: int = -1
 var _poll_timer: Timer = null
 var _poll_target: Object = null
+var _roots: PackedStringArray = PackedStringArray()
+var _respawn_count: int = 0
 
 
 func _ready() -> void:
@@ -31,6 +42,16 @@ func start(roots: PackedStringArray, poll_target: Object) -> void:
 		return
 	stop()
 
+	_roots = roots
+	_poll_target = poll_target
+	_respawn_count = 0
+	_spawn()
+
+
+# Builds dev-vs-exported argv and launches the worker on `_roots`. Separated
+# from start() so a crash respawn can relaunch without resetting the retry
+# counter or re-touching the poll target.
+func _spawn() -> void:
 	var path: String
 	var args: PackedStringArray = PackedStringArray()
 	if OS.has_feature("editor"):
@@ -48,7 +69,7 @@ func start(roots: PackedStringArray, poll_target: Object) -> void:
 		args.append("--headless")
 	args.append("--")
 	args.append("--thumb-worker")
-	for root in roots:
+	for root in _roots:
 		args.append(root)
 
 	_pid = OS.create_process(path, args, false)
@@ -57,7 +78,6 @@ func start(roots: PackedStringArray, poll_target: Object) -> void:
 		_pid = -1
 		return
 
-	_poll_target = poll_target
 	_poll_timer.start()
 
 
@@ -77,9 +97,35 @@ func _on_poll_timeout() -> void:
 		return
 	if _pid != -1 and OS.is_process_running(_pid):
 		_poll_target.refresh_visible_from_cache()
+		var status: Dictionary = ThumbWorkerIPC.read_status()
+		_poll_target.on_index_progress(int(status["done"]), int(status["total"]))
 		return
-	# Worker exited: one final sweep to pick up anything it finished right
-	# before quitting, then stop polling.
+
+	# Worker process is dead. One final sweep to pick up anything it finished
+	# right before exiting/crashing.
 	_poll_target.refresh_visible_from_cache()
-	_poll_timer.stop()
 	_pid = -1
+
+	var status: Dictionary = ThumbWorkerIPC.read_status()
+	var complete: bool = bool(status["complete"])
+	var total: int = int(status["total"])
+	var done: int = int(status["done"])
+	if complete or total == 0 or done >= total:
+		# Clean finish (or nothing was ever queued): stop polling.
+		_poll_timer.stop()
+		_poll_target.on_indexing_finished()
+		return
+
+	# Crashed mid-work: respawn (same roots; the worker's own startup skip-list
+	# fold isolates whatever RAW crashed it), bounded by MAX_RESPAWNS so a
+	# worker that keeps dying can't loop forever.
+	if _respawn_count < MAX_RESPAWNS:
+		_respawn_count += 1
+		printerr("ThumbnailIndexer: worker died with work outstanding (done=",
+			done, "/", total, "), respawning (attempt ", _respawn_count, ")")
+		_spawn()
+		return
+
+	printerr("ThumbnailIndexer: worker crashed too many times, giving up")
+	_poll_timer.stop()
+	_poll_target.on_indexing_finished()

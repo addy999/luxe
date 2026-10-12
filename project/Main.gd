@@ -83,6 +83,12 @@ var image_texture: ImageTexture = null
 
 # --- Background thumbnail indexer (worker process, spawned once per session) --
 var _thumb_indexer: Node = null
+# Last priority list written to thumb_worker_priority.json, so a stationary
+# view does not rewrite the same unchanged list every poll tick.
+var _last_priority_paths: PackedStringArray = PackedStringArray()
+# True while the worker has outstanding work; makes the status label visible
+# in both views (normally Library-only) and drives its progress text.
+var _indexing_active: bool = false
 
 var _image_loaded: bool = false
 
@@ -393,7 +399,7 @@ func _set_view(view: int) -> void:
 	for control in _library_only_controls:
 		control.visible = in_library
 	resolution_label.visible = not in_library
-	library_status_label.visible = in_library
+	library_status_label.visible = in_library or _indexing_active
 
 	_switching_view = true
 	view_tab_bar.current_tab = view
@@ -679,6 +685,42 @@ func refresh_visible_from_cache() -> void:
 	library_view.refresh_visible_from_cache()
 	if filmstrip != null and filmstrip.visible:
 		filmstrip.refresh_from_cache()
+	_write_thumb_priority()
+
+
+# Tells the worker which photos the user is currently looking at, most
+# important (center of the active view) first. Writes only when the list
+# differs from the last write, so a stationary view does not churn disk every
+# poll tick.
+func _write_thumb_priority() -> void:
+	var paths: PackedStringArray = PackedStringArray()
+	if filmstrip != null and filmstrip.visible:
+		paths = filmstrip.get_visible_paths()
+	elif library_view != null:
+		paths = library_view.get_visible_paths()
+	if paths == _last_priority_paths:
+		return
+	_last_priority_paths = paths
+	ThumbWorkerIPC.write_priority(paths)
+
+
+# Called by ThumbnailIndexer each poll tick while the worker is alive.
+func on_index_progress(done: int, total: int) -> void:
+	_indexing_active = total > 0 and done < total
+	if _indexing_active:
+		library_status_label.visible = true
+		library_status_label.text = "Indexing thumbnails... %d/%d" % [done, total]
+	elif not _view == View.LIBRARY:
+		library_status_label.visible = false
+
+
+# Called by ThumbnailIndexer once the worker finishes or gives up respawning.
+# Text is left as-is: LibraryView's status_changed signal keeps it current
+# whenever Library view is active; only visibility (Library-only again) needs
+# restoring here.
+func on_indexing_finished() -> void:
+	_indexing_active = false
+	library_status_label.visible = _view == View.LIBRARY
 
 
 func _update_empty_state() -> void:
@@ -1895,18 +1937,76 @@ func _run_thumb_worker(args: PackedStringArray) -> void:
 		get_tree().quit(1)
 		return
 
+	# Poison-RAW self-isolation: fold in whatever the skip list already has,
+	# plus whatever status.json says was mid-render when this process started
+	# (a non-empty inprogress not already skip-listed means the previous
+	# worker crashed on exactly that photo).
+	var skip_set: Dictionary = {}
+	for p in ThumbWorkerIPC.read_skip():
+		skip_set[p] = true
+	var prev_status: Dictionary = ThumbWorkerIPC.read_status()
+	var crashed_path: String = String(prev_status.get("inprogress", ""))
+	if crashed_path != "" and not skip_set.has(crashed_path):
+		skip_set[crashed_path] = true
+		printerr("[thumb-worker] skipping poison RAW from previous crash: ", crashed_path)
+	ThumbWorkerIPC.write_skip(PackedStringArray(skip_set.keys()))
+
 	# Dedupe across roots by path: the same photo could be reachable from two
-	# overlapping/nested locations.
-	var photos_by_path: Dictionary = {}
+	# overlapping/nested locations. Build an ordered pending list, scan order,
+	# excluding anything already cached or skip-listed.
+	var seen: Dictionary = {}
+	var pending: Array[Dictionary] = []
 	for root in roots:
 		for photo in Library.scan_location(root):
-			photos_by_path[photo["path"]] = photo
+			var path: String = photo["path"]
+			if seen.has(path):
+				continue
+			seen[path] = true
+			if skip_set.has(path):
+				continue
+			var key: String = ThumbnailCache.cache_key(path, photo["mtime"])
+			if ThumbnailCache.load_cached(key) != null:
+				continue
+			pending.append(photo)
 
-	for path in photos_by_path:
-		var photo: Dictionary = photos_by_path[path]
+	var total: int = pending.size()
+	var done: int = 0
+	ThumbWorkerIPC.write_status(done, total, "", false)
+
+	var priority_mtime: int = 0
+	var priority_order: PackedStringArray = PackedStringArray()
+
+	while not pending.is_empty():
+		var cur_mtime: int = FileAccess.get_modified_time(ThumbWorkerIPC.PRIORITY_PATH)
+		if cur_mtime != priority_mtime:
+			priority_mtime = cur_mtime
+			priority_order = ThumbWorkerIPC.read_priority()
+
+		# Pick the first still-pending photo in priority order; fall back to
+		# scan order (pending[0]) when none of the priority paths remain.
+		var pick_index: int = -1
+		for p_path in priority_order:
+			for i in pending.size():
+				if pending[i]["path"] == p_path:
+					pick_index = i
+					break
+			if pick_index != -1:
+				break
+		if pick_index == -1:
+			pick_index = 0
+
+		var photo: Dictionary = pending[pick_index]
+		pending.remove_at(pick_index)
+
+		# Written BEFORE rendering: a hard crash mid-render leaves inprogress
+		# pointing at the offending photo for the next worker's skip-list fold.
+		ThumbWorkerIPC.write_status(done, total, photo["path"], false)
 		_index_one_photo(photo)
+		done += 1
+
 		await get_tree().process_frame
 
+	ThumbWorkerIPC.write_status(total, total, "", true)
 	get_tree().quit(0)
 
 

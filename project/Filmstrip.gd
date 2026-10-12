@@ -276,6 +276,21 @@ func _refresh_tiles() -> void:
 			source.request_thumb(idx)
 
 
+# Paths currently in the visible-range (plus buffer tiles), for the background
+# worker's priority list. Empty when collapsed or unbound. Read-only, no side
+# effects.
+func get_visible_paths() -> PackedStringArray:
+	if source == null or not open:
+		return PackedStringArray()
+	var rng: Vector2i = _visible_range()
+	var result: PackedStringArray = PackedStringArray()
+	for i in range(rng.x, rng.y + 1):
+		var path: String = source.filmstrip_path(i)
+		if path != "":
+			result.append(path)
+	return result
+
+
 # --- Tile helpers (called by _Tile) ---------------------------------------------
 
 func tile_texture(path: String) -> Texture2D:

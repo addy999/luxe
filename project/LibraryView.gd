@@ -1083,6 +1083,16 @@ func _cache_get(path: String) -> Texture2D:
 # Read-only views over the grid's own state, all VISIBLE-space so the strip
 # mirrors exactly what the grid shows, hide-rejected filter included.
 
+# Paths currently in the visible-range (plus buffer rows), master-order, for
+# the background worker's priority list. Read-only, no side effects.
+func get_visible_paths() -> PackedStringArray:
+	var r: Vector2i = _visible_index_range()
+	var result: PackedStringArray = PackedStringArray()
+	for vi in range(r.x, r.y):
+		result.append(_photos[_visible[vi]]["path"])
+	return result
+
+
 func filmstrip_count() -> int:
 	return _visible.size()
 
