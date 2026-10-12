@@ -19,10 +19,10 @@ class_name Filmstrip
 # source.request_thumb(vi) to trigger a load through the grid's own queue
 # (same path the grid uses when scrolling); this reaches photos the grid
 # itself isn't currently showing, since the strip scrolls independently.
-# RAW requests still only execute while LibraryView.on_view_entered would ask
-# for them (the backend pipe is busy serving the edited photo otherwise); see
-# Main._on_raw_thumb_requested, which queues but defers dispatch until back
-# in Library view. Tiles fill in as thumbs arrive (thumb_ready -> update_tile).
+# request_thumb is a no-op for RAW tiles: the background worker process is the
+# sole RAW thumbnail producer, and the strip's own refresh_from_cache poll
+# picks up the result once it lands on disk. Tiles fill in as thumbs arrive
+# (thumb_ready / refresh_from_cache -> update_tile).
 #
 # Virtualization is the grid's technique at fixed tile size: a recycled pool
 # of custom-draw Controls over a Content whose minimum width spans the full

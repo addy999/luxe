@@ -1,7 +1,7 @@
 extends SceneTree
 
 # RawThumb: load a RAW, render a thumbnail-scale preview the same way Main.gd's
-# _raw_thumb_task does (render_preview at _RAW_THUMB_SCALE), and assert the
+# _render_backend_thumb does (render_preview at _RAW_THUMB_SCALE), and assert the
 # buffer is well-formed and downscaled to thumbnail-sized bounds.
 # Run: Godot --headless --path godot-poc/project --script res://tests/raw_thumb_smoke_test.gd -- <input_raw>  (DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR must be exported)
 

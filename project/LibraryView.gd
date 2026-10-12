@@ -17,9 +17,6 @@ signal photo_activated(path: String)
 # Mirrors the sidebar CountLabel text; Main.gd routes this to a bottom-bar label.
 signal status_changed(status: String)
 signal add_location_requested()
-# A visible, untextured RAW tile needs a backend-rendered thumbnail; Main.gd
-# owns the backend and handles the actual render.
-signal raw_thumb_requested(index: int)
 # Multiplicative zoom request (centered on 1.0), same convention as Main.gd's
 # _zoom_by_factor. Emitted by pinch/Cmd-wheel gestures over tiles or empty grid area.
 signal zoom_requested(factor: float)
@@ -681,10 +678,12 @@ func _on_thumb_timer_timeout() -> void:
 # in flight. Shared by the debounced grid-scroll dispatch above and by
 # request_thumb() below (the filmstrip's own visible range can extend
 # beyond the grid's current viewport, since it scrolls independently).
-# RAW requests emit the VISIBLE index `vi` (it round-trips through Main
-# back into apply_raw_thumb, which expects visible-space); the jpg queue
-# takes the MASTER index `index` because its worker (_pump/_thumb_task/
-# _on_thumb_ready) reads _photos directly.
+# A RAW tile is a no-op here: the background worker process is the sole RAW
+# thumbnail producer and the disk-poll path (refresh_visible_from_cache /
+# fill_path_from_cache) fills it once rendered, so there is no in-process job
+# to dedup and _requested is left untouched. The jpg queue takes the MASTER
+# index `index` because its worker (_pump/_thumb_task/_on_thumb_ready) reads
+# _photos directly.
 func _request_thumb_for_visible(vi: int) -> void:
 	if vi < 0 or vi >= _visible.size():
 		return
@@ -692,21 +691,17 @@ func _request_thumb_for_visible(vi: int) -> void:
 	var path: String = _photos[index]["path"]
 	if _tex_cache.has(path):
 		return
+	if _photos[index].get("is_raw", false):
+		return
 	if _requested.has(path):
 		return
 	_requested[path] = true
-	if _photos[index].get("is_raw", false):
-		raw_thumb_requested.emit(vi)
-	else:
-		# push_front, not append: see the matching comment on Main.gd's
-		# _raw_thumb_queue. THUMB_WORKERS=2 parallel decode usually keeps this
-		# queue short enough that order doesn't matter, but prioritizing the
-		# newest request still keeps whatever's currently in view responsive
-		# first under a fast-scroll backlog.
-		_mutex.lock()
-		_queue.push_front(index)
-		_mutex.unlock()
-		_pump()
+	# push_front, not append: prioritizes the newest request so whatever's
+	# currently in view stays responsive first under a fast-scroll backlog.
+	_mutex.lock()
+	_queue.push_front(index)
+	_mutex.unlock()
+	_pump()
 
 
 # Public entry point for the filmstrip (or any other visible-space client)
@@ -770,16 +765,6 @@ func _fill_master_from_cache(master: int) -> bool:
 	return true
 
 
-# Clears the in-flight flag for a path without applying a texture: for a RAW
-# request Main decided to discard (interrupted by a view switch, or evicted
-# from its queue to bound the backlog) rather than deliver. Without this the
-# path stays marked "already requested" forever with nothing left to resolve
-# it, so the tile never gets another chance until _requested is wiped wholesale
-# (e.g. by switching library locations).
-func cancel_thumb_request(path: String) -> void:
-	_requested.erase(path)
-
-
 func _pump() -> void:
 	_mutex.lock()
 	while _inflight < THUMB_WORKERS and not _queue.is_empty():
@@ -820,31 +805,6 @@ func _on_thumb_ready(generation: int, index: int, img: Image) -> void:
 			photos_changed.emit()
 
 	_pump()
-
-
-# Applies a backend-rendered RAW thumbnail. `index` is VISIBLE-space (it
-# round-trips from raw_thumb_requested); the path check makes a stale index
-# safe (list rescanned, selection or hide-filter changed since the request).
-# Returns true on success, false if the index/path no longer match or img is
-# null.
-func apply_raw_thumb(index: int, path: String, img: Image) -> bool:
-	if index < 0 or index >= _visible.size() or _photos[_visible[index]]["path"] != path:
-		_requested.erase(path)
-		return false
-	_requested.erase(path)
-	if img == null:
-		return false
-
-	var photo: Dictionary = _photos[_visible[index]]
-	var master: int = _visible[index]
-	var tex: ImageTexture = ImageTexture.create_from_image(img)
-	_cache_put(path, tex)
-	if _mark_edited(photo):
-		# The visible map may shift under `index`; master stays valid.
-		_reapply_hide_filter()
-	_apply_texture_to_master(master)
-	photos_changed.emit()
-	return true
 
 
 # Records whether a saved edit or a reject flag exists for `photo`, keyed by
