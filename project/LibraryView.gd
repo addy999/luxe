@@ -362,8 +362,13 @@ func _set_photos(photos: Array[Dictionary]) -> void:
 	_mutex.unlock()
 	for tile in _pool:
 		tile.clear_texture()
-	grid_scroll.scroll_vertical = 0
+	# Rebuild _visible BEFORE touching scroll_vertical: assigning it fires the
+	# ScrollContainer's value_changed signal synchronously into
+	# _on_grid_scroll_changed -> _refresh_tiles, which indexes _photos via
+	# _visible. A stale _visible (sized for the old _photos) would then index
+	# out of bounds into the just-reassigned, possibly smaller _photos.
 	_rebuild_visible()
+	grid_scroll.scroll_vertical = 0
 	photos_changed.emit()
 	empty_state.visible = _photos.is_empty()
 	_relayout()
