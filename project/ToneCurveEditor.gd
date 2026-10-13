@@ -14,6 +14,10 @@ const HIT_RADIUS: float = 10.0
 const POINT_RADIUS: float = 4.5
 const PADDING: float = 10.0
 
+# All drawing colors come from the active Theme's "ToneCurve" entries
+# (main_theme.tres / light_theme.tres), pulled in on ready + theme_changed.
+# Declared at GDScript's zero default; never used uninitialized in the app
+# (the theme always resolves) and headless tests never reach _draw().
 var _color_bg: Color
 var _color_border: Color
 var _color_grid: Color
@@ -37,23 +41,23 @@ func _on_theme_changed(is_dark: bool) -> void:
 	queue_redraw()
 
 
-func _update_colors(is_dark: bool) -> void:
-	if is_dark:
-		_color_bg = Color(0.11, 0.11, 0.11, 1.0)
-		_color_border = Color(0.227, 0.227, 0.227, 1.0)
-		_color_grid = Color(0.227, 0.227, 0.227, 0.5)
-		_color_diagonal = Color(0.4, 0.4, 0.4, 0.6)
-		_color_curve = Color(0.29, 0.616, 0.878, 1.0)
-		_color_point = Color(0.95, 0.95, 0.95, 1.0)
-		_color_point_selected = Color(0.4, 0.702, 0.949, 1.0)
-	else:
-		_color_bg = Color(0.82, 0.82, 0.82, 1.0)
-		_color_border = Color(0.6, 0.6, 0.6, 1.0)
-		_color_grid = Color(0.6, 0.6, 0.6, 0.5)
-		_color_diagonal = Color(0.35, 0.35, 0.35, 0.6)
-		_color_curve = Color(0.12, 0.4, 0.65, 1.0)
-		_color_point = Color(0.15, 0.15, 0.15, 1.0)
-		_color_point_selected = Color(0.09, 0.3, 0.55, 1.0)
+func _update_colors(_is_dark: bool) -> void:
+	# root.theme is swapped on toggle, so the active Theme's "ToneCurve"
+	# entries already reflect dark/light; is_dark is unused here.
+	if has_theme_color("bg", "ToneCurve"):
+		_color_bg = get_theme_color("bg", "ToneCurve")
+	if has_theme_color("border", "ToneCurve"):
+		_color_border = get_theme_color("border", "ToneCurve")
+	if has_theme_color("grid", "ToneCurve"):
+		_color_grid = get_theme_color("grid", "ToneCurve")
+	if has_theme_color("diagonal", "ToneCurve"):
+		_color_diagonal = get_theme_color("diagonal", "ToneCurve")
+	if has_theme_color("curve", "ToneCurve"):
+		_color_curve = get_theme_color("curve", "ToneCurve")
+	if has_theme_color("point", "ToneCurve"):
+		_color_point = get_theme_color("point", "ToneCurve")
+	if has_theme_color("point_selected", "ToneCurve"):
+		_color_point_selected = get_theme_color("point_selected", "ToneCurve")
 
 
 func _get_minimum_size() -> Vector2:

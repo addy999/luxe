@@ -5,6 +5,7 @@
 [ext_resource type="Script" uid="uid://ceu8uebg1suob" path="res://ToneCurveEditor.gd" id="3_tonecurve"]
 [ext_resource type="PackedScene" path="res://LibraryView.tscn" id="4_libview"]
 [ext_resource type="Script" path="res://Filmstrip.gd" id="5_filmstrip"]
+[ext_resource type="Script" path="res://CenterOriginSlider.gd" id="6_centerslider"]
 
 [node name="Main" type="Control" unique_id=445136820]
 layout_mode = 3
@@ -194,6 +195,7 @@ layout_mode = 2
 theme_override_constants/separation = 8
 
 [node name="ExposureSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ExposureRow" unique_id=171897813]
+script = ExtResource("6_centerslider")
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
@@ -216,6 +218,7 @@ layout_mode = 2
 theme_override_constants/separation = 8
 
 [node name="ContrastSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ContrastRow" unique_id=59812742]
+script = ExtResource("6_centerslider")
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
@@ -238,6 +241,7 @@ layout_mode = 2
 theme_override_constants/separation = 8
 
 [node name="HighlightsSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/HighlightsRow" unique_id=1446716013]
+script = ExtResource("6_centerslider")
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
@@ -259,6 +263,7 @@ layout_mode = 2
 theme_override_constants/separation = 8
 
 [node name="ShadowsSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ShadowsRow" unique_id=1301681316]
+script = ExtResource("6_centerslider")
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
@@ -280,6 +285,7 @@ layout_mode = 2
 theme_override_constants/separation = 8
 
 [node name="BlacksSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/BlacksRow" unique_id=733128590]
+script = ExtResource("6_centerslider")
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
@@ -302,6 +308,7 @@ layout_mode = 2
 theme_override_constants/separation = 8
 
 [node name="WhitesSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/WhitesRow" unique_id=906548217]
+script = ExtResource("6_centerslider")
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
@@ -324,6 +331,7 @@ layout_mode = 2
 theme_override_constants/separation = 8
 
 [node name="DehazeSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/DehazeRow" unique_id=462193815]
+script = ExtResource("6_centerslider")
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
@@ -364,6 +372,7 @@ layout_mode = 2
 theme_override_constants/separation = 8
 
 [node name="SaturationSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/SaturationRow" unique_id=530170095]
+script = ExtResource("6_centerslider")
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
@@ -385,6 +394,7 @@ layout_mode = 2
 theme_override_constants/separation = 8
 
 [node name="VibranceSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/VibranceRow" unique_id=2077643910]
+script = ExtResource("6_centerslider")
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
@@ -406,6 +416,7 @@ layout_mode = 2
 theme_override_constants/separation = 8
 
 [node name="WhiteBalanceSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/WhiteBalanceRow" unique_id=1428931396]
+script = ExtResource("6_centerslider")
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4

@@ -278,6 +278,7 @@ func _ready() -> void:
 	add_child(_save_timer)
 
 	_setup_reset_buttons()
+	_apply_mono_value_label_font()
 	# Load before _setup_views: _set_view(LIBRARY) seeds the shared zoom slider
 	# from _library_thumb_zoom_pct, so the restored value must be in place first.
 	_ui_state = UiStateStore.load()
@@ -783,6 +784,9 @@ func open_photo(path: String) -> bool:
 	# the neutral thumbnail, so edits survive file moves/renames.
 	var as_shot_temperature: float = backend.get_white_balance_temperature()
 	_wb_default_temperature = as_shot_temperature
+	# White balance's center-origin fill anchors to the as-shot temperature,
+	# not the slider's geometric center, since it's recomputed per photo.
+	white_balance_slider.origin_value = as_shot_temperature
 	_resolve_edit_key(path)
 	var defaults: Dictionary = {
 		"exposure": 0.0,
@@ -1047,10 +1051,37 @@ func _make_reset_button(tooltip_text: String) -> Button:
 
 
 func _add_slider_reset(slider: HSlider, default_value: float) -> void:
+	# Also anchors the center-origin amber fill (CenterOriginSlider.gd) to this
+	# same default, so "no fill" and "reset" always agree on neutral.
+	if slider.has_method("set") and slider.get("origin_value") != null:
+		slider.set("origin_value", default_value)
 	var btn := _make_reset_button("Reset to default")
 	btn.pressed.connect(func() -> void: slider.value = default_value)
 	slider.get_parent().add_child(btn)
 
+
+## Shared monospace font for slider/zoom numeric readouts, so digits align in
+## a tabular column. Falls back through common system mono family names.
+var _mono_value_font: SystemFont = null
+
+func _apply_mono_value_label_font() -> void:
+	_mono_value_font = SystemFont.new()
+	_mono_value_font.font_names = PackedStringArray(["SF Mono", "Menlo", "ui-monospace", "monospace"])
+	var value_labels: Array[Label] = [
+		exposure_value_label,
+		contrast_value_label,
+		highlights_value_label,
+		shadows_value_label,
+		blacks_value_label,
+		whites_value_label,
+		dehaze_value_label,
+		saturation_value_label,
+		vibrance_value_label,
+		white_balance_value_label,
+		zoom_value_label,
+	]
+	for label in value_labels:
+		label.add_theme_font_override("font", _mono_value_font)
 
 func _setup_reset_buttons() -> void:
 	_add_slider_reset(exposure_slider, 0.0)

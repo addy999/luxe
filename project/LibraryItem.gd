@@ -25,22 +25,26 @@ var _show_dim: bool = true   # when false (hide-rejected on), rejected tiles are
 var _tile_scale: float = 1.0
 
 # Edited-marker dot: yellow, drawn in the thumbnail's top-right corner.
-const _EDITED_DOT_COLOR: Color = Color(0.98, 0.78, 0.13, 1.0)
 const _EDITED_DOT_RADIUS: float = 5.0
 const _EDITED_DOT_MARGIN: float = 8.0
 
 # Rejected state: dim overlay over the thumbnail + red marker in the top-left
 # corner (edited dot keeps the top-right).
-const _REJECT_DIM_COLOR: Color = Color(0.0, 0.0, 0.0, 0.5)
-const _REJECT_MARK_COLOR: Color = Color(0.86, 0.22, 0.22, 1.0)
 const _REJECT_MARK_RADIUS: float = 5.0
 const _REJECT_MARK_MARGIN: float = 8.0
 
+# All drawing colors come from the active Theme's "LibraryTile" entries
+# (main_theme.tres / light_theme.tres), pulled in on ready + theme_changed.
+# Declared at GDScript's zero default; never used uninitialized in the app
+# (the theme always resolves) and headless tests never reach _draw().
 var _color_tile: Color
 var _color_tile_hover: Color
 var _color_border: Color
 var _color_accent: Color
 var _color_caption: Color
+var _color_edited_dot: Color
+var _color_reject_dim: Color
+var _color_reject_mark: Color
 
 
 func _ready() -> void:
@@ -66,19 +70,25 @@ func _on_theme_changed(is_dark: bool) -> void:
 	queue_redraw()
 
 
-func _update_colors(is_dark: bool) -> void:
-	if is_dark:
-		_color_tile = Color(0.184, 0.184, 0.184, 1.0)
-		_color_tile_hover = Color(0.227, 0.227, 0.227, 1.0)
-		_color_border = Color(0.227, 0.227, 0.227, 1.0)
-		_color_accent = Color(0.29, 0.616, 0.878, 1.0)
-		_color_caption = Color(0.541, 0.541, 0.541, 1.0)
-	else:
-		_color_tile = Color(0.93, 0.93, 0.93, 1.0)
-		_color_tile_hover = Color(0.88, 0.88, 0.88, 1.0)
-		_color_border = Color(0.78, 0.78, 0.78, 1.0)
-		_color_accent = Color(0.12, 0.40, 0.65, 1.0)
-		_color_caption = Color(0.45, 0.45, 0.45, 1.0)
+func _update_colors(_is_dark: bool) -> void:
+	# root.theme is swapped on toggle, so the active Theme's "LibraryTile"
+	# entries already reflect dark/light; is_dark is unused here.
+	if has_theme_color("tile_bg", "LibraryTile"):
+		_color_tile = get_theme_color("tile_bg", "LibraryTile")
+	if has_theme_color("tile_hover", "LibraryTile"):
+		_color_tile_hover = get_theme_color("tile_hover", "LibraryTile")
+	if has_theme_color("border", "LibraryTile"):
+		_color_border = get_theme_color("border", "LibraryTile")
+	if has_theme_color("accent", "LibraryTile"):
+		_color_accent = get_theme_color("accent", "LibraryTile")
+	if has_theme_color("caption", "LibraryTile"):
+		_color_caption = get_theme_color("caption", "LibraryTile")
+	if has_theme_color("edited_dot", "LibraryTile"):
+		_color_edited_dot = get_theme_color("edited_dot", "LibraryTile")
+	if has_theme_color("reject_dim", "LibraryTile"):
+		_color_reject_dim = get_theme_color("reject_dim", "LibraryTile")
+	if has_theme_color("reject_mark", "LibraryTile"):
+		_color_reject_mark = get_theme_color("reject_mark", "LibraryTile")
 
 
 func setup(index: int, photo: Dictionary) -> void:
@@ -172,18 +182,18 @@ func _draw() -> void:
 		_draw_raw_placeholder(thumb_rect)
 
 	if _rejected and _show_dim:
-		draw_rect(thumb_rect, _REJECT_DIM_COLOR, true)
+		draw_rect(thumb_rect, _color_reject_dim, true)
 	if _rejected:
 		var mark_center := Vector2(
 			thumb_rect.position.x + _REJECT_MARK_MARGIN + _REJECT_MARK_RADIUS,
 			thumb_rect.position.y + _REJECT_MARK_MARGIN + _REJECT_MARK_RADIUS)
-		draw_circle(mark_center, _REJECT_MARK_RADIUS, _REJECT_MARK_COLOR)
+		draw_circle(mark_center, _REJECT_MARK_RADIUS, _color_reject_mark)
 
 	if _edited:
 		var dot_center := Vector2(
 			thumb_rect.end.x - _EDITED_DOT_MARGIN - _EDITED_DOT_RADIUS,
 			thumb_rect.position.y + _EDITED_DOT_MARGIN + _EDITED_DOT_RADIUS)
-		draw_circle(dot_center, _EDITED_DOT_RADIUS, _EDITED_DOT_COLOR)
+		draw_circle(dot_center, _EDITED_DOT_RADIUS, _color_edited_dot)
 
 	_draw_caption()
 

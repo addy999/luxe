@@ -24,9 +24,11 @@ var _drag_start_rect := Rect2()
 # Host TextureRect, for re-syncing on re-layout.
 var _host: TextureRect = null
 
-# Theme colors, pushed by Main.gd via apply_theme().
-var _line_color := Color.WHITE
-var _dim_color := Color(0, 0, 0, 0.6)
+# Theme colors, pushed by Main.gd via apply_theme() from the active Theme's
+# "CropOverlay" entries. Declared at GDScript's zero default; headless tests
+# never reach _draw(), so the un-themed state is never painted.
+var _line_color: Color
+var _dim_color: Color
 
 
 func _ready() -> void:
@@ -48,9 +50,13 @@ static func build_bar(pane: Control) -> HBoxContainer:
 	return bar_h
 
 
-func apply_theme(is_dark: bool) -> void:
-	_line_color = Color(1, 1, 1, 0.95) if is_dark else Color(0.1, 0.1, 0.1, 0.9)
-	_dim_color = Color(0, 0, 0, 0.6) if is_dark else Color(1, 1, 1, 0.55)
+func apply_theme(_is_dark: bool) -> void:
+	# root.theme is swapped on toggle, so the active Theme's "CropOverlay"
+	# entries already reflect dark/light; is_dark is unused here.
+	if has_theme_color("line", "CropOverlay"):
+		_line_color = get_theme_color("line", "CropOverlay")
+	if has_theme_color("dim", "CropOverlay"):
+		_dim_color = get_theme_color("dim", "CropOverlay")
 	queue_redraw()
 
 
