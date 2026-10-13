@@ -6,6 +6,7 @@
 [ext_resource type="PackedScene" path="res://LibraryView.tscn" id="4_libview"]
 [ext_resource type="Script" path="res://Filmstrip.gd" id="5_filmstrip"]
 [ext_resource type="Script" path="res://CenterOriginSlider.gd" id="6_centerslider"]
+[ext_resource type="Script" path="res://ResizeHandle.gd" id="7_resizehandle"]
 
 [node name="Main" type="Control" unique_id=445136820]
 layout_mode = 3
@@ -158,6 +159,11 @@ custom_minimum_size = Vector2(180, 0)
 layout_mode = 2
 size_flags_horizontal = 4
 text = "Open Image…"
+
+[node name="RightPanelHandle" type="Control" parent="Root/MiddleHBox" unique_id=517760333]
+layout_mode = 2
+size_flags_vertical = 3
+script = ExtResource("7_resizehandle")
 
 [node name="RightPanel" type="PanelContainer" parent="Root/MiddleHBox" unique_id=517760332]
 custom_minimum_size = Vector2(500, 0)

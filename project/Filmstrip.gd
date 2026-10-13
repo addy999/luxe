@@ -4,6 +4,9 @@ class_name Filmstrip
 # Horizontal filmstrip under the Edit view (Lightroom-style): every photo in
 # the current library location, click to open. Collapsible via the arrow
 # button; collapsed, the strip keeps only the arrow row so Edit grows back.
+# Resizable via a drag handle above the strip, within [MIN_STRIP_HEIGHT,
+# MAX_STRIP_HEIGHT] (double the min); the handle hides along with the strip
+# when collapsed.
 #
 # Data comes duck-typed from a source object (LibraryView implements these),
 # so the strip mirrors the grid's visible list and reuses its texture/badge
@@ -29,16 +32,34 @@ class_name Filmstrip
 # strip, so the ScrollContainer scrolls the whole list.
 
 signal photo_selected(path: String)
+# Fired once per completed drag on the resize handle, for write-through
+# persistence (UiStateStore); not fired on every motion event.
+signal height_changed(height: float)
 
-# Fixed tile geometry (no zoom; the grid's zoom slider stays Library-only).
-const TILE_WIDTH: float = 114.0
-const TILE_HEIGHT: float = 76.0
+# Reference tile geometry at the strip's minimum (original) height; fixes the
+# tile aspect ratio and the MIN_STRIP_HEIGHT floor. Actual tile size scales
+# with the current strip height (see _recompute_tile_size); no zoom knob, the
+# grid's zoom slider stays Library-only.
+const BASE_TILE_WIDTH: float = 114.0
+const BASE_TILE_HEIGHT: float = 76.0
+const _TILE_ASPECT: float = BASE_TILE_WIDTH / BASE_TILE_HEIGHT
 const SEP: int = 6
 const MARGIN: float = 8.0
 # Extra tiles kept bound left/right of the viewport so a scroll tick reveals
 # ready tiles instead of blanks.
 const BUFFER_TILES: int = 8
 const TOGGLE_ROW_HEIGHT: float = 18.0
+# Resizable strip height range: the original fixed height is the floor,
+# double that is the ceiling.
+const MIN_STRIP_HEIGHT: float = MARGIN * 2.0 + BASE_TILE_HEIGHT
+const MAX_STRIP_HEIGHT: float = MIN_STRIP_HEIGHT * 2.0
+
+# Live tile size, recomputed from the current strip height so thumbnails
+# scale as the strip is resized (aspect ratio fixed at _TILE_ASPECT).
+var TILE_WIDTH: float = BASE_TILE_WIDTH
+var TILE_HEIGHT: float = BASE_TILE_HEIGHT
+
+const ResizeHandleScript := preload("res://ResizeHandle.gd")
 
 # Duck-typed source (LibraryView). Null before bind_source.
 var source: Object = null
@@ -50,6 +71,8 @@ var _arrow: Button
 var _scroll: ScrollContainer
 var _content: Control
 var _strip_area: MarginContainer
+var _resize_handle: Control
+var _strip_height: float = MIN_STRIP_HEIGHT
 var _pool: Array[FilmstripTile] = []   # recycled tiles, all children of _content
 
 # Palette mirrors LibraryTile's in the theme files, re-derived on
@@ -92,13 +115,30 @@ func _ready() -> void:
 	add_child(toggle_row)
 	_arrow = toggle_row
 
+	# Drag strip above StripArea. Growing the strip pushes BottomBar's fixed
+	# position unchanged but shrinks MiddleHBox (the only expand-fill sibling)
+	# above it, which moves the handle's own on-screen position UP, opposite
+	# the strip's height delta. So the handle must track the mouse (sign -1:
+	# dragging up grows the strip, mirroring the handle's own upward shift)
+	# rather than move with it (sign +1 looks inverted to the user).
+	_resize_handle = ResizeHandleScript.new()
+	_resize_handle.name = "ResizeHandle"
+	_resize_handle.axis = ResizeHandleScript.Axis.VERTICAL
+	_resize_handle.min_size = MIN_STRIP_HEIGHT
+	_resize_handle.max_size = MAX_STRIP_HEIGHT
+	_resize_handle.sign = -1.0
+	_resize_handle.get_size_cb = Callable(self, "_get_strip_height")
+	_resize_handle.set_size_cb = Callable(self, "set_height")
+	_resize_handle.resize_ended.connect(func(h: float): height_changed.emit(h))
+	add_child(_resize_handle)
+
 	# A MarginContainer, NOT a plain Control: a bare Control never lays out its
 	# children, so the ScrollContainer below would keep width 0 and clip every
 	# tile (the strip renders as an empty grey box).
 	_strip_area = MarginContainer.new()
 	_strip_area.name = "StripArea"
 	_strip_area.visible = false
-	_strip_area.custom_minimum_size = Vector2(0, MARGIN * 2.0 + TILE_HEIGHT)
+	_strip_area.custom_minimum_size = Vector2(0, _strip_height)
 	_strip_area.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	add_child(_strip_area)
 
@@ -196,6 +236,31 @@ func update_tile(path: String) -> void:
 			tile.set_texture(source.filmstrip_texture(path))
 
 
+# Clamps and applies a new strip height (called by the resize handle while
+# dragging, and by Main.gd to restore a persisted height on launch). Tile size
+# scales with the available height so thumbnails grow/shrink with the strip
+# instead of leaving dead space below them.
+func set_height(height: float) -> void:
+	_strip_height = clampf(height, MIN_STRIP_HEIGHT, MAX_STRIP_HEIGHT)
+	if _strip_area != null:
+		_strip_area.custom_minimum_size.y = _strip_height
+	_recompute_tile_size()
+	for tile in _pool:
+		tile.apply_size(TILE_WIDTH, TILE_HEIGHT)
+	_relayout()
+
+
+func _get_strip_height() -> float:
+	return _strip_height
+
+
+# Derives TILE_WIDTH/TILE_HEIGHT from the current strip height, holding the
+# base tile's aspect ratio fixed.
+func _recompute_tile_size() -> void:
+	TILE_HEIGHT = maxf(1.0, _strip_height - MARGIN * 2.0)
+	TILE_WIDTH = TILE_HEIGHT * _TILE_ASPECT
+
+
 func set_selected(path: String) -> void:
 	if _selected_path == path:
 		return
@@ -240,6 +305,7 @@ func _apply_open() -> void:
 		return
 
 	_strip_area.visible = open
+	_resize_handle.visible = open
 	_arrow.text = "▲" if open else "▼"
 	_arrow.tooltip_text = "Hide thumbnail strip" if open else "Show thumbnail strip"
 	# Rebuild from scratch: a hidden (not freed) pool keeps stale bindings and
@@ -358,8 +424,14 @@ class FilmstripTile extends Control:
 		mouse_filter = Control.MOUSE_FILTER_STOP
 		focus_mode = Control.FOCUS_NONE
 		mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-		custom_minimum_size = Vector2(Filmstrip.TILE_WIDTH, Filmstrip.TILE_HEIGHT)
+		apply_size(strip.TILE_WIDTH, strip.TILE_HEIGHT)
+
+	# Called at creation and whenever the strip is resized (strip.TILE_WIDTH/
+	# TILE_HEIGHT scale with it); keeps the tile's draw rect in sync.
+	func apply_size(w: float, h: float) -> void:
+		custom_minimum_size = Vector2(w, h)
 		size = custom_minimum_size
+		queue_redraw()
 
 	func bind(index: int, path: String) -> void:
 		# No early-return on index/path: refresh() rebinds unchanged tiles too,

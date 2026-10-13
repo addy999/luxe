@@ -1,7 +1,8 @@
 class_name UiStateStore
 
 # App-level UI state persisted across restarts: library thumbnail zoom,
-# hide-rejected filter, last opened photo. One flat versioned JSON at the top
+# hide-rejected filter, last opened photo, right panel width, filmstrip
+# height. One flat versioned JSON at the top
 # of user:// (read/written whole, so new fields need no schema per record).
 # Mirrors Library.gd's versioned JSON + all-or-nothing validation and
 # RejectStore's atomic tmp+rename write.
@@ -16,6 +17,8 @@ static func defaults() -> Dictionary:
 		"library_zoom_pct": 100.0,
 		"hide_rejected": false,
 		"last_photo": "",
+		"right_panel_width": 500.0,
+		"filmstrip_height": 92.0,  # Filmstrip.MIN_STRIP_HEIGHT
 	}
 
 
@@ -45,6 +48,12 @@ static func load(path: String = STORE_PATH) -> Dictionary:
 	var photo: Variant = values.get("last_photo", state["last_photo"])
 	if photo is String:
 		state["last_photo"] = photo
+	var panel_width: Variant = values.get("right_panel_width", state["right_panel_width"])
+	if panel_width is float or panel_width is int:
+		state["right_panel_width"] = float(panel_width)
+	var strip_height: Variant = values.get("filmstrip_height", state["filmstrip_height"])
+	if strip_height is float or strip_height is int:
+		state["filmstrip_height"] = float(strip_height)
 	return state
 
 

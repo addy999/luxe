@@ -61,6 +61,7 @@ extends Control
 
 const CropOverlayScript := preload("res://CropOverlay.gd")
 const ThumbnailIndexerScript := preload("res://ThumbnailIndexer.gd")
+const ResizeHandleScript := preload("res://ResizeHandle.gd")
 
 # --- View switching (Library vs Edit) ------------------------------------------
 enum View { LIBRARY, EDIT }
@@ -76,6 +77,7 @@ var _crop_bar: HBoxContainer = null
 var _crop_before_edit: Rect2 = Rect2(0, 0, 1, 1)
 @onready var top_bar: PanelContainer = $Root/TopBar
 @onready var right_panel: PanelContainer = $Root/MiddleHBox/RightPanel
+@onready var right_panel_handle: Control = $Root/MiddleHBox/RightPanelHandle
 @onready var bottom_bar: PanelContainer = $Root/BottomBar
 
 var backend: DtBackend = null
@@ -240,6 +242,10 @@ const _LIBRARY_ZOOM_MIN_PCT: float = 50.0
 const _LIBRARY_ZOOM_MAX_PCT: float = 400.0
 var _library_thumb_zoom_pct: float = 100.0
 
+# --- Right settings panel width (resizable via RightPanelHandle) --------------
+const _RIGHT_PANEL_MIN_WIDTH: float = 350.0
+const _RIGHT_PANEL_MAX_WIDTH: float = 650.0
+
 const _STRETCH_SCALE: int = 0
 const _STRETCH_KEEP_ASPECT_CENTERED: int = 5
 
@@ -318,6 +324,9 @@ func _apply_restored_ui_state() -> void:
 	# is a no-op without a width); _finish_ready re-applies it snapped once
 	# layout has run.
 	library_view.set_thumb_zoom(_library_thumb_zoom_pct / 100.0)
+	right_panel.custom_minimum_size.x = clampf(
+		float(_ui_state["right_panel_width"]), _RIGHT_PANEL_MIN_WIDTH, _RIGHT_PANEL_MAX_WIDTH)
+	filmstrip.set_height(float(_ui_state["filmstrip_height"]))
 
 
 # Restores the last session's final state: reopen the last photo (its saved
@@ -353,9 +362,43 @@ func _setup_views() -> void:
 	library_view.locations_changed.connect(_on_library_locations_changed)
 	filmstrip.photo_selected.connect(open_photo)
 	filmstrip.bind_source(library_view, "")
+	filmstrip.height_changed.connect(_on_filmstrip_height_changed)
 	reject_button.pressed.connect(_on_reject_button_pressed)
 	hide_rejected_button.toggled.connect(_on_hide_rejected_toggled)
+	_setup_right_panel_handle()
 	_set_view(View.LIBRARY)
+
+
+# RightPanel is a fixed-width PanelContainer (size_flags_horizontal = 0), so
+# the handle just drags its custom_minimum_size.x within a fixed range. The
+# handle sits left of the panel: dragging right encroaches on the panel's
+# space, so growing coordinates SHRINK it (sign -1).
+func _setup_right_panel_handle() -> void:
+	right_panel_handle.axis = ResizeHandleScript.Axis.HORIZONTAL
+	right_panel_handle.min_size = _RIGHT_PANEL_MIN_WIDTH
+	right_panel_handle.max_size = _RIGHT_PANEL_MAX_WIDTH
+	right_panel_handle.sign = -1.0
+	right_panel_handle.get_size_cb = Callable(self, "_get_right_panel_width")
+	right_panel_handle.set_size_cb = Callable(self, "_set_right_panel_width")
+	right_panel_handle.resize_ended.connect(_on_right_panel_resize_ended)
+
+
+func _get_right_panel_width() -> float:
+	return right_panel.custom_minimum_size.x
+
+
+func _set_right_panel_width(width: float) -> void:
+	right_panel.custom_minimum_size.x = width
+
+
+func _on_right_panel_resize_ended(width: float) -> void:
+	_ui_state["right_panel_width"] = width
+	UiStateStore.save(_ui_state)
+
+
+func _on_filmstrip_height_changed(height: float) -> void:
+	_ui_state["filmstrip_height"] = height
+	UiStateStore.save(_ui_state)
 
 
 func _set_view(view: int) -> void:

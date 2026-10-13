@@ -71,12 +71,12 @@ func _test_layout_math() -> void:
 	# Tile x-position and content width math must line up so the last tile is
 	# reachable at max scroll (MARGIN + i*(W+SEP); content = margins + tiles + seps).
 	var last_x: float = strip._tile_x(99)
-	var expected_x: float = FilmstripScript.MARGIN + 99 * float(FilmstripScript.TILE_WIDTH + FilmstripScript.SEP)
+	var expected_x: float = FilmstripScript.MARGIN + 99 * float(FilmstripScript.BASE_TILE_WIDTH + FilmstripScript.SEP)
 	if absf(last_x - expected_x) > 0.01:
 		_die("tile_x mismatch: %f vs %f" % [last_x, expected_x])
 		return
-	var total_w: float = FilmstripScript.MARGIN * 2.0 + 100 * FilmstripScript.TILE_WIDTH + 99 * FilmstripScript.SEP
-	if total_w <= 100 * FilmstripScript.TILE_WIDTH:
+	var total_w: float = FilmstripScript.MARGIN * 2.0 + 100 * FilmstripScript.BASE_TILE_WIDTH + 99 * FilmstripScript.SEP
+	if total_w <= 100 * FilmstripScript.BASE_TILE_WIDTH:
 		_die("content width math ignores separators")
 		return
 	print("FILMSTRIP_SMOKE: layout math OK")
@@ -107,7 +107,7 @@ func _test_binding() -> void:
 	var strip: Object = pair[0]
 	var src: Object = pair[1]
 	# Force layout with a real viewport size; headless default is small.
-	strip._scroll.size = Vector2(600, FilmstripScript.TILE_HEIGHT)
+	strip._scroll.size = Vector2(600, FilmstripScript.BASE_TILE_HEIGHT)
 	strip._relayout()
 	# First tile bound to first path.
 	if strip._pool.is_empty():
@@ -141,15 +141,15 @@ func _test_reveal() -> void:
 	var pair: Array = await _make_strip(100)
 	var strip: Object = pair[0]
 	var src: Object = pair[1]
-	strip._scroll.size = Vector2(600, FilmstripScript.TILE_HEIGHT)
+	strip._scroll.size = Vector2(600, FilmstripScript.BASE_TILE_HEIGHT)
 	strip._relayout()
 	strip.set_selected(src.paths[90])
 	strip.reveal_selected()
 	if strip._scroll.scroll_horizontal <= 0:
 		_die("reveal_selected should scroll toward the far tile")
 		return
-	var stride: float = FilmstripScript.TILE_WIDTH + FilmstripScript.SEP
-	var tile_center: float = strip._tile_x(90) + FilmstripScript.TILE_WIDTH * 0.5
+	var stride: float = FilmstripScript.BASE_TILE_WIDTH + FilmstripScript.SEP
+	var tile_center: float = strip._tile_x(90) + FilmstripScript.BASE_TILE_WIDTH * 0.5
 	var vis_center: float = strip._scroll.scroll_horizontal + 300.0
 	if absf(tile_center - vis_center) > stride * 12.0:
 		_die("revealed tile not within the viewport neighborhood")
