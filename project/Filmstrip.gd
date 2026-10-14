@@ -306,7 +306,7 @@ func _apply_open() -> void:
 
 	_strip_area.visible = open
 	_resize_handle.visible = open
-	_arrow.text = "▲" if open else "▼"
+	_arrow.text = "▼" if open else "▲"
 	_arrow.tooltip_text = "Hide thumbnail strip" if open else "Show thumbnail strip"
 	# Rebuild from scratch: a hidden (not freed) pool keeps stale bindings and
 	# the scroll range goes stale while hidden; refresh() re-derives both.
