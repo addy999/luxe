@@ -11,6 +11,13 @@ static func cache_key(path: String, mtime: int) -> String:
 	return ("%s|%d|%d" % [path, mtime, THUMB_MAX]).md5_text()
 
 
+# Key for the edit-applied variant of a photo's thumbnail. Distinct from
+# cache_key so the neutral thumbnail (the edit-identity hash source) is never
+# overwritten.
+static func edited_cache_key(path: String, mtime: int) -> String:
+	return ("%s|%d|%d|edited" % [path, mtime, THUMB_MAX]).md5_text()
+
+
 # Shards thumbnails into 256 two-character subdirectories to avoid one huge
 # flat directory.
 static func cache_path(key: String) -> String:
@@ -84,6 +91,14 @@ static func store_thumb(key: String, img: Image) -> Image:
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
 
 	return img
+
+
+# Removes the shard file for `key` if present. Used when a photo's edited
+# thumbnail variant must go away (edits returned to neutral).
+static func erase_cached(key: String) -> void:
+	var path: String = cache_path(key)
+	if FileAccess.file_exists(path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 
 
 # Caps the on-disk shard count by deleting the oldest shard directories

@@ -751,8 +751,11 @@ func _fill_master_from_cache(master: int) -> bool:
 	var path: String = photo["path"]
 	if _tex_cache.has(path):
 		return false
-	var key: String = ThumbnailCache.cache_key(path, photo["mtime"])
-	var img: Image = ThumbnailCache.load_cached(key)
+	var edited_key: String = ThumbnailCache.edited_cache_key(path, photo["mtime"])
+	var img: Image = ThumbnailCache.load_cached(edited_key)
+	if img == null:
+		var key: String = ThumbnailCache.cache_key(path, photo["mtime"])
+		img = ThumbnailCache.load_cached(key)
 	if img == null:
 		return false
 	var tex: ImageTexture = ImageTexture.create_from_image(img)
@@ -784,10 +787,13 @@ func _pump() -> void:
 func _thumb_task(photo: Dictionary, index: int, generation: int) -> void:
 	var path: String = photo["path"]
 	var mtime: int = photo["mtime"]
-	var key: String = ThumbnailCache.cache_key(path, mtime)
-	var img: Image = ThumbnailCache.load_cached(key)
-	if img == null and not photo.get("is_raw", false):
-		img = ThumbnailCache.build_thumbnail(path, key)
+	var edited_key: String = ThumbnailCache.edited_cache_key(path, mtime)
+	var img: Image = ThumbnailCache.load_cached(edited_key)
+	if img == null:
+		var key: String = ThumbnailCache.cache_key(path, mtime)
+		img = ThumbnailCache.load_cached(key)
+		if img == null and not photo.get("is_raw", false):
+			img = ThumbnailCache.build_thumbnail(path, key)
 	call_deferred("_on_thumb_ready", generation, index, img)
 
 
@@ -880,6 +886,22 @@ func refresh_edited_badge(path: String) -> void:
 		var vi: int = tile.get_photo_index()
 		if tile.visible and vi >= 0 and vi < _visible.size() and _visible[vi] == mi:
 			tile.set_edited(_edited.get(path, false))
+			return
+
+
+# Drops a path's cached texture and re-fills it from disk, so a freshly
+# written edited thumbnail replaces the neutral one already on screen.
+func invalidate_thumb(path: String) -> void:
+	_tex_cache.erase(path)
+	var mi: int = _master_index_of(path)
+	if mi < 0:
+		return
+	_fill_master_from_cache(mi)
+	photos_changed.emit()
+	for tile in _pool:
+		var vi: int = tile.get_photo_index()
+		if tile.visible and vi >= 0 and vi < _visible.size() and _visible[vi] == mi:
+			tile.set_texture(_cache_get(path))
 			return
 
 

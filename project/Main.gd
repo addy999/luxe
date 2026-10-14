@@ -88,6 +88,15 @@ var _before_texture: ImageTexture = null
 var _before_texture_scale: float = -1.0
 # As-shot defaults dict (same shape as _params), snapshotted in open_photo.
 var _neutral_params: Dictionary = {}
+
+# Latest whole-image Edit render, held so the debounced save can downsample it
+# into the edited library thumbnail without re-rendering. _last_render_sig is
+# the params signature captured at render dispatch (not completion), so a
+# slider move during an in-flight render still tags the frame with the params
+# it was actually rendered from; a mismatch means the frame is stale and must
+# not be written.
+var _last_render_image: Image = null
+var _last_render_sig: String = ""
 @onready var top_bar: PanelContainer = $Root/TopBar
 @onready var right_panel: PanelContainer = $Root/MiddleHBox/RightPanel
 @onready var right_panel_handle: Control = $Root/MiddleHBox/RightPanelHandle
@@ -428,6 +437,7 @@ func _set_view(view: int) -> void:
 		# a freshly-saved edit shows its dot on return to the grid.
 		_flush_pending_save()
 		if _edited_path != "":
+			library_view.invalidate_thumb(_edited_path)
 			library_view.refresh_edited_badge(_edited_path)
 		# Cancel any pending/in-flight edit render before Library takes over the
 		# backend. A render armed by a slider edit just before the switch would
@@ -831,6 +841,8 @@ func open_photo(path: String) -> bool:
 		_end_compare()
 	cluster_compare_button.disabled = true
 	_before_texture = null
+	_last_render_image = null
+	_last_render_sig = ""
 
 	var ok: bool = backend.load_image(path)
 	if not ok:
@@ -1340,14 +1352,15 @@ func _start_process() -> void:
 
 	var edit_scale: float = _edit_scale
 	var final_quality: bool = _final_quality()
-	_current_task_id = WorkerThreadPool.add_task(_process_task.bind(edit_scale, final_quality))
+	var sig: String = EditStore.params_signature(_params)
+	_current_task_id = WorkerThreadPool.add_task(_process_task.bind(edit_scale, final_quality, sig))
 
 
 func _final_quality() -> bool:
 	return _edit_scale >= 0.999
 
 
-func _process_task(edit_scale: float, final_quality: bool) -> void:
+func _process_task(edit_scale: float, final_quality: bool, sig: String) -> void:
 	var bytes: PackedByteArray
 	if final_quality:
 		bytes = backend.render_view(
@@ -1357,10 +1370,10 @@ func _process_task(edit_scale: float, final_quality: bool) -> void:
 			_WHOLE_IMAGE_VIEWPORT, _WHOLE_IMAGE_VIEWPORT, edit_scale, 0.0, 0.0)
 	var width: int = backend.get_width()
 	var height: int = backend.get_height()
-	call_deferred("_on_process_done", bytes, width, height)
+	call_deferred("_on_process_done", bytes, width, height, sig)
 
 
-func _on_process_done(bytes: PackedByteArray, width: int, height: int) -> void:
+func _on_process_done(bytes: PackedByteArray, width: int, height: int, sig: String) -> void:
 	var elapsed_usec: int = Time.get_ticks_usec() - _render_start_usec
 	_render_avg_usec += float(elapsed_usec) / _RENDER_AVG_COUNT \
 		- _render_avg_usec / _RENDER_AVG_COUNT
@@ -1378,6 +1391,8 @@ func _on_process_done(bytes: PackedByteArray, width: int, height: int) -> void:
 			image_texture.update(img)
 		_apply_display_layout()
 		_update_resolution_label(width, height)
+		_last_render_image = img
+		_last_render_sig = sig
 
 	_processing = false
 
@@ -1900,6 +1915,39 @@ func _on_save_timer_timeout() -> void:
 		"updated_at": int(Time.get_unix_time_from_system()),
 	}
 	EditStore.save(_edit_key, _params, meta)
+	_store_edited_thumb()
+
+
+# Downsamples the last whole-image Edit render into the edited library
+# thumbnail so the grid and filmstrip show the photo as edited. No-ops when
+# the held frame predates the current params, when no frame exists, or while
+# the crop overlay has _params["crop"] temporarily neutralized. Deletes the
+# variant instead of writing one when the photo is back to as-shot, so the
+# grid falls back to the neutral thumbnail.
+func _store_edited_thumb() -> void:
+	if _edited_path == "" or _last_render_image == null or _crop_overlay != null:
+		return
+	var current_sig: String = EditStore.params_signature(_params)
+	if _last_render_sig != current_sig:
+		return
+
+	var mtime: int = FileAccess.get_modified_time(_edited_path)
+	var ekey: String = ThumbnailCache.edited_cache_key(_edited_path, mtime)
+
+	if current_sig == EditStore.params_signature(_neutral_params):
+		ThumbnailCache.erase_cached(ekey)
+		library_view.invalidate_thumb(_edited_path)
+		return
+
+	var img: Image = _last_render_image.duplicate()
+	var w: int = img.get_width()
+	var h: int = img.get_height()
+	var long_edge: int = maxi(w, h)
+	if long_edge > ThumbnailCache.THUMB_MAX:
+		var s: float = float(ThumbnailCache.THUMB_MAX) / float(long_edge)
+		img.resize(maxi(1, roundi(w * s)), maxi(1, roundi(h * s)), Image.INTERPOLATE_LANCZOS)
+	ThumbnailCache.store_thumb(ekey, img)
+	library_view.invalidate_thumb(_edited_path)
 
 
 # Writes a pending debounced save immediately. Called before the app quits and
@@ -2061,3 +2109,5 @@ func _cleanup_backend() -> void:
 	if backend != null:
 		backend.cleanup()
 		backend = null
+	_last_render_image = null
+	_last_render_sig = ""

@@ -60,6 +60,21 @@ static func _params_to_json(params: Dictionary) -> Dictionary:
 	return out
 
 
+# Deterministic signature over a live _params dict, stable regardless of
+# Dictionary insertion order. Reuses _params_to_json's JSON-native shaping,
+# then stringifies keys in SORTED order (JSON.stringify does not sort them),
+# so the same param values always hash the same way. Used to check a held
+# rendered frame still matches the current params.
+static func params_signature(params: Dictionary) -> String:
+	var json: Dictionary = _params_to_json(params)
+	var keys: Array = json.keys()
+	keys.sort()
+	var ordered: Dictionary = {}
+	for key in keys:
+		ordered[key] = json[key]
+	return JSON.stringify(ordered).md5_text()
+
+
 # Inverse of _params_to_json: rebuilds PackedVector2Array / Rect2 for the two
 # keys that need it; passes floats through. Returns {} if the shape is wrong.
 static func _params_from_json(raw: Variant) -> Dictionary:
