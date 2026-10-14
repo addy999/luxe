@@ -504,6 +504,13 @@ disabled = true
 tooltip_text = "Reject photo (X)"
 text = "⚑ Approved"
 
+[node name="ClusterCompareButton" type="Button" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow" unique_id=610100009]
+layout_mode = 2
+focus_mode = 0
+disabled = true
+tooltip_text = "Hold to see original (Space)"
+text = "⇄ Before"
+
 [node name="Filmstrip" type="VBoxContainer" parent="Root"]
 layout_mode = 2
 theme_override_constants/separation = 0

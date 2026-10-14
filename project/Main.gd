@@ -58,6 +58,7 @@ extends Control
 @onready var cluster_rotate_ccw_button: Button = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow/ClusterRotateCcwButton
 @onready var cluster_rotate_cw_button: Button = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow/ClusterRotateCwButton
 @onready var cluster_reject_button: Button = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow/ClusterRejectButton
+@onready var cluster_compare_button: Button = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow/ClusterCompareButton
 
 const CropOverlayScript := preload("res://CropOverlay.gd")
 const ThumbnailIndexerScript := preload("res://ThumbnailIndexer.gd")
@@ -75,6 +76,18 @@ var _library_only_controls: Array[Control] = []
 var _crop_overlay: Control = null
 var _crop_bar: HBoxContainer = null
 var _crop_before_edit: Rect2 = Rect2(0, 0, 1, 1)
+
+# --- Before/after compare (hold Space or the Before button) --------------------
+var _comparing: bool = false
+# Lazily rendered on first hold per photo; as-shot neutral tonal values, with
+# the CURRENT crop/orientation so framing matches the edited view. Cleared
+# whenever a new photo loads or crop/orientation/edit-scale change.
+var _before_texture: ImageTexture = null
+# _edit_scale the cached _before_texture was rendered at; a mismatch forces a
+# re-render so compare never shows a stale resolution.
+var _before_texture_scale: float = -1.0
+# As-shot defaults dict (same shape as _params), snapshotted in open_photo.
+var _neutral_params: Dictionary = {}
 @onready var top_bar: PanelContainer = $Root/TopBar
 @onready var right_panel: PanelContainer = $Root/MiddleHBox/RightPanel
 @onready var right_panel_handle: Control = $Root/MiddleHBox/RightPanelHandle
@@ -406,6 +419,10 @@ func _set_view(view: int) -> void:
 	var in_library: bool = view == View.LIBRARY
 
 	if in_library:
+		# A hold that's still down when the view switches away (e.g. the mouse
+		# clicked the tab bar while Space stayed held) would otherwise never
+		# get its release event.
+		_end_compare()
 		# Leaving Edit: commit any pending debounced save before the backend may
 		# be hijacked by RAW thumb jobs, then refresh the edited photo's badge so
 		# a freshly-saved edit shows its dot on return to the grid.
@@ -558,11 +575,21 @@ func _input(event: InputEvent) -> void:
 	if not (event is InputEventKey):
 		return
 	var key_event := event as InputEventKey
-	if not key_event.is_pressed() or key_event.is_echo():
-		return
 	if _text_field_focused():
 		return
 	var kc: int = key_event.keycode
+	if kc == KEY_SPACE and _image_loaded and _crop_overlay == null:
+		# Caught on both press and release (unlike the other Edit-view keys
+		# below), since the compare swap runs for the duration of the hold.
+		if key_event.is_pressed():
+			if not key_event.is_echo():
+				_begin_compare()
+		else:
+			_end_compare()
+		get_viewport().set_input_as_handled()
+		return
+	if not key_event.is_pressed() or key_event.is_echo():
+		return
 	if kc == KEY_LEFT or kc == KEY_RIGHT:
 		# _edit_navigate no-ops on crop overlay / render / export in flight and
 		# off-library photos.
@@ -667,6 +694,9 @@ func _finish_ready() -> void:
 	cluster_rotate_cw_button.disabled = true
 	cluster_reject_button.toggled.connect(_on_cluster_reject_button_toggled)
 	cluster_reject_button.disabled = true
+	cluster_compare_button.button_down.connect(_on_cluster_compare_button_down)
+	cluster_compare_button.button_up.connect(_on_cluster_compare_button_up)
+	cluster_compare_button.disabled = true
 
 	# Launch restore pass 2: apply the restored library zoom against the grid's
 	# real width now that layout has run (snap needs a width; _ready's pass ran
@@ -796,6 +826,12 @@ func open_photo(path: String) -> bool:
 		WorkerThreadPool.wait_for_task_completion(_current_task_id)
 		_processing = false
 
+	# A new image is loading; any in-progress compare against the old one is stale.
+	if _comparing:
+		_end_compare()
+	cluster_compare_button.disabled = true
+	_before_texture = null
+
 	var ok: bool = backend.load_image(path)
 	if not ok:
 		_image_loaded = false
@@ -855,6 +891,15 @@ func open_photo(path: String) -> bool:
 		if defaults.has(key):
 			restored[key] = saved[key]
 	_apply_params_to_ui(restored)
+
+	# Before/after compare: as-shot tonal values, keyed by this photo. crop and
+	# orientation are substituted from the live _params at render time (see
+	# _render_before_texture), so the compare view keeps the same framing as the
+	# edited view instead of jumping back to the original crop/rotation.
+	_neutral_params = defaults.duplicate(true)
+	_before_texture = null
+	_comparing = false
+	cluster_compare_button.disabled = false
 
 	var default_edit_id: int = _pick_default_edit_mode_id(
 		backend.get_raw_width(), backend.get_raw_height())
@@ -1646,6 +1691,7 @@ func _on_crop_overlay_applied(rect: Rect2) -> void:
 	_close_crop_overlay()
 	cluster_crop_button.set_pressed_no_signal(false)
 	_params["crop"] = rect
+	_before_texture = null
 	_request_render()
 
 
@@ -1653,7 +1699,83 @@ func _on_crop_overlay_canceled() -> void:
 	_close_crop_overlay()
 	cluster_crop_button.set_pressed_no_signal(false)
 	_params["crop"] = _crop_before_edit
+	_before_texture = null
 	_request_render()
+
+
+# --- Before/after compare ---------------------------------------------------------
+# Swaps texture_rect to a cached as-shot render for the duration of the hold
+# (Space key or the Before button). The cache is built lazily on first hold per
+# photo (and rebuilt if crop/orientation/edit-scale changed since), so repeat
+# holds of the same photo are instant.
+func _begin_compare() -> void:
+	if _comparing or not _image_loaded or backend == null \
+			or _crop_overlay != null or _exporting:
+		return
+	_comparing = true
+	if _before_texture == null or _before_texture_scale != _edit_scale:
+		_render_before_texture()
+	if _before_texture != null:
+		texture_rect.texture = _before_texture
+
+
+func _end_compare() -> void:
+	if not _comparing:
+		return
+	_comparing = false
+	if image_texture != null:
+		texture_rect.texture = image_texture
+
+
+# Renders the as-shot neutral tonal values (current crop/orientation kept, so
+# framing matches the edited view) into _before_texture. Temporarily swaps
+# _params to neutral, pushes it to the backend, renders, then restores the
+# edited _params/backend state so this is invisible to the rest of _apply_params_to_backend's
+# diff-tracking (_applied_params ends up matching the real edited _params again).
+func _render_before_texture() -> void:
+	# A background edit render may be mid-flight inside the shared backend;
+	# _apply_params_to_backend is unsafe to race (see _start_process).
+	if _processing and _current_task_id != -1:
+		WorkerThreadPool.wait_for_task_completion(_current_task_id)
+		_processing = false
+
+	var edited_params: Dictionary = _params
+	var neutral: Dictionary = _neutral_params.duplicate(true)
+	neutral["crop"] = edited_params["crop"]
+	neutral["orientation"] = edited_params["orientation"]
+
+	_params = neutral
+	_apply_params_to_backend()
+
+	var final_quality: bool = _final_quality()
+	var bytes: PackedByteArray
+	if final_quality:
+		bytes = backend.render_view(
+			_WHOLE_IMAGE_VIEWPORT, _WHOLE_IMAGE_VIEWPORT, _edit_scale, 0.0, 0.0)
+	else:
+		bytes = backend.render_preview(
+			_WHOLE_IMAGE_VIEWPORT, _WHOLE_IMAGE_VIEWPORT, _edit_scale, 0.0, 0.0)
+	var width: int = backend.get_width()
+	var height: int = backend.get_height()
+
+	# Restore the edited state regardless of render success, so a decode
+	# failure here never leaves the backend pointed at the neutral render.
+	_params = edited_params
+	_apply_params_to_backend()
+
+	if width <= 0 or height <= 0 or bytes.size() < width * height * 4:
+		return
+	var img: Image = Image.create_from_data(width, height, false, Image.FORMAT_RGBA8, bytes)
+	_before_texture = ImageTexture.create_from_image(img)
+	_before_texture_scale = _edit_scale
+
+
+func _on_cluster_compare_button_down() -> void:
+	_begin_compare()
+
+
+func _on_cluster_compare_button_up() -> void:
+	_end_compare()
 
 
 # --- Rotate ----------------------------------------------------------------------
@@ -1663,6 +1785,7 @@ func _on_rotate_cw_button_pressed() -> void:
 	if not _image_loaded:
 		return
 	_params["orientation"] = (int(_params["orientation"]) + 1) % 4
+	_before_texture = null
 	_request_render()
 
 
@@ -1670,6 +1793,7 @@ func _on_rotate_ccw_button_pressed() -> void:
 	if not _image_loaded:
 		return
 	_params["orientation"] = (int(_params["orientation"]) + 3) % 4
+	_before_texture = null
 	_request_render()
 
 
@@ -1708,7 +1832,7 @@ func _sync_cluster_reject_button(path: String) -> void:
 
 func _on_export_button_pressed() -> void:
 	if not _image_loaded or _exporting or _processing \
-			or _render_gate_pending() or _crop_overlay != null:
+			or _render_gate_pending() or _crop_overlay != null or _comparing:
 		return
 	export_dialog.current_file = "%s_edited.jpg" % _source_basename
 	export_dialog.popup_centered()
@@ -1792,6 +1916,11 @@ func _notification(what: int) -> void:
 		_cleanup_backend()
 		if what == NOTIFICATION_WM_CLOSE_REQUEST:
 			get_tree().quit()
+	elif what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+		# A hold (Space or the Before button) that's in progress when focus is
+		# lost (alt-tab, etc.) never gets its key/button-up event, which would
+		# otherwise strand the view on the before-render.
+		_end_compare()
 
 
 func _exit_tree() -> void:
