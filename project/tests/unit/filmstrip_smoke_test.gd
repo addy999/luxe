@@ -89,15 +89,15 @@ func _test_collapse() -> void:
 	if strip._strip_area.visible:
 		_die("collapsed strip should hide StripArea")
 		return
-	if strip._arrow.text != "▼":
-		_die("collapsed arrow should point down (click to reopen)")
+	if strip._arrow.text != "▲":
+		_die("collapsed arrow should point up (click to reopen)")
 		return
 	strip.open = true
 	if not strip._strip_area.visible:
 		_die("reopened strip should show StripArea")
 		return
-	if strip._arrow.text != "▲":
-		_die("open arrow should point up")
+	if strip._arrow.text != "▼":
+		_die("open arrow should point down")
 		return
 	print("FILMSTRIP_SMOKE: collapse OK")
 
