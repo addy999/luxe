@@ -251,6 +251,7 @@ const _EDIT_SCALE_EPSILON: float = 0.01 # min |delta| in _edit_scale to re-rende
 var _edit_scale: float = 0.50
 var _edit_mode_id: int = _EDIT_DEFAULT_ID # dropdown id; see docs/GODOT_FRONTEND_NOTES.md
 var _auto_floor_scale: float = 0.50 # Auto's lower bound; set per image load
+const _AUTO_FULL_ZOOM: float = 1.5 # display zoom at which Auto reaches 100% edit res
 
 
 func _is_auto_mode() -> bool:
@@ -700,8 +701,8 @@ func _finish_ready() -> void:
 
 	for mode in _EDIT_MODES:
 		edit_res_option.add_item(mode["label"], mode["id"])
-	edit_res_option.select(_EDIT_DEFAULT_ID)
-	_edit_mode_id = _EDIT_DEFAULT_ID
+	edit_res_option.select(_EDIT_AUTO_ID)
+	_edit_mode_id = _EDIT_AUTO_ID
 	_edit_scale = _EDIT_MODES[_EDIT_DEFAULT_ID]["scale"]
 
 	# Start in Fit; the scene already sets slider 100 + toggle on.
@@ -952,18 +953,15 @@ func open_photo(path: String) -> bool:
 	_comparing = false
 	cluster_compare_button.disabled = false
 
-	var default_edit_id: int = _pick_default_edit_mode_id(
-		backend.get_raw_width(), backend.get_raw_height())
-	_auto_floor_scale = _EDIT_MODES[default_edit_id]["scale"]
+	_auto_floor_scale = _EDIT_MODES[_pick_default_edit_mode_id(
+		backend.get_raw_width(), backend.get_raw_height())]["scale"]
 	_display_zoom = -1.0
 	fit_button.set_pressed_no_signal(true)
 	_update_zoom_readout()
-	if _is_auto_mode():
-		_edit_scale = _auto_compute_scale()
-	else:
-		edit_res_option.select(default_edit_id)
-		_edit_mode_id = default_edit_id
-		_edit_scale = _EDIT_MODES[default_edit_id]["scale"]
+	# Each photo opens in Auto; the size-tiered scale above is Auto's floor.
+	_edit_mode_id = _EDIT_AUTO_ID
+	edit_res_option.select(_EDIT_AUTO_ID)
+	_edit_scale = _auto_compute_scale()
 	_set_view(View.EDIT)
 	# The load-time render pushes restored params to the backend; it must not arm
 	# auto-save (opening a photo is not an edit).
@@ -1705,7 +1703,7 @@ func _effective_zoom_fraction() -> float:
 func _auto_compute_scale() -> float:
 	if _display_zoom < 0.0:
 		return _auto_floor_scale
-	return clamp(_display_zoom, _auto_floor_scale, 1.0)
+	return clamp(_display_zoom / _AUTO_FULL_ZOOM, _auto_floor_scale, 1.0)
 
 
 # Recomputes _edit_scale from current zoom when Auto is active. Returns true
