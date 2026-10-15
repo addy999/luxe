@@ -75,6 +75,7 @@ The UI also gives you:
   - Dynamically chosen to keep editing fast when importing
 - **Display zoom and pan**
   - a continuous 10%-400% zoom plus Fit, decoupled from edit resolution
+  - a Navigator panel showing a bird's-eye of the photo with a viewport box you can drag to pan
 - **Light and dark themes**
 
 ## Progress

@@ -109,6 +109,7 @@ var _last_render_sig: String = ""
 @onready var top_bar: PanelContainer = $Root/TopBar
 @onready var right_panel: PanelContainer = $Root/MiddleHBox/RightPanel
 @onready var right_panel_handle: Control = $Root/MiddleHBox/RightPanelHandle
+@onready var navigator = $Navigator
 @onready var bottom_bar: PanelContainer = $Root/BottomBar
 
 var backend: DtBackend = null
@@ -715,6 +716,11 @@ func _finish_ready() -> void:
 	ScrollbarStyle.widen(panel_scroll)
 
 	scroll_container.resized.connect(_on_scroll_resized)
+	# Scrollbar value_changed fires for every pan source (image drag, scrollbar
+	# drag, zoom recenter), all of which set scroll_horizontal/vertical.
+	scroll_container.get_h_scroll_bar().value_changed.connect(_on_scroll_moved)
+	scroll_container.get_v_scroll_bar().value_changed.connect(_on_scroll_moved)
+	navigator.pan_to.connect(_on_navigator_pan_to)
 
 	texture_rect.gui_input.connect(_on_texture_rect_gui_input)
 
@@ -1596,6 +1602,76 @@ func _apply_display_layout() -> void:
 	else:
 		texture_rect.stretch_mode = _STRETCH_SCALE
 		texture_rect.custom_minimum_size = Vector2(native_w, native_h) * _display_zoom
+	# Only refresh a currently-visible nav; it's repositioned/refreshed on flash.
+	if navigator != null and navigator.visible:
+		_update_navigator()
+
+
+# Content size (native * zoom) currently laid out, or zero if fit/unavailable.
+func _content_size() -> Vector2:
+	if backend == null or _display_zoom < 0.0:
+		return Vector2.ZERO
+	var native_w: int = backend.get_native_width()
+	var native_h: int = backend.get_native_height()
+	if native_w <= 0 or native_h <= 0:
+		return Vector2.ZERO
+	return Vector2(native_w, native_h) * _display_zoom
+
+
+# Pushes the current texture + visible-region rect (image fractions) to the
+# navigator. When fit, the whole image is visible so the box spans the frame.
+func _update_navigator() -> void:
+	if navigator == null or image_texture == null:
+		return
+	navigator.set_texture(image_texture)
+	var content: Vector2 = _content_size()
+	if content == Vector2.ZERO:
+		navigator.set_viewport(Rect2(0, 0, 1, 1))
+		return
+	var vp: Vector2 = scroll_container.size
+	var sz: Vector2 = (vp / content).clamp(Vector2.ZERO, Vector2.ONE)
+	var origin := Vector2(scroll_container.scroll_horizontal, scroll_container.scroll_vertical) / content
+	origin = origin.clamp(Vector2.ZERO, Vector2.ONE - sz)
+	navigator.set_viewport(Rect2(origin, sz))
+
+
+# Pan (and zoom-recenter) both move scroll; flash the nav so it surfaces.
+func _on_scroll_moved(_value: float) -> void:
+	_flash_navigator()
+
+
+# Shows the floating nav at the image area's top-left, then fades it out after
+# a hold. Any further zoom/pan restarts the timer.
+const _NAV_HOLD_SEC: float = 2.0
+const _NAV_FADE_SEC: float = 0.5
+var _nav_tween: Tween = null
+
+func _flash_navigator() -> void:
+	if navigator == null or _view != View.EDIT or not _image_loaded:
+		return
+	_update_navigator()
+	navigator.size = Vector2(220, 150)
+	navigator.position = scroll_container.global_position + Vector2(16, 16)
+	navigator.visible = true
+	navigator.modulate.a = 1.0
+	if _nav_tween != null and _nav_tween.is_valid():
+		_nav_tween.kill()
+	_nav_tween = create_tween()
+	_nav_tween.tween_interval(_NAV_HOLD_SEC)
+	_nav_tween.tween_property(navigator, "modulate:a", 0.0, _NAV_FADE_SEC)
+	_nav_tween.tween_callback(func() -> void: navigator.visible = false)
+
+
+# Navigator click/drag: center the viewport on the requested image fraction.
+func _on_navigator_pan_to(center: Vector2) -> void:
+	var content: Vector2 = _content_size()
+	if content == Vector2.ZERO:
+		return
+	var vp: Vector2 = scroll_container.size
+	var target: Vector2 = center * content - vp / 2.0
+	var max_scroll := Vector2(maxf(content.x - vp.x, 0.0), maxf(content.y - vp.y, 0.0))
+	scroll_container.scroll_horizontal = roundi(clampf(target.x, 0.0, max_scroll.x))
+	scroll_container.scroll_vertical = roundi(clampf(target.y, 0.0, max_scroll.y))
 
 
 func _on_scroll_resized() -> void:
@@ -1683,6 +1759,7 @@ func _apply_zoom_change() -> void:
 		_update_resolution_label(0, 0)
 	if _update_auto_edit_scale():
 		_request_render()
+	_flash_navigator()
 
 
 # Fraction of native image size currently on screen.

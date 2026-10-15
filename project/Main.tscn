@@ -9,6 +9,7 @@
 [ext_resource type="Script" path="res://ResizeHandle.gd" id="7_resizehandle"]
 [ext_resource type="Script" path="res://WbModeBar.gd" id="8_wbmodebar"]
 [ext_resource type="Script" path="res://ColorGradientSlider.gd" id="9_gradientslider"]
+[ext_resource type="Script" path="res://Navigator.gd" id="10_navigator"]
 
 [node name="Main" type="Control" unique_id=445136820]
 layout_mode = 3
@@ -609,6 +610,12 @@ layout_mode = 2
 size_flags_horizontal = 3
 theme_type_variation = &"Muted"
 text = "No photos yet"
+
+[node name="Navigator" type="Control" parent="." unique_id=610100004]
+custom_minimum_size = Vector2(220, 150)
+visible = false
+layout_mode = 1
+script = ExtResource("10_navigator")
 
 [node name="FileDialog" type="FileDialog" parent="." unique_id=845195832]
 oversampling_override = 1.0
