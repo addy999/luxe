@@ -29,6 +29,9 @@ extends Control
 @onready var tone_curve_editor: ToneCurveEditor = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ToneCurveEditor
 @onready var white_balance_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/WhiteBalanceRow/WhiteBalanceSlider
 @onready var white_balance_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/WhiteBalanceRow/WhiteBalanceValueLabel
+@onready var tint_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/TintRow/TintSlider
+@onready var tint_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/TintRow/TintValueLabel
+@onready var wb_mode_bar: HBoxContainer = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/WbModeBar
 @onready var edit_res_option: OptionButton = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditResOptionButton
 @onready var open_button: Button = $Root/TopBar/TopBarRow/OpenButton
 @onready var export_button: Button = $Root/TopBar/TopBarRow/ExportButton
@@ -63,6 +66,8 @@ extends Control
 const CropOverlayScript := preload("res://CropOverlay.gd")
 const ThumbnailIndexerScript := preload("res://ThumbnailIndexer.gd")
 const ResizeHandleScript := preload("res://ResizeHandle.gd")
+const ColorWbScript := preload("res://ColorWb.gd")
+const ColorReadoutScript := preload("res://ColorReadout.gd")
 
 # --- View switching (Library vs Edit) ------------------------------------------
 enum View { LIBRARY, EDIT }
@@ -139,8 +144,12 @@ var _restoring: bool = false
 # the whole dict; it's one tiny atomic file.
 var _ui_state: Dictionary = UiStateStore.defaults()
 
-# Per-image as-shot CCT; the WB reset target.
+# Per-image as-shot CCT and tint; the As Shot / reset target.
 var _wb_default_temperature: float = 6500.0
+var _wb_default_tint: float = 0.0
+# True from an Auto click until _resolve_auto_wb measures the image; the
+# measurement runs inside _start_process so it never overlaps a render task.
+var _auto_wb_pending: bool = false
 var _reset_buttons: Array[Button] = []
 
 # --- Edit state: the authoritative "what to render" ---------------------------
@@ -157,6 +166,9 @@ var _params: Dictionary = {
 	"vibrance": 25.0,
 	"tonecurve": PackedVector2Array([Vector2(0.0, 0.0), Vector2(1.0, 1.0)]),
 	"wb_temperature": 6500.0,
+	"wb_tint": 0.0,
+	"wb_mode": ColorWbScript.AS_SHOT,
+	"wb_override": false,
 	"crop": Rect2(0, 0, 1, 1),
 	"orientation": 0,
 }
@@ -199,6 +211,9 @@ func _map_module_to_offset(key: String, module_value: float) -> float:
 
 # Last values pushed to the backend, keyed like _params.
 var _applied_params: Dictionary = {}
+# What the pipe's white balance currently holds ("neutral" or "temp,tint");
+# "" after a photo load, before the first apply.
+var _wb_backend_key: String = ""
 
 var _processing: bool = false
 # Set when a request arrived mid-render; exactly one follow-up runs.
@@ -654,6 +669,7 @@ func _init_backend() -> bool:
 		saturation_slider.editable = false
 		vibrance_slider.editable = false
 		white_balance_slider.editable = false
+		_set_color_wb_controls_enabled(false)
 		for btn in _reset_buttons:
 			btn.disabled = true
 		return false
@@ -668,9 +684,13 @@ func _finish_ready() -> void:
 	blacks_value_label.text = "%.2f" % blacks_slider.value
 	whites_value_label.text = "%.2f" % whites_slider.value
 	dehaze_value_label.text = "%.2f" % dehaze_slider.value
-	saturation_value_label.text = "%.2f" % saturation_slider.value
-	vibrance_value_label.text = "%.2f" % vibrance_slider.value
+	ColorReadoutScript.apply(saturation_value_label, saturation_slider.value)
+	ColorReadoutScript.apply(vibrance_value_label, vibrance_slider.value)
 	white_balance_value_label.text = "%dK" % roundi(white_balance_slider.value)
+	ColorReadoutScript.apply(tint_value_label, tint_slider.value)
+	wb_mode_bar.mode_selected.connect(_on_wb_mode_selected)
+	# No photo is open yet; open_photo enables the controls.
+	_set_color_wb_controls_enabled(false)
 
 	for mode in _EDIT_MODES:
 		edit_res_option.add_item(mode["label"], mode["id"])
@@ -846,19 +866,23 @@ func open_photo(path: String) -> bool:
 	_last_render_image = null
 	_last_render_sig = ""
 
+	_auto_wb_pending = false
 	var ok: bool = backend.load_image(path)
 	if not ok:
 		_image_loaded = false
 		_update_empty_state()
 		export_button.disabled = true
+		_set_color_wb_controls_enabled(false)
 		return false
 
 	_image_loaded = true
+	_set_color_wb_controls_enabled(not _exporting)
 	_update_empty_state()
 	_edited_path = path
 	filename_label.text = path.get_file()
 
 	_applied_params.clear()
+	_wb_backend_key = ""
 	_reset_render_gate()
 
 	_source_basename = path.get_file().get_basename()
@@ -877,9 +901,8 @@ func open_photo(path: String) -> bool:
 	# the neutral thumbnail, so edits survive file moves/renames.
 	var as_shot_temperature: float = backend.get_white_balance_temperature()
 	_wb_default_temperature = as_shot_temperature
-	# White balance's center-origin fill anchors to the as-shot temperature,
-	# not the slider's geometric center, since it's recomputed per photo.
-	white_balance_slider.origin_value = as_shot_temperature
+	var as_shot_tint: float = backend.get_white_balance_tint()
+	_wb_default_tint = as_shot_tint
 	_resolve_edit_key(path)
 	var defaults: Dictionary = {
 		"exposure": 0.0,
@@ -894,6 +917,9 @@ func open_photo(path: String) -> bool:
 		"vibrance": _map_offset_to_module("vibrance", 0.0),
 		"tonecurve": PackedVector2Array([Vector2(0.0, 0.0), Vector2(1.0, 1.0)]),
 		"wb_temperature": as_shot_temperature,
+		"wb_tint": as_shot_tint,
+		"wb_mode": ColorWbScript.AS_SHOT,
+		"wb_override": false,
 		"crop": Rect2(0, 0, 1, 1),
 		"orientation": 0,
 	}
@@ -904,6 +930,9 @@ func open_photo(path: String) -> bool:
 	for key in saved:
 		if defaults.has(key):
 			restored[key] = saved[key]
+	# White balance restores as a unit: saved mode/values, legacy records
+	# (temperature only) inferred, never-edited photos As Shot.
+	restored.merge(ColorWbScript.resolve_saved(saved, as_shot_temperature, as_shot_tint), true)
 	_apply_params_to_ui(restored)
 
 	# Before/after compare: as-shot tonal values, keyed by this photo. crop and
@@ -1048,19 +1077,21 @@ func _apply_params_to_ui(p: Dictionary) -> void:
 	else:
 		sat_off = _map_module_to_offset("saturation", p["saturation"])
 	saturation_slider.set_value_no_signal(sat_off)
-	saturation_value_label.text = "%.2f" % sat_off
+	ColorReadoutScript.apply(saturation_value_label, sat_off)
 
 	_params["vibrance"] = p["vibrance"]
 	var vib_off: float = _map_module_to_offset("vibrance", p["vibrance"])
 	vibrance_slider.set_value_no_signal(vib_off)
-	vibrance_value_label.text = "%.2f" % vib_off
+	ColorReadoutScript.apply(vibrance_value_label, vib_off)
 
 	_params["tonecurve"] = p["tonecurve"]
 	tone_curve_editor.set_points(p["tonecurve"])
 
 	_params["wb_temperature"] = p["wb_temperature"]
-	white_balance_slider.set_value_no_signal(p["wb_temperature"])
-	white_balance_value_label.text = "%dK" % roundi(p["wb_temperature"])
+	_params["wb_tint"] = float(p["wb_tint"])
+	_params["wb_mode"] = p["wb_mode"]
+	_params["wb_override"] = bool(p["wb_override"])
+	_sync_wb_ui()
 
 	_params["crop"] = p["crop"]
 
@@ -1110,19 +1141,21 @@ func _on_dehaze_slider_value_changed(value: float) -> void:
 
 
 func _on_saturation_slider_value_changed(value: float) -> void:
-	saturation_value_label.text = "%.2f" % value
+	ColorReadoutScript.apply(saturation_value_label, value)
 	if value > 0.0:
 		_params["saturation"] = _map_offset_to_module("saturation", value)
 		_params["desaturation"] = 0.0
 	else:
 		_params["saturation"] = _map_offset_to_module("saturation", 0.0)
 		_params["desaturation"] = -value / 50.0
+	_enter_custom_wb_mode()
 	_request_render()
 
 
 func _on_vibrance_slider_value_changed(value: float) -> void:
-	vibrance_value_label.text = "%.2f" % value
+	ColorReadoutScript.apply(vibrance_value_label, value)
 	_params["vibrance"] = _map_offset_to_module("vibrance", value)
+	_enter_custom_wb_mode()
 	_request_render()
 
 
@@ -1134,7 +1167,90 @@ func _on_tone_curve_changed(points: PackedVector2Array) -> void:
 func _on_white_balance_slider_value_changed(value: float) -> void:
 	white_balance_value_label.text = "%dK" % roundi(value)
 	_params["wb_temperature"] = value
+	_enter_custom_wb_mode(true)
 	_request_render()
+
+
+func _on_tint_slider_value_changed(value: float) -> void:
+	ColorReadoutScript.apply(tint_value_label, value)
+	_params["wb_tint"] = value
+	_enter_custom_wb_mode(true)
+	_request_render()
+
+
+# Pushes _params' white-balance keys into Temp, Tint and the mode bar without
+# firing their signals.
+func _sync_wb_ui() -> void:
+	white_balance_slider.set_value_no_signal(_params["wb_temperature"])
+	white_balance_value_label.text = "%dK" % roundi(_params["wb_temperature"])
+	tint_slider.set_value_no_signal(_params["wb_tint"])
+	ColorReadoutScript.apply(tint_value_label, _params["wb_tint"])
+	wb_mode_bar.set_mode(_params["wb_mode"])
+
+
+# Called by the four Color slider handlers (Temp, Tint, Vibrance, Saturation):
+# any edit makes the white-balance mode Custom and cancels an unresolved Auto.
+# The values themselves were already written by the calling handler. Only the
+# Temp/Tint handlers pass manual_override: Vibrance/Saturation edits leave
+# wb_override alone, so they never turn an exact as-shot state into a forced
+# correction.
+func _enter_custom_wb_mode(manual_override: bool = false) -> void:
+	_auto_wb_pending = false
+	if manual_override:
+		_params["wb_override"] = true
+	if _params["wb_mode"] != ColorWbScript.CUSTOM:
+		_params["wb_mode"] = ColorWbScript.CUSTOM
+		wb_mode_bar.set_mode(ColorWbScript.CUSTOM)
+
+
+# Segmented-control click. Only mutates _params/UI and queues work: As Shot and
+# Auto go through _request_render (Auto's measurement and every backend setter
+# run later inside _start_process / _apply_params_to_backend); Custom changes
+# no values, so it only arms the save.
+func _on_wb_mode_selected(mode: String) -> void:
+	if backend == null or not _image_loaded or _exporting:
+		wb_mode_bar.set_mode(_params["wb_mode"])
+		return
+	_auto_wb_pending = mode == ColorWbScript.AUTO
+	if mode == ColorWbScript.AS_SHOT:
+		_params.merge(ColorWbScript.as_shot_values(_wb_default_temperature, _wb_default_tint), true)
+		_sync_wb_ui()
+	else:
+		_params["wb_mode"] = mode
+		wb_mode_bar.set_mode(mode)
+	if mode == ColorWbScript.CUSTOM:
+		_mark_edit_dirty()
+	else:
+		_request_render()
+
+
+# Runs the pending Auto measurement (at most once per click). Must only be
+# called when no render task is running. On success the measured temperature
+# and tint replace the sliders' values and are pushed through the normal apply
+# path; on failure the photo stays as it was and the mode falls back to Custom.
+func _resolve_auto_wb() -> void:
+	if not _auto_wb_pending:
+		return
+	_auto_wb_pending = false
+	var result: Dictionary = backend.compute_auto_white_balance()
+	if result["ok"]:
+		_params["wb_temperature"] = clampf(
+			float(result["temperature"]), white_balance_slider.min_value, white_balance_slider.max_value)
+		_params["wb_tint"] = clampf(
+			float(result["tint"]), tint_slider.min_value, tint_slider.max_value)
+		_params["wb_mode"] = ColorWbScript.AUTO
+		_params["wb_override"] = true
+	else:
+		push_warning("Auto white balance unavailable; switching to Custom")
+		_params["wb_mode"] = ColorWbScript.CUSTOM
+	_sync_wb_ui()
+
+
+# Enables/disables the controls that have no per-control editable bookkeeping
+# elsewhere (the segmented mode bar and Tint).
+func _set_color_wb_controls_enabled(enabled: bool) -> void:
+	wb_mode_bar.set_enabled(enabled)
+	tint_slider.editable = enabled
 
 
 # --- Reset buttons ------------------------------------------------------------
@@ -1180,6 +1296,7 @@ func _apply_mono_value_label_font() -> void:
 		saturation_value_label,
 		vibrance_value_label,
 		white_balance_value_label,
+		tint_value_label,
 		zoom_value_label,
 	]
 	for label in value_labels:
@@ -1199,6 +1316,11 @@ func _setup_reset_buttons() -> void:
 	wb_btn.pressed.connect(func() -> void:
 		white_balance_slider.value = _wb_default_temperature)
 	white_balance_slider.get_parent().add_child(wb_btn)
+
+	var tint_btn := _make_reset_button("Reset to as-shot tint")
+	tint_btn.pressed.connect(func() -> void:
+		tint_slider.value = _wb_default_tint)
+	tint_slider.get_parent().add_child(tint_btn)
 
 	var tone_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ToneCurveLabel
 	var vbox: Node = tone_label.get_parent()
@@ -1325,8 +1447,7 @@ func _apply_params_to_backend() -> void:
 		backend.set_vibrance(_params["vibrance"])
 	if _params_differ("tonecurve"):
 		backend.set_tonecurve(_params["tonecurve"])
-	if _params_differ("wb_temperature"):
-		backend.set_white_balance_temperature(_params["wb_temperature"])
+	_apply_white_balance_to_backend()
 	if _params_differ("crop"):
 		var crop: Rect2 = _params["crop"]
 		backend.set_crop(crop.position.x, crop.position.y, crop.end.x, crop.end.y)
@@ -1335,6 +1456,23 @@ func _apply_params_to_backend() -> void:
 	if _params_differ("orientation") and backend.has_method("set_orientation"):
 		backend.set_orientation(_params["orientation"])
 	_snapshot_applied_params()
+
+
+# White-balance half of _apply_params_to_backend. Mode As Shot, or no wb_override
+# (see ColorWb.gd), goes through reset_white_balance (exact load-time module
+# defaults); an override pushes the actual Temp/Tint through set_white_balance.
+# _wb_backend_key records what the pipe currently holds, so selecting Custom or
+# editing Vibrance/Saturation never re-pushes a correction over an exact state.
+func _apply_white_balance_to_backend() -> void:
+	var neutral: bool = ColorWbScript.is_neutral(_params["wb_mode"], _params["wb_override"])
+	var key: String = "neutral" if neutral else "%f,%f" % [_params["wb_temperature"], _params["wb_tint"]]
+	if key == _wb_backend_key:
+		return
+	_wb_backend_key = key
+	if neutral:
+		backend.reset_white_balance()
+	else:
+		backend.set_white_balance(_params["wb_temperature"], _params["wb_tint"])
 
 
 func _start_process() -> void:
@@ -1351,6 +1489,8 @@ func _start_process() -> void:
 	_render_start_usec = Time.get_ticks_usec()
 	_last_render_start_usec = _render_start_usec
 	export_button.disabled = true
+	# _processing is already set, so no save flush can run while Auto measures.
+	_resolve_auto_wb()
 	_apply_params_to_backend()
 
 	var edit_scale: float = _edit_scale
@@ -1479,6 +1619,8 @@ func _on_theme_button_pressed() -> void:
 
 
 func _on_theme_changed(is_dark: bool) -> void:
+	for readout in [tint_value_label, vibrance_value_label, saturation_value_label]:
+		ColorReadoutScript.refresh(readout)
 	theme_button.text = "Light Mode" if is_dark else "Dark Mode"
 	if _crop_overlay != null:
 		_crop_overlay.apply_theme(is_dark)
@@ -1873,6 +2015,7 @@ func _on_export_dialog_file_selected(path: String) -> void:
 	saturation_slider.editable = false
 	vibrance_slider.editable = false
 	white_balance_slider.editable = false
+	_set_color_wb_controls_enabled(false)
 
 	WorkerThreadPool.add_task(_export_task)
 
@@ -1894,6 +2037,7 @@ func _on_export_done(ok: bool, path: String) -> void:
 	saturation_slider.editable = true
 	vibrance_slider.editable = true
 	white_balance_slider.editable = true
+	_set_color_wb_controls_enabled(_image_loaded)
 	export_button.disabled = not _image_loaded
 	if not ok:
 		push_error("Export failed for %s" % path.get_file())
@@ -1909,9 +2053,21 @@ func _mark_edit_dirty() -> void:
 	_save_timer.start(_SAVE_DEBOUNCE_SEC)
 
 
-func _on_save_timer_timeout() -> void:
+# `flush` is true when called from _flush_pending_save, which cannot defer.
+func _on_save_timer_timeout(flush: bool = false) -> void:
 	if _edit_key == "" or not _image_loaded:
 		return
+	# An unresolved Auto click still holds the previous temperature/tint; never
+	# write those under mode "auto". Resolve it first (safe only with no render
+	# task running), or retry after the in-flight render if this is the timer.
+	if _auto_wb_pending:
+		if _processing and _current_task_id != -1:
+			if not flush:
+				_save_timer.start(_SAVE_DEBOUNCE_SEC)
+				return
+			WorkerThreadPool.wait_for_task_completion(_current_task_id)
+			_processing = false
+		_resolve_auto_wb()
 	var meta: Dictionary = {
 		"file_name": _edit_file_name,
 		"thumb_hash": _edit_thumb_hash,
@@ -1958,7 +2114,7 @@ func _store_edited_thumb() -> void:
 func _flush_pending_save() -> void:
 	if _save_timer != null and not _save_timer.is_stopped():
 		_save_timer.stop()
-		_on_save_timer_timeout()
+		_on_save_timer_timeout(true)
 
 
 func _notification(what: int) -> void:

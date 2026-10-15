@@ -1,9 +1,10 @@
 extends SceneTree
 
 const Layout := preload("res://EditPanelLayout.gd")
+const ModeBarScript := preload("res://WbModeBar.gd")
 const KEYS := [
 	"Exposure", "Contrast", "Highlights", "Shadows", "Whites", "Blacks",
-	"WhiteBalance", "Vibrance", "Saturation", "Dehaze",
+	"WhiteBalance", "Tint", "Vibrance", "Saturation", "Dehaze",
 ]
 var _failed: bool = false
 var _changes: int = 0
@@ -29,6 +30,9 @@ func _run() -> void:
 		placeholder.name = key
 		placeholder.custom_minimum_size.y = 30
 		panel.add_child(placeholder)
+	var mode_bar: HBoxContainer = ModeBarScript.new()
+	mode_bar.name = "WbModeBar"
+	panel.add_child(mode_bar)
 	var sliders: Array[HSlider] = []
 	var resets: Array[Button] = []
 	for key in KEYS:
@@ -67,7 +71,8 @@ func _run() -> void:
 	var color = panel.get_node("ColorSection")
 	var effects = panel.get_node("EffectsSection")
 	_check(basic.content.get_child_count() == 6, "Basic should contain six controls")
-	_check(color.content.get_child_count() == 3, "Color should contain three controls")
+	_check(color.content.get_child_count() == 5, "Color should contain the mode bar and four sliders")
+	_check(color.content.get_child(0) == mode_bar, "Mode bar leads the Color section")
 	_check(effects.content.get_child_count() == 1, "Effects should contain Dehaze")
 	for child in effects.get_children():
 		_check(not child is HSeparator, "No divider should precede quick settings")

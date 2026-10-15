@@ -49,6 +49,8 @@ func _sample_params() -> Dictionary:
 		"vibrance": 40.0,
 		"tonecurve": PackedVector2Array([Vector2(0.0, 0.1), Vector2(0.5, 0.6), Vector2(1.0, 0.9)]),
 		"wb_temperature": 5200.0,
+		"wb_tint": -17.5,
+		"wb_mode": "auto",
 		"crop": Rect2(0.1, 0.2, 0.7, 0.6),
 		"orientation": 2,
 	}
@@ -71,10 +73,14 @@ func _test_round_trip() -> void:
 		return
 	# Scalar keys.
 	for k in ["exposure", "contrast", "highlights", "shadows", "blacks", "whites",
-			"dehaze", "saturation", "desaturation", "vibrance", "wb_temperature"]:
+			"dehaze", "saturation", "desaturation", "vibrance", "wb_temperature", "wb_tint"]:
 		if not is_equal_approx(float(loaded[k]), float(params[k])):
 			_die("key %s round-trip mismatch: %s vs %s" % [k, loaded[k], params[k]])
 			return
+	# wb_mode (String): round-trips as a plain JSON string.
+	if loaded["wb_mode"] != params["wb_mode"]:
+		_die("wb_mode round-trip mismatch: %s vs %s" % [loaded["wb_mode"], params["wb_mode"]])
+		return
 	# orientation (int quarter-turns 0..3): round-trips as a plain JSON number.
 	if int(loaded["orientation"]) != int(params["orientation"]):
 		_die("orientation round-trip mismatch: %s vs %s" % [loaded["orientation"], params["orientation"]])

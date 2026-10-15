@@ -8,8 +8,10 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include <godot_cpp/classes/ref_counted.hpp>
+#include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/packed_vector2_array.hpp>
 #include <godot_cpp/variant/string.hpp>
@@ -41,6 +43,13 @@ extern "C" {
 
 #define DT_BACKEND_CHANNELMIXERRGB_TEMP_MIN 1667.0f
 #define DT_BACKEND_CHANNELMIXERRGB_TEMP_MAX 25000.0f
+
+// Tint slider range is -100..+100 (+ = magenta image shift, - = green). The
+// extremes displace the illuminant by this distance in CIE 1960 (u,v), measured
+// perpendicular to darktable's daylight/Planckian locus (i.e. along the isotherm,
+// so tint never changes the correlated colour temperature).
+#define DT_BACKEND_WB_TINT_RANGE 100.0f
+#define DT_BACKEND_WB_TINT_DUV_MAX 0.05f
 
 #define DT_BACKEND_TONECURVE_MAXNODES 20
 
@@ -87,6 +96,27 @@ private:
   dt_iop_module_t *channelmixer_rgb_module = nullptr;
   dt_iop_module_t *clipping_module = nullptr;
   dt_iop_module_t *flip_module = nullptr;
+
+  // --- White balance (channelmixerrgb) state -------------------------------
+  // channelmixerrgb params/enabled flag captured by load_image(); empty = none.
+  // reset_white_balance() restores them (As Shot).
+  std::vector<uint8_t> wb_load_params;
+  bool wb_load_enabled = false;
+  // Last values written by set_white_balance*(); wb_kelvin == 0 means no explicit
+  // write since load/reset. The single-axis setters keep the other axis.
+  float wb_kelvin = 0.0f;
+  float wb_tint = 0.0f;
+  // As-shot illuminant as (Kelvin, tint) in slider space.
+  bool as_shot_valid = false;
+  float as_shot_kelvin = 0.0f, as_shot_tint = 0.0f;
+  // Cached compute_auto_white_balance() result per loaded image; empty = not measured.
+  Dictionary auto_result;
+
+  dt_iop_module_t *find_channelmixer_rgb();
+  void wb_reset_state();
+  void wb_capture_load_state();
+  bool wb_compute_as_shot();
+  bool wb_measure_scene_illuminant(float *x, float *y);
 
   int processed_width = 0;
   int processed_height = 0;
@@ -152,8 +182,23 @@ public:
   void set_vibrance(float value);
   // Kelvin, clamped to _TEMP_MIN/_MAX (docs F.4).
   void set_white_balance_temperature(float kelvin);
-  // As-shot Kelvin for seeding the UI slider; 0.0f if no image/module.
+  // As-shot Kelvin (from the camera's real illuminant chromaticity) for seeding
+  // the UI slider; 0.0f if no image/module.
   float get_white_balance_temperature();
+  // As-shot tint in -100..100 (+ = magenta) relative to the daylight/Planckian locus.
+  float get_white_balance_tint();
+  // Combined setter. kelvin clamped to _TEMP_MIN/_MAX, tint to +-100; tint == 0 is
+  // bit-identical to the legacy set_white_balance_temperature() path.
+  void set_white_balance(float kelvin, float tint);
+  // Single-axis setters; each keeps the other axis' last value (tint 0 initially).
+  void set_white_balance_tint(float tint);
+  // Restore exactly the white balance state captured at load (As Shot).
+  void reset_white_balance();
+  // Headless Auto: {ok, temperature, tint, x, y, clamped}. Does not change the edit.
+  Dictionary compute_auto_white_balance();
+  // Stateless: (kelvin, tint) -> {ok, x, y, temperature, tint} via the forward then
+  // inverse locus maps; used by tests to bound reconstruction error.
+  Dictionary get_white_balance_roundtrip(float kelvin, float tint);
   // Normalized 0..1 crop EDGES (left, top, right, bottom); full frame disables the module.
   void set_crop(float left, float top, float right, float bottom);
   // Non-destructive 90-degree rotation via the `flip` module. quarter_turns 0..3,

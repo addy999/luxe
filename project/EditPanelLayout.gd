@@ -1,6 +1,7 @@
 extends RefCounted
 
 const Section := preload("res://CollapsibleSection.gd")
+const COLOR_CONTROL_GAP := 18
 
 
 # Called after Main has cached scene references and connected reset buttons.
@@ -17,7 +18,11 @@ static func build(panel: VBoxContainer) -> void:
 	panel.get_node("ToneCurveEditor").reparent(curve.content, false)
 
 	var color := _section(panel, "Color", "COLOR", 2)
-	for key in ["WhiteBalance", "Vibrance", "Saturation"]:
+	# Segmented mode control first, then Temp, Tint, Vibrance, Saturation, with
+	# the Color section's wider 18px rhythm between controls.
+	color.content.add_theme_constant_override("separation", COLOR_CONTROL_GAP)
+	panel.get_node("WbModeBar").reparent(color.content, false)
+	for key in ["WhiteBalance", "Tint", "Vibrance", "Saturation"]:
 		_move_slider(panel, color.content, key)
 
 	var effects := _section(panel, "Effects", "EFFECTS", 3)

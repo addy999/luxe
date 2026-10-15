@@ -1,16 +1,21 @@
 extends HSlider
-## HSlider that paints its amber fill from a configurable origin value to the
+## HSlider that paints its fill from a configurable origin value to the
 ## current knob position, instead of Godot's default left-edge fill.
 ## At value == origin_value, no fill is drawn (neutral grey track only).
 ## Used by the Edit-panel adjustment sliders (Exposure, Contrast, Highlights,
-## Shadows, Blacks, Whites, Dehaze, Saturation, Vibrance, White Balance).
+## Shadows, Blacks, Whites, Dehaze, Saturation, Vibrance).
 
 const CORNER_RADIUS := 2.0
 const EPSILON := 0.0001
+const KNOB_RADIUS := 7.0
+const ColorReadoutScript := preload("res://ColorReadout.gd")
 
 ## The value the fill is anchored to (the slider's reset/default value).
-## Not necessarily the geometric center (e.g. white balance's as-shot K).
 @export var origin_value: float = 0.0
+## Amber variant (Color panel Vibrance/Saturation): the fill uses the theme's
+## HSlider/accent_amber instead of center_fill, and the knob is drawn here
+## (grey at origin_value, amber anywhere else) instead of the theme grabber.
+@export var amber_accent: bool = false
 
 func _ready() -> void:
 	# Replace the theme's left-origin fill styleboxes with empty ones so the
@@ -20,6 +25,16 @@ func _ready() -> void:
 	var empty_style := StyleBoxEmpty.new()
 	add_theme_stylebox_override("grabber_area", empty_style)
 	add_theme_stylebox_override("grabber_area_highlight", empty_style)
+	if amber_accent:
+		# A transparent grabber of the original size keeps Slider's track inset
+		# (and so the knob travel) unchanged while _draw() paints the knob.
+		var original: Texture2D = get_theme_icon("grabber")
+		var width: int = maxi(original.get_width() if original else 16, 2)
+		var height: int = maxi(original.get_height() if original else 16, 2)
+		var blank := ImageTexture.create_from_image(
+			Image.create(width, height, false, Image.FORMAT_RGBA8))
+		for icon_name in ["grabber", "grabber_highlight", "grabber_disabled"]:
+			add_theme_icon_override(icon_name, blank)
 	value_changed.connect(_on_value_changed)
 	resized.connect(queue_redraw)
 
@@ -27,10 +42,13 @@ func _on_value_changed(_value: float) -> void:
 	queue_redraw()
 
 ## Fill color comes from the active Theme's "HSlider/colors/center_fill" entry
-## (swapped between dark/light by ThemeManager). When no theme resolves
-## (theme-less headless test harnesses), returns GDScript's zero default;
-## such harnesses never draw the fill.
+## (swapped between dark/light by ThemeManager), or accent_amber for the amber
+## variant. When no theme resolves (theme-less headless test harnesses),
+## returns GDScript's zero default (amber variant: a fixed amber); such
+## harnesses never draw the fill.
 func _fill_color() -> Color:
+	if amber_accent:
+		return ColorReadoutScript.accent_color(self)
 	if has_theme_color("center_fill", "HSlider"):
 		return get_theme_color("center_fill", "HSlider")
 	return Color()
@@ -67,14 +85,28 @@ func _draw() -> void:
 
 	var origin_x: float = half_grabber + origin_ratio * usable_w
 	var value_x: float = half_grabber + value_ratio * usable_w
+	var neutral: bool = abs(value - origin_clamped) <= EPSILON
 
-	if abs(value - origin_clamped) <= EPSILON:
-		return
+	if not neutral:
+		var left_x: float = min(origin_x, value_x)
+		var right_x: float = max(origin_x, value_x)
+		var fill_rect := Rect2(left_x, track_y, right_x - left_x, track_height)
+		draw_rect_rounded(fill_rect, _fill_color(), CORNER_RADIUS)
 
-	var left_x: float = min(origin_x, value_x)
-	var right_x: float = max(origin_x, value_x)
-	var fill_rect := Rect2(left_x, track_y, right_x - left_x, track_height)
-	draw_rect_rounded(fill_rect, _fill_color(), CORNER_RADIUS)
+	if amber_accent:
+		_draw_knob(Vector2(value_x, size.y / 2.0), neutral)
+
+# Round knob of the amber variant: grey at neutral, amber otherwise, on a faint
+# dark ring (same construction as ColorGradientSlider's knob).
+func _draw_knob(centre: Vector2, neutral: bool) -> void:
+	var dim: float = 1.0 if editable else 0.45
+	var fill: Color = ColorReadoutScript.accent_color(self)
+	if neutral:
+		fill = get_theme_color("font_color", "Muted") if has_theme_color("font_color", "Muted") \
+				else Color(0.6, 0.6, 0.62)
+	fill.a *= dim
+	draw_circle(centre, KNOB_RADIUS, Color(0.0, 0.0, 0.0, 0.5 * dim))
+	draw_circle(centre, KNOB_RADIUS - 1.5, fill)
 
 func draw_rect_rounded(rect: Rect2, color: Color, radius: float) -> void:
 	# draw_rect has no built-in corner radius; approximate with a StyleBoxFlat

@@ -74,6 +74,8 @@ func _initialize() -> void:
 		["dehaze_slider", 0.4],
 		["saturation_slider", 20.0],
 		["vibrance_slider", 20.0],
+		# The committed oracle uses the legacy daylight (zero-tint) WB path.
+		["tint_slider", 0.0],
 		["white_balance_slider", 5500.0],
 	]
 	for edit in slider_edits:
