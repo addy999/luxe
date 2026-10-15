@@ -437,10 +437,6 @@ layout_mode = 2
 text = "6500K"
 horizontal_alignment = 2
 
-[node name="ViewHeader" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=1316704465]
-layout_mode = 2
-theme_type_variation = &"GroupHeader"
-text = "VIEW"
 
 [node name="EditResLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=8641992]
 layout_mode = 2

@@ -307,6 +307,8 @@ func _ready() -> void:
 
 	_setup_reset_buttons()
 	_apply_mono_value_label_font()
+	preload("res://EditPanelLayout.gd").build(
+		$Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox)
 	# Load before _setup_views: _set_view(LIBRARY) seeds the shared zoom slider
 	# from _library_thumb_zoom_pct, so the restored value must be in place first.
 	_ui_state = UiStateStore.load()
@@ -1202,6 +1204,7 @@ func _setup_reset_buttons() -> void:
 	var vbox: Node = tone_label.get_parent()
 	var slot: int = tone_label.get_index()
 	var tone_header := HBoxContainer.new()
+	tone_header.name = "ToneCurveHeaderRow"
 	tone_header.add_theme_constant_override("separation", 8)
 	vbox.add_child(tone_header)
 	vbox.move_child(tone_header, slot)

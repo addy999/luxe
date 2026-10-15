@@ -85,47 +85,6 @@ corner_radius_top_right = 16
 corner_radius_bottom_right = 16
 corner_radius_bottom_left = 16
 
-[sub_resource type="StyleBoxFlat" id="slider_track"]
-content_margin_top = 3.0
-content_margin_bottom = 3.0
-bg_color = Color(0.816, 0.808, 0.788, 1)
-corner_radius_top_left = 3
-corner_radius_top_right = 3
-corner_radius_bottom_right = 3
-corner_radius_bottom_left = 3
-
-[sub_resource type="StyleBoxFlat" id="slider_fill_hl"]
-content_margin_top = 3.0
-content_margin_bottom = 3.0
-bg_color = Color(0.26, 0.26, 0.88, 1)
-corner_radius_top_left = 3
-corner_radius_top_right = 3
-corner_radius_bottom_right = 3
-corner_radius_bottom_left = 3
-
-[sub_resource type="StyleBoxFlat" id="slider_fill"]
-content_margin_top = 3.0
-content_margin_bottom = 3.0
-bg_color = Color(0.16, 0.16, 0.8, 1)
-corner_radius_top_left = 3
-corner_radius_top_right = 3
-corner_radius_bottom_right = 3
-corner_radius_bottom_left = 3
-
-[sub_resource type="StyleBoxFlat" id="panel_generic"]
-bg_color = Color(0.957, 0.952, 0.937, 1)
-
-[sub_resource type="StyleBoxFlat" id="scroll_track"]
-content_margin_left = 3.0
-content_margin_right = 3.0
-content_margin_top = 3.0
-content_margin_bottom = 3.0
-bg_color = Color(0.85, 0.85, 0.85, 1)
-corner_radius_top_left = 8
-corner_radius_top_right = 8
-corner_radius_bottom_right = 8
-corner_radius_bottom_left = 8
-
 [sub_resource type="StyleBoxFlat" id="scroll_grabber"]
 bg_color = Color(0.62, 0.62, 0.62, 1)
 corner_radius_top_left = 5
@@ -146,6 +105,44 @@ corner_radius_top_left = 5
 corner_radius_top_right = 5
 corner_radius_bottom_right = 5
 corner_radius_bottom_left = 5
+
+[sub_resource type="StyleBoxFlat" id="scroll_track"]
+content_margin_left = 3.0
+content_margin_top = 3.0
+content_margin_right = 3.0
+content_margin_bottom = 3.0
+bg_color = Color(0.85, 0.85, 0.85, 1)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_right = 8
+corner_radius_bottom_left = 8
+
+[sub_resource type="StyleBoxFlat" id="slider_fill"]
+content_margin_top = 3.0
+content_margin_bottom = 3.0
+bg_color = Color(0.16, 0.16, 0.8, 1)
+corner_radius_top_left = 3
+corner_radius_top_right = 3
+corner_radius_bottom_right = 3
+corner_radius_bottom_left = 3
+
+[sub_resource type="StyleBoxFlat" id="slider_fill_hl"]
+content_margin_top = 3.0
+content_margin_bottom = 3.0
+bg_color = Color(0.26, 0.26, 0.88, 1)
+corner_radius_top_left = 3
+corner_radius_top_right = 3
+corner_radius_bottom_right = 3
+corner_radius_bottom_left = 3
+
+[sub_resource type="StyleBoxFlat" id="slider_track"]
+content_margin_top = 3.0
+content_margin_bottom = 3.0
+bg_color = Color(0.816, 0.808, 0.788, 1)
+corner_radius_top_left = 3
+corner_radius_top_right = 3
+corner_radius_bottom_right = 3
+corner_radius_bottom_left = 3
 
 [sub_resource type="StyleBoxFlat" id="lineedit_focus"]
 draw_center = false
@@ -191,6 +188,9 @@ corner_radius_top_right = 4
 corner_radius_bottom_right = 4
 corner_radius_bottom_left = 4
 
+[sub_resource type="StyleBoxFlat" id="panel_generic"]
+bg_color = Color(0.957, 0.952, 0.937, 1)
+
 [sub_resource type="StyleBoxFlat" id="popup_hover"]
 bg_color = Color(0.8, 0.8, 0.8, 1)
 corner_radius_top_left = 4
@@ -214,13 +214,6 @@ corner_radius_top_right = 4
 corner_radius_bottom_right = 4
 corner_radius_bottom_left = 4
 
-[sub_resource type="StyleBoxFlat" id="progress_fill"]
-bg_color = Color(0.722, 0.471, 0.102, 1)
-corner_radius_top_left = 2
-corner_radius_top_right = 2
-corner_radius_bottom_right = 2
-corner_radius_bottom_left = 2
-
 [sub_resource type="StyleBoxFlat" id="progress_bg"]
 bg_color = Color(0.87, 0.87, 0.87, 1)
 corner_radius_top_left = 3
@@ -228,20 +221,15 @@ corner_radius_top_right = 3
 corner_radius_bottom_right = 3
 corner_radius_bottom_left = 3
 
+[sub_resource type="StyleBoxFlat" id="progress_fill"]
+bg_color = Color(0.722, 0.471, 0.102, 1)
+corner_radius_top_left = 2
+corner_radius_top_right = 2
+corner_radius_bottom_right = 2
+corner_radius_bottom_left = 2
+
 [sub_resource type="StyleBoxFlat" id="canvas_bg"]
 bg_color = Color(0.898, 0.891, 0.871, 1)
-
-[sub_resource type="StyleBoxFlat" id="panel_side"]
-bg_color = Color(0.957, 0.952, 0.937, 1)
-border_width_left = 1
-border_color = Color(0.792, 0.784, 0.761, 1)
-
-[sub_resource type="StyleBoxFlat" id="tab_disabled"]
-content_margin_left = 12.0
-content_margin_top = 6.0
-content_margin_right = 12.0
-content_margin_bottom = 6.0
-bg_color = Color(0, 0, 0, 0)
 
 [sub_resource type="StyleBoxFlat" id="tab_hovered"]
 content_margin_left = 12.0
@@ -251,6 +239,51 @@ content_margin_bottom = 6.0
 bg_color = Color(0.8, 0.8, 0.8, 1)
 corner_radius_top_left = 4
 corner_radius_top_right = 4
+
+[sub_resource type="StyleBoxFlat" id="tab_disabled"]
+content_margin_left = 12.0
+content_margin_top = 6.0
+content_margin_right = 12.0
+content_margin_bottom = 6.0
+bg_color = Color(0, 0, 0, 0)
+
+[sub_resource type="StyleBoxFlat" id="panel_side"]
+bg_color = Color(0.957, 0.952, 0.937, 1)
+border_width_left = 1
+border_color = Color(0.792, 0.784, 0.761, 1)
+
+[sub_resource type="StyleBoxFlat" id="sidebar_item_normal"]
+content_margin_left = 14.0
+content_margin_top = 18.0
+content_margin_right = 40.0
+content_margin_bottom = 18.0
+bg_color = Color(0, 0, 0, 0)
+corner_radius_top_left = 30
+corner_radius_top_right = 30
+corner_radius_bottom_right = 30
+corner_radius_bottom_left = 30
+
+[sub_resource type="StyleBoxFlat" id="sidebar_item_hover"]
+content_margin_left = 14.0
+content_margin_top = 18.0
+content_margin_right = 40.0
+content_margin_bottom = 18.0
+bg_color = Color(0.85, 0.85, 0.85, 1)
+corner_radius_top_left = 30
+corner_radius_top_right = 30
+corner_radius_bottom_right = 30
+corner_radius_bottom_left = 30
+
+[sub_resource type="StyleBoxFlat" id="sidebar_item_pressed"]
+content_margin_left = 14.0
+content_margin_top = 18.0
+content_margin_right = 40.0
+content_margin_bottom = 18.0
+bg_color = Color(0.792, 0.784, 0.761, 1)
+corner_radius_top_left = 30
+corner_radius_top_right = 30
+corner_radius_bottom_right = 30
+corner_radius_bottom_left = 30
 
 [sub_resource type="StyleBoxFlat" id="tab_selected"]
 content_margin_left = 12.0
@@ -286,39 +319,6 @@ corner_radius_top_right = 4
 corner_radius_bottom_right = 4
 corner_radius_bottom_left = 4
 
-[sub_resource type="StyleBoxFlat" id="sidebar_item_normal"]
-content_margin_left = 14.0
-content_margin_top = 18.0
-content_margin_right = 40.0
-content_margin_bottom = 18.0
-bg_color = Color(0, 0, 0, 0)
-corner_radius_top_left = 30
-corner_radius_top_right = 30
-corner_radius_bottom_right = 30
-corner_radius_bottom_left = 30
-
-[sub_resource type="StyleBoxFlat" id="sidebar_item_hover"]
-content_margin_left = 14.0
-content_margin_top = 18.0
-content_margin_right = 40.0
-content_margin_bottom = 18.0
-bg_color = Color(0.85, 0.85, 0.85, 1)
-corner_radius_top_left = 30
-corner_radius_top_right = 30
-corner_radius_bottom_right = 30
-corner_radius_bottom_left = 30
-
-[sub_resource type="StyleBoxFlat" id="sidebar_item_pressed"]
-content_margin_left = 14.0
-content_margin_top = 18.0
-content_margin_right = 40.0
-content_margin_bottom = 18.0
-bg_color = Color(0.792, 0.784, 0.761, 1)
-corner_radius_top_left = 30
-corner_radius_top_right = 30
-corner_radius_bottom_right = 30
-corner_radius_bottom_left = 30
-
 [resource]
 default_font_size = 13
 BottomBar/base_type = &"PanelContainer"
@@ -346,6 +346,16 @@ CheckButton/colors/font_disabled_color = Color(0.55, 0.55, 0.55, 1)
 CheckButton/colors/font_focus_color = Color(0.13, 0.13, 0.13, 1)
 CheckButton/colors/font_hover_color = Color(0, 0, 0, 1)
 CheckButton/colors/font_pressed_color = Color(0, 0, 0, 1)
+CropOverlay/colors/dim = Color(1, 1, 1, 0.55)
+CropOverlay/colors/line = Color(0.1, 0.1, 0.1, 0.9)
+Filmstrip/colors/accent = Color(0.16, 0.16, 0.8, 1)
+Filmstrip/colors/border = Color(0.792, 0.784, 0.761, 1)
+Filmstrip/colors/caption = Color(0.45, 0.45, 0.45, 1)
+Filmstrip/colors/edited_dot = Color(0.722, 0.471, 0.102, 1)
+Filmstrip/colors/reject_mark = Color(0.973, 0.443, 0.443, 1)
+Filmstrip/colors/strip_bg = Color(0.88, 0.875, 0.86, 1)
+Filmstrip/colors/tile_bg = Color(0.898, 0.891, 0.871, 1)
+Filmstrip/colors/tile_hover = Color(0.76, 0.76, 0.76, 1)
 GroupHeader/base_type = &"Label"
 GroupHeader/colors/font_color = Color(0.45, 0.45, 0.45, 1)
 GroupHeader/font_sizes/font_size = 11
@@ -353,12 +363,20 @@ HScrollBar/styles/grabber = SubResource("scroll_grabber")
 HScrollBar/styles/grabber_highlight = SubResource("scroll_grabber_hl")
 HScrollBar/styles/grabber_pressed = SubResource("scroll_grabber_pressed")
 HScrollBar/styles/scroll = SubResource("scroll_track")
+HSlider/colors/center_fill = Color(0.16, 0.16, 0.8, 1)
 HSlider/styles/grabber_area = SubResource("slider_fill")
 HSlider/styles/grabber_area_highlight = SubResource("slider_fill_hl")
-HSlider/colors/center_fill = Color(0.16, 0.16, 0.8, 1)
 HSlider/styles/slider = SubResource("slider_track")
 Label/colors/font_color = Color(0.13, 0.13, 0.13, 1)
 Label/font_sizes/font_size = 13
+LibraryTile/colors/accent = Color(0.16, 0.16, 0.8, 1)
+LibraryTile/colors/border = Color(0.792, 0.784, 0.761, 1)
+LibraryTile/colors/caption = Color(0.45, 0.45, 0.45, 1)
+LibraryTile/colors/edited_dot = Color(0.722, 0.471, 0.102, 1)
+LibraryTile/colors/reject_dim = Color(0, 0, 0, 0.5)
+LibraryTile/colors/reject_mark = Color(0.973, 0.443, 0.443, 1)
+LibraryTile/colors/tile_bg = Color(0.957, 0.952, 0.937, 1)
+LibraryTile/colors/tile_hover = Color(0.88, 0.88, 0.88, 1)
 LineEdit/colors/caret_color = Color(0.13, 0.13, 0.13, 1)
 LineEdit/colors/font_color = Color(0.13, 0.13, 0.13, 1)
 LineEdit/colors/font_placeholder_color = Color(0.13, 0.13, 0.13, 0.6)
@@ -382,6 +400,14 @@ ProgressBar/colors/font_color = Color(0.13, 0.13, 0.13, 1)
 ProgressBar/styles/background = SubResource("progress_bg")
 ProgressBar/styles/fill = SubResource("progress_fill")
 ScrollContainer/styles/panel = SubResource("canvas_bg")
+SectionHeader/base_type = &"Button"
+SectionHeader/styles/focus = SubResource("btn_focus")
+SectionHeader/styles/hover = SubResource("tab_hovered")
+SectionHeader/styles/hover_pressed = SubResource("tab_hovered")
+SectionHeader/styles/normal = SubResource("tab_disabled")
+SectionHeader/styles/pressed = SubResource("tab_disabled")
+SidePanel/base_type = &"PanelContainer"
+SidePanel/styles/panel = SubResource("panel_side")
 SidebarItem/base_type = &"Button"
 SidebarItem/colors/font_color = Color(0.13, 0.13, 0.13, 1)
 SidebarItem/colors/font_disabled_color = Color(0.55, 0.55, 0.55, 1)
@@ -392,8 +418,6 @@ SidebarItem/styles/focus = SubResource("sidebar_item_normal")
 SidebarItem/styles/hover = SubResource("sidebar_item_hover")
 SidebarItem/styles/normal = SubResource("sidebar_item_normal")
 SidebarItem/styles/pressed = SubResource("sidebar_item_pressed")
-SidePanel/base_type = &"PanelContainer"
-SidePanel/styles/panel = SubResource("panel_side")
 TabBar/colors/font_hovered_color = Color(0.13, 0.13, 0.13, 1)
 TabBar/colors/font_selected_color = Color(0, 0, 0, 1)
 TabBar/colors/font_unselected_color = Color(0.45, 0.45, 0.45, 1)
@@ -412,6 +436,13 @@ TextEdit/colors/selection_color = Color(0.16, 0.16, 0.8, 0.3)
 TextEdit/styles/focus = SubResource("lineedit_focus")
 TextEdit/styles/normal = SubResource("lineedit_normal")
 TextEdit/styles/read_only = SubResource("lineedit_readonly")
+ToneCurve/colors/bg = Color(0.898, 0.891, 0.871, 1)
+ToneCurve/colors/border = Color(0.6, 0.6, 0.6, 1)
+ToneCurve/colors/curve = Color(0.16, 0.16, 0.8, 1)
+ToneCurve/colors/diagonal = Color(0.35, 0.35, 0.35, 0.6)
+ToneCurve/colors/grid = Color(0.6, 0.6, 0.6, 0.5)
+ToneCurve/colors/point = Color(0.15, 0.15, 0.15, 1)
+ToneCurve/colors/point_selected = Color(0.16, 0.16, 0.8, 1)
 TopBar/base_type = &"PanelContainer"
 TopBar/styles/panel = SubResource("panel_topbar")
 Tree/colors/font_color = Color(0.13, 0.13, 0.13, 1)
@@ -428,28 +459,3 @@ VScrollBar/styles/scroll = SubResource("scroll_track")
 VSlider/styles/grabber_area = SubResource("slider_fill")
 VSlider/styles/grabber_area_highlight = SubResource("slider_fill_hl")
 VSlider/styles/slider = SubResource("slider_track")
-ToneCurve/colors/bg = Color(0.898, 0.891, 0.871, 1)
-ToneCurve/colors/border = Color(0.6, 0.6, 0.6, 1)
-ToneCurve/colors/grid = Color(0.6, 0.6, 0.6, 0.5)
-ToneCurve/colors/diagonal = Color(0.35, 0.35, 0.35, 0.6)
-ToneCurve/colors/curve = Color(0.16, 0.16, 0.8, 1)
-ToneCurve/colors/point = Color(0.15, 0.15, 0.15, 1)
-ToneCurve/colors/point_selected = Color(0.16, 0.16, 0.8, 1)
-LibraryTile/colors/tile_bg = Color(0.957, 0.952, 0.937, 1)
-LibraryTile/colors/tile_hover = Color(0.88, 0.88, 0.88, 1)
-LibraryTile/colors/border = Color(0.792, 0.784, 0.761, 1)
-LibraryTile/colors/accent = Color(0.16, 0.16, 0.8, 1)
-LibraryTile/colors/caption = Color(0.45, 0.45, 0.45, 1)
-LibraryTile/colors/edited_dot = Color(0.722, 0.471, 0.102, 1)
-LibraryTile/colors/reject_dim = Color(0.0, 0.0, 0.0, 0.5)
-LibraryTile/colors/reject_mark = Color(0.973, 0.443, 0.443, 1)
-Filmstrip/colors/strip_bg = Color(0.88, 0.875, 0.86, 1)
-Filmstrip/colors/tile_bg = Color(0.898, 0.891, 0.871, 1)
-Filmstrip/colors/tile_hover = Color(0.76, 0.76, 0.76, 1)
-Filmstrip/colors/border = Color(0.792, 0.784, 0.761, 1)
-Filmstrip/colors/accent = Color(0.16, 0.16, 0.8, 1)
-Filmstrip/colors/caption = Color(0.45, 0.45, 0.45, 1)
-Filmstrip/colors/edited_dot = Color(0.722, 0.471, 0.102, 1)
-Filmstrip/colors/reject_mark = Color(0.973, 0.443, 0.443, 1)
-CropOverlay/colors/line = Color(0.1, 0.1, 0.1, 0.9)
-CropOverlay/colors/dim = Color(1, 1, 1, 0.55)
