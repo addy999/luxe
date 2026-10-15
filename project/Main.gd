@@ -22,6 +22,10 @@ extends Control
 @onready var whites_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/WhitesRow/WhitesValueLabel
 @onready var dehaze_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/DehazeRow/DehazeSlider
 @onready var dehaze_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/DehazeRow/DehazeValueLabel
+@onready var sharpening_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/SharpeningRow/SharpeningSlider
+@onready var sharpening_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/SharpeningRow/SharpeningValueLabel
+@onready var noise_reduction_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/NoiseReductionRow/NoiseReductionSlider
+@onready var noise_reduction_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/NoiseReductionRow/NoiseReductionValueLabel
 @onready var saturation_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/SaturationRow/SaturationSlider
 @onready var saturation_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/SaturationRow/SaturationValueLabel
 @onready var vibrance_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/VibranceRow/VibranceSlider
@@ -161,6 +165,8 @@ var _params: Dictionary = {
 	"blacks": 0.0,
 	"whites": 0.0,
 	"dehaze": 0.0,
+	"sharpening": 0.0,
+	"denoise": 0.0,
 	"saturation": 25.0,
 	"desaturation": 0.0,
 	"vibrance": 25.0,
@@ -912,6 +918,8 @@ func open_photo(path: String) -> bool:
 		"blacks": 0.0,
 		"whites": 0.0,
 		"dehaze": 0.0,
+		"sharpening": 0.0,
+		"denoise": 0.0,
 		"saturation": _map_offset_to_module("saturation", 0.0),
 		"desaturation": 0.0,
 		"vibrance": _map_offset_to_module("vibrance", 0.0),
@@ -1066,6 +1074,14 @@ func _apply_params_to_ui(p: Dictionary) -> void:
 	dehaze_slider.set_value_no_signal(p["dehaze"])
 	dehaze_value_label.text = "%.2f" % p["dehaze"]
 
+	_params["sharpening"] = p["sharpening"]
+	sharpening_slider.set_value_no_signal(p["sharpening"])
+	sharpening_value_label.text = "%d" % roundi(p["sharpening"])
+
+	_params["denoise"] = p["denoise"]
+	noise_reduction_slider.set_value_no_signal(p["denoise"])
+	noise_reduction_value_label.text = "%d" % roundi(p["denoise"])
+
 	# saturation/desaturation are two _params keys driven by one slider: a
 	# positive offset is saturation above its module default, a negative offset
 	# (saturation pinned to default, desaturation > 0) reads back as negative.
@@ -1137,6 +1153,18 @@ func _on_whites_slider_value_changed(value: float) -> void:
 func _on_dehaze_slider_value_changed(value: float) -> void:
 	dehaze_value_label.text = "%.2f" % value
 	_params["dehaze"] = value
+	_request_render()
+
+
+func _on_sharpening_slider_value_changed(value: float) -> void:
+	sharpening_value_label.text = "%d" % roundi(value)
+	_params["sharpening"] = value
+	_request_render()
+
+
+func _on_noise_reduction_slider_value_changed(value: float) -> void:
+	noise_reduction_value_label.text = "%d" % roundi(value)
+	_params["denoise"] = value
 	_request_render()
 
 
@@ -1293,6 +1321,8 @@ func _apply_mono_value_label_font() -> void:
 		blacks_value_label,
 		whites_value_label,
 		dehaze_value_label,
+		sharpening_value_label,
+		noise_reduction_value_label,
 		saturation_value_label,
 		vibrance_value_label,
 		white_balance_value_label,
@@ -1309,6 +1339,8 @@ func _setup_reset_buttons() -> void:
 	_add_slider_reset(shadows_slider, 0.0)
 	_add_slider_reset(blacks_slider, 0.0)
 	_add_slider_reset(whites_slider, 0.0)
+	_add_slider_reset(sharpening_slider, 0.0)
+	_add_slider_reset(noise_reduction_slider, 0.0)
 	_add_slider_reset(saturation_slider, 0.0)
 	_add_slider_reset(vibrance_slider, 0.0)
 
@@ -1439,6 +1471,12 @@ func _apply_params_to_backend() -> void:
 		backend.set_whites(_params["whites"])
 	if _params_differ("dehaze"):
 		backend.set_dehaze(_params["dehaze"])
+	# Guarded so the app doesn't crash against an older backend binary that
+	# predates these setters.
+	if _params_differ("sharpening") and backend.has_method("set_sharpening"):
+		backend.set_sharpening(_params["sharpening"])
+	if _params_differ("denoise") and backend.has_method("set_denoise"):
+		backend.set_denoise(_params["denoise"])
 	if _params_differ("saturation"):
 		backend.set_saturation(_params["saturation"])
 	if _params_differ("desaturation"):

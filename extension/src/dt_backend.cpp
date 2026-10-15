@@ -66,6 +66,8 @@ void DtBackend::_bind_methods() {
   ClassDB::bind_method(D_METHOD("set_desaturation", "amount"), &DtBackend::set_desaturation);
   ClassDB::bind_method(D_METHOD("set_dehaze", "value"), &DtBackend::set_dehaze);
   ClassDB::bind_method(D_METHOD("set_vibrance", "value"), &DtBackend::set_vibrance);
+  ClassDB::bind_method(D_METHOD("set_sharpening", "value"), &DtBackend::set_sharpening);
+  ClassDB::bind_method(D_METHOD("set_denoise", "value"), &DtBackend::set_denoise);
   ClassDB::bind_method(D_METHOD("set_tonecurve", "points"), &DtBackend::set_tonecurve);
   ClassDB::bind_method(D_METHOD("set_crop", "left", "top", "right", "bottom"), &DtBackend::set_crop);
   ClassDB::bind_method(D_METHOD("set_orientation", "quarter_turns"), &DtBackend::set_orientation);
@@ -630,6 +632,8 @@ bool DtBackend::load_image(String path) {
   channelmixer_rgb_module = nullptr;
   clipping_module = nullptr;
   flip_module = nullptr;
+  sharpen_module = nullptr;
+  nlmeans_module = nullptr;
   _dehaze_ambient = 0.0f;
   dehaze_value = 0.0f;
   wb_capture_load_state();
@@ -862,6 +866,65 @@ void DtBackend::set_vibrance(float value) {
 
   dt_dev_add_history_item_ext(&dev, vibrance_module, TRUE, TRUE);
   note_pipe_change(vibrance_module);
+}
+
+void DtBackend::set_sharpening(float value) {
+  if(!image_loaded) {
+    UtilityFunctions::printerr("DtBackend::set_sharpening: no image loaded");
+    return;
+  }
+
+  if(value < 0.0f) value = 0.0f;
+  if(value > 100.0f) value = 100.0f;
+
+  if(!sharpen_module) {
+    sharpen_module = dt_iop_get_module_from_list(dev.iop, "sharpen");
+    if(!sharpen_module) {
+      UtilityFunctions::printerr("DtBackend::set_sharpening: could not find \"sharpen\" module in dev.iop");
+      return;
+    }
+  }
+
+  // Ramp BOTH amount (USM halo contrast, $MAX 2.0) and radius (halo size,
+  // $DEFAULT 2.0, $MAX 99.0): amount alone pinned at 2.0 is only a mild sharpen,
+  // so radius scales up to 8 for a punchy max. threshold keeps its default.
+  // amount 0 = no effect, so value 0 disables the module.
+  const float sharp_frac = value / 100.0f;
+  if(!dt_iop_set_float(sharpen_module, "amount", sharp_frac * 2.0f)) return;
+  if(!dt_iop_set_float(sharpen_module, "radius", 1.0f + sharp_frac * 7.0f)) return;
+  sharpen_module->enabled = (value != 0.0f) ? TRUE : FALSE;
+
+  dt_dev_add_history_item_ext(&dev, sharpen_module, TRUE, TRUE);
+  note_pipe_change(sharpen_module);
+}
+
+void DtBackend::set_denoise(float value) {
+  if(!image_loaded) {
+    UtilityFunctions::printerr("DtBackend::set_denoise: no image loaded");
+    return;
+  }
+
+  if(value < 0.0f) value = 0.0f;
+  if(value > 100.0f) value = 100.0f;
+
+  if(!nlmeans_module) {
+    nlmeans_module = dt_iop_get_module_from_list(dev.iop, "nlmeans");
+    if(!nlmeans_module) {
+      UtilityFunctions::printerr("DtBackend::set_denoise: could not find \"nlmeans\" module in dev.iop");
+      return;
+    }
+  }
+
+  // nlmeans strength drives sharpness = 3000/(1+strength): higher = more
+  // smoothing. darktable's GUI soft-maxes the slider at 100, but the hard $MAX
+  // is 100000, so map UI 0..100 onto strength 0..400 for a visible max (100 was
+  // too subtle). radius/luma/chroma keep their defaults. strength 0 = no
+  // denoising, so value 0 disables the module.
+  if(!dt_iop_set_float(nlmeans_module, "strength", value * 4.0f)) return;
+  nlmeans_module->enabled = (value != 0.0f) ? TRUE : FALSE;
+
+  dt_dev_add_history_item_ext(&dev, nlmeans_module, TRUE, TRUE);
+  note_pipe_change(nlmeans_module);
 }
 
 void DtBackend::set_dehaze(float value) {
@@ -1799,6 +1862,8 @@ void DtBackend::cleanup() {
     channelmixer_rgb_module = nullptr;
     clipping_module = nullptr;
     flip_module = nullptr;
+    sharpen_module = nullptr;
+    nlmeans_module = nullptr;
     _dehaze_ambient = 0.0f;
     dehaze_value = 0.0f;
     wb_reset_state();
@@ -1844,6 +1909,8 @@ void DtBackend::unload_image() {
   channelmixer_rgb_module = nullptr;
   clipping_module = nullptr;
   flip_module = nullptr;
+  sharpen_module = nullptr;
+  nlmeans_module = nullptr;
   _dehaze_ambient = 0.0f;
   dehaze_value = 0.0f;
   wb_reset_state();

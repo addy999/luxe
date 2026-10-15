@@ -5,6 +5,7 @@ const ModeBarScript := preload("res://WbModeBar.gd")
 const KEYS := [
 	"Exposure", "Contrast", "Highlights", "Shadows", "Whites", "Blacks",
 	"WhiteBalance", "Tint", "Vibrance", "Saturation", "Dehaze",
+	"Sharpening", "NoiseReduction",
 ]
 var _failed: bool = false
 var _changes: int = 0
@@ -70,10 +71,12 @@ func _run() -> void:
 	var curve = panel.get_node("ToneCurveSection")
 	var color = panel.get_node("ColorSection")
 	var effects = panel.get_node("EffectsSection")
+	var detail = panel.get_node("DetailSection")
 	_check(basic.content.get_child_count() == 6, "Basic should contain six controls")
 	_check(color.content.get_child_count() == 5, "Color should contain the mode bar and four sliders")
 	_check(color.content.get_child(0) == mode_bar, "Mode bar leads the Color section")
 	_check(effects.content.get_child_count() == 1, "Effects should contain Dehaze")
+	_check(detail.content.get_child_count() == 2, "Detail should contain Sharpening and Noise Reduction")
 	for child in effects.get_children():
 		_check(not child is HSeparator, "No divider should precede quick settings")
 	_check(not curve.content.visible, "Tone Curve should start collapsed")

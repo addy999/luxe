@@ -96,6 +96,8 @@ private:
   dt_iop_module_t *channelmixer_rgb_module = nullptr;
   dt_iop_module_t *clipping_module = nullptr;
   dt_iop_module_t *flip_module = nullptr;
+  dt_iop_module_t *sharpen_module = nullptr;
+  dt_iop_module_t *nlmeans_module = nullptr;
 
   // --- White balance (channelmixerrgb) state -------------------------------
   // channelmixerrgb params/enabled flag captured by load_image(); empty = none.
@@ -180,6 +182,12 @@ public:
   // Cached ambient A (linear luma 0..1); 0 = not yet measured. Mutable: _apply_dehaze is const.
   mutable float _dehaze_ambient = 0.0f;
   void set_vibrance(float value);
+  // Unsharp-mask (sharpen module) strength; UI value 0..100 maps to the module's
+  // amount 0..2.0. 0 disables the module (neutral).
+  void set_sharpening(float value);
+  // Non-local-means (nlmeans module) denoise strength; UI value 0..100 maps to
+  // the module's strength 0..100. 0 disables the module (neutral).
+  void set_denoise(float value);
   // Kelvin, clamped to _TEMP_MIN/_MAX (docs F.4).
   void set_white_balance_temperature(float kelvin);
   // As-shot Kelvin (from the camera's real illuminant chromaticity) for seeding

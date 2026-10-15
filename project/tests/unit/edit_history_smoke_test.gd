@@ -44,6 +44,8 @@ func _sample_params() -> Dictionary:
 		"blacks": -0.3,
 		"whites": 0.4,
 		"dehaze": 0.2,
+		"sharpening": 25.0,
+		"denoise": 12.0,
 		"saturation": 60.0,
 		"desaturation": 0.0,
 		"vibrance": 40.0,
@@ -73,7 +75,8 @@ func _test_round_trip() -> void:
 		return
 	# Scalar keys.
 	for k in ["exposure", "contrast", "highlights", "shadows", "blacks", "whites",
-			"dehaze", "saturation", "desaturation", "vibrance", "wb_temperature", "wb_tint"]:
+			"dehaze", "sharpening", "denoise", "saturation", "desaturation", "vibrance",
+			"wb_temperature", "wb_tint"]:
 		if not is_equal_approx(float(loaded[k]), float(params[k])):
 			_die("key %s round-trip mismatch: %s vs %s" % [k, loaded[k], params[k]])
 			return

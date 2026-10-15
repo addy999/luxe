@@ -60,6 +60,8 @@ The result is a small, fast editor with a serious processing engine underneath.
 - Vibrance
 - Tone curve
 - Dehaze
+- Sharpening
+- Noise reduction
 - White balance
 - Crop
 - Rotate (90° left/right)

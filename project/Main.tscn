@@ -353,6 +353,54 @@ layout_mode = 2
 text = "0.00"
 horizontal_alignment = 2
 
+[node name="SharpeningLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox"]
+layout_mode = 2
+text = "Sharpening"
+
+[node name="SharpeningRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="SharpeningSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/SharpeningRow"]
+script = ExtResource("6_centerslider")
+amber_accent = true
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 4
+min_value = 0.0
+max_value = 100.0
+step = 1.0
+
+[node name="SharpeningValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/SharpeningRow"]
+custom_minimum_size = Vector2(52, 0)
+layout_mode = 2
+text = "0"
+horizontal_alignment = 2
+
+[node name="NoiseReductionLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox"]
+layout_mode = 2
+text = "Noise Reduction"
+
+[node name="NoiseReductionRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="NoiseReductionSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/NoiseReductionRow"]
+script = ExtResource("6_centerslider")
+amber_accent = true
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 4
+min_value = 0.0
+max_value = 100.0
+step = 1.0
+
+[node name="NoiseReductionValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/NoiseReductionRow"]
+custom_minimum_size = Vector2(52, 0)
+layout_mode = 2
+text = "0"
+horizontal_alignment = 2
+
 [node name="ToneCurveLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=1464777149]
 layout_mode = 2
 text = "Tone Curve"
@@ -595,6 +643,8 @@ use_native_dialog = true
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/BlacksRow/BlacksSlider" to="." method="_on_blacks_slider_value_changed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/WhitesRow/WhitesSlider" to="." method="_on_whites_slider_value_changed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/DehazeRow/DehazeSlider" to="." method="_on_dehaze_slider_value_changed"]
+[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/SharpeningRow/SharpeningSlider" to="." method="_on_sharpening_slider_value_changed"]
+[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/NoiseReductionRow/NoiseReductionSlider" to="." method="_on_noise_reduction_slider_value_changed"]
 [connection signal="curve_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ToneCurveEditor" to="." method="_on_tone_curve_changed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/SaturationRow/SaturationSlider" to="." method="_on_saturation_slider_value_changed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/VibranceRow/VibranceSlider" to="." method="_on_vibrance_slider_value_changed"]
