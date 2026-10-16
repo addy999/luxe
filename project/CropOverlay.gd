@@ -11,6 +11,8 @@ const _HANDLE_GRAB: float = 22.0
 const _HANDLE_OUTER: float = 24.0
 const _CORNER_GRAB: float = 26.0
 const _GRID: int = 3               # rule-of-thirds grid lines per axis
+const _GRID_WIDTH: float = 2.0     # grid/frame line thickness, px
+const _HANDLE_RADIUS: float = 10.0 # corner handle circle radius, px
 
 # Hit-test ids.
 enum Handle { NONE, MOVE, TL, TR, BL, BR, TOP, BOTTOM, LEFT, RIGHT }
@@ -114,20 +116,19 @@ func _draw() -> void:
 	draw_rect(Rect2(0, box.position.y, box.position.x, box.size.y), _dim_color)
 	draw_rect(Rect2(box.end.x, box.position.y, s.x - box.end.x, box.size.y), _dim_color)
 	# Frame + rule-of-thirds grid.
-	draw_rect(box, _line_color, false, 1.5)
+	draw_rect(box, _line_color, false, _GRID_WIDTH)
 	for i in range(1, _GRID):
 		var fx := box.position.x + box.size.x * float(i) / float(_GRID)
 		var fy := box.position.y + box.size.y * float(i) / float(_GRID)
-		draw_line(Vector2(fx, box.position.y), Vector2(fx, box.end.y), _line_color, 0.75)
-		draw_line(Vector2(box.position.x, fy), Vector2(box.end.x, fy), _line_color, 0.75)
-	# Corner handles, clamped in (half outside the box so a flush crop stays grabbable).
-	var handle_span: Vector2 = Vector2(maxf(size.x - 8.0, 0.0), maxf(size.y - 8.0, 0.0))
+		draw_line(Vector2(fx, box.position.y), Vector2(fx, box.end.y), _line_color, _GRID_WIDTH)
+		draw_line(Vector2(box.position.x, fy), Vector2(box.end.x, fy), _line_color, _GRID_WIDTH)
+	# Corner handles: white circles, clamped so a flush crop stays fully visible.
+	var handle_min: Vector2 = Vector2.ONE * _HANDLE_RADIUS
+	var handle_max: Vector2 = size - handle_min
 
 	for pos: Vector2 in [box.position, Vector2(box.end.x, box.position.y),
 			Vector2(box.position.x, box.end.y), box.end]:
-		var handle: Rect2 = Rect2(pos - Vector2.ONE * 4.0, Vector2(8, 8))
-		handle.position = handle.position.clamp(Vector2.ZERO, handle_span)
-		draw_rect(handle, _line_color, true)
+		draw_circle(pos.clamp(handle_min, handle_max), _HANDLE_RADIUS, Color.WHITE)
 
 
 # Normalized rect -> screen px rect within this overlay.
@@ -205,40 +206,27 @@ func _get_cursor_shape(p: Vector2) -> int:
 func _apply_drag(mouse: Vector2) -> void:
 	var delta := (mouse - _drag_start_mouse) / size
 	var r := _drag_start_rect
-	match _drag:
-		Handle.MOVE:
-			var off := delta
-			off.x = clampf(off.x, -r.position.x, 1.0 - r.end.x)
-			off.y = clampf(off.y, -r.position.y, 1.0 - r.end.y)
-			_rect = Rect2(r.position + off, r.size)
-		Handle.LEFT:
-			r.position.x = clampf(r.position.x + delta.x, 0.0, r.end.x - _MIN_SIZE)
-			_rect = r
-		Handle.RIGHT:
-			r.end.x = clampf(r.end.x + delta.x, r.position.x + _MIN_SIZE, 1.0)
-			_rect = r
-		Handle.TOP:
-			r.position.y = clampf(r.position.y + delta.y, 0.0, r.end.y - _MIN_SIZE)
-			_rect = r
-		Handle.BOTTOM:
-			r.end.y = clampf(r.end.y + delta.y, r.position.y + _MIN_SIZE, 1.0)
-			_rect = r
-		Handle.TL:
-			r.position.x = clampf(r.position.x + delta.x, 0.0, r.end.x - _MIN_SIZE)
-			r.position.y = clampf(r.position.y + delta.y, 0.0, r.end.y - _MIN_SIZE)
-			_rect = r
-		Handle.TR:
-			r.end.x = clampf(r.end.x + delta.x, r.position.x + _MIN_SIZE, 1.0)
-			r.position.y = clampf(r.position.y + delta.y, 0.0, r.end.y - _MIN_SIZE)
-			_rect = r
-		Handle.BL:
-			r.position.x = clampf(r.position.x + delta.x, 0.0, r.end.x - _MIN_SIZE)
-			r.end.y = clampf(r.end.y + delta.y, r.position.y + _MIN_SIZE, 1.0)
-			_rect = r
-		Handle.BR:
-			r.end.x = clampf(r.end.x + delta.x, r.position.x + _MIN_SIZE, 1.0)
-			r.end.y = clampf(r.end.y + delta.y, r.position.y + _MIN_SIZE, 1.0)
-			_rect = r
-		_:
-			pass
+	if _drag == Handle.MOVE:
+		var off := delta
+		off.x = clampf(off.x, -r.position.x, 1.0 - r.end.x)
+		off.y = clampf(off.y, -r.position.y, 1.0 - r.end.y)
+		_rect = Rect2(r.position + off, r.size)
+		queue_redraw()
+		return
+	# Edges as independent scalars: Rect2.position mutates in place (end moves
+	# with it, size unchanged) while Rect2.end mutates size and keeps position
+	# fixed, so left/top and right/bottom need symmetric clamping done by hand.
+	var left := r.position.x
+	var top := r.position.y
+	var right := r.end.x
+	var bottom := r.end.y
+	if _drag in [Handle.LEFT, Handle.TL, Handle.BL]:
+		left = clampf(left + delta.x, 0.0, right - _MIN_SIZE)
+	if _drag in [Handle.RIGHT, Handle.TR, Handle.BR]:
+		right = clampf(right + delta.x, left + _MIN_SIZE, 1.0)
+	if _drag in [Handle.TOP, Handle.TL, Handle.TR]:
+		top = clampf(top + delta.y, 0.0, bottom - _MIN_SIZE)
+	if _drag in [Handle.BOTTOM, Handle.BL, Handle.BR]:
+		bottom = clampf(bottom + delta.y, top + _MIN_SIZE, 1.0)
+	_rect = Rect2(Vector2(left, top), Vector2(right - left, bottom - top))
 	queue_redraw()

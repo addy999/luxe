@@ -1935,12 +1935,14 @@ func _open_crop_overlay() -> void:
 	if _crop_overlay != null:
 		return
 	_crop_overlay = CropOverlayScript.new()
-	_crop_overlay.apply_theme(ThemeManager.is_dark)
 	# Lift the committed crop so the overlay edits against the whole image.
 	_crop_before_edit = _params["crop"]
 	_params["crop"] = Rect2(0, 0, 1, 1)
 	_request_render()
 	_crop_overlay.open(texture_rect, _crop_before_edit)
+	# apply_theme() needs an ancestor theme to resolve "CropOverlay" colors
+	# against, so it must run after open() adds the node to the tree.
+	_crop_overlay.apply_theme(ThemeManager.is_dark)
 	var overlay: Control = _crop_overlay
 	_crop_bar = CropOverlayScript.build_bar(scroll_container)
 	var cancel_btn := Button.new()
