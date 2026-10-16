@@ -526,6 +526,7 @@ func _refresh_tiles() -> void:
 	if _visible.is_empty():
 		for tile in _pool:
 			tile.visible = false
+			tile.clear_texture()
 		return
 
 	var r: Vector2i = _visible_index_range()
@@ -561,6 +562,7 @@ func _refresh_tiles() -> void:
 
 	for i in range(need, _pool.size()):
 		_pool[i].visible = false
+		_pool[i].clear_texture()
 
 
 func _on_item_clicked(index: int) -> void:

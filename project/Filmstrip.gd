@@ -350,13 +350,17 @@ func _ensure_pool(needed: int) -> void:
 		_content.add_child(tile)
 		_pool.append(tile)
 	for i in _pool.size():
-		_pool[i].visible = i < needed
+		var tile: FilmstripTile = _pool[i]
+		tile.visible = i < needed
+		if not tile.visible:
+			tile.clear_texture()
 
 
 func _refresh_tiles() -> void:
 	if source == null or not open or _content == null:
 		for tile in _pool:
 			tile.visible = false
+			tile.clear_texture()
 		return
 	var rng: Vector2i = _visible_range()
 	_ensure_pool(maxi(0, rng.y - rng.x + 1))
@@ -432,6 +436,11 @@ class FilmstripTile extends Control:
 		custom_minimum_size = Vector2(w, h)
 		size = custom_minimum_size
 		queue_redraw()
+
+	# Drops the texture ref so a recycled/hidden tile doesn't keep a photo's
+	# decoded texture alive past its eviction from the source cache.
+	func clear_texture() -> void:
+		_texture = null
 
 	func bind(index: int, path: String) -> void:
 		# No early-return on index/path: refresh() rebinds unchanged tiles too,
