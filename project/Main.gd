@@ -1784,12 +1784,16 @@ func _auto_compute_scale() -> float:
 
 
 # Recomputes _edit_scale from current zoom when Auto is active. Returns true
-# if _edit_scale changed by at least _EDIT_SCALE_EPSILON.
+# if _edit_scale changed by at least _EDIT_SCALE_EPSILON, or if the change
+# crosses the fast/final-quality cutoff (a qualitative change too small for
+# the epsilon to catch, since _auto_compute_scale() clamps at exactly 1.0 and
+# stops moving once display zoom clears _AUTO_FULL_ZOOM).
 func _update_auto_edit_scale() -> bool:
 	if not _is_auto_mode() or not _image_loaded:
 		return false
 	var new_scale: float = _auto_compute_scale()
-	if absf(new_scale - _edit_scale) < _EDIT_SCALE_EPSILON:
+	var crosses_final_quality: bool = (new_scale >= 0.999) != (_edit_scale >= 0.999)
+	if not crosses_final_quality and absf(new_scale - _edit_scale) < _EDIT_SCALE_EPSILON:
 		return false
 	_edit_scale = new_scale
 	return true
