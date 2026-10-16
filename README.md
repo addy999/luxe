@@ -52,6 +52,10 @@ The result is a small, fast editor with a serious processing engine underneath.
 - Non-destructive edits: your adjustments save automatically and come back the
   next time you open the photo, even after restarting the app (edited photos are
   flagged with a yellow dot in the Library grid)
+- Filmstrip: a collapsible, resizable strip of thumbnails below the editor for
+  quickly jumping between photos in the current folder
+- Before/after compare: hold Space (or the Before button) to see the photo as
+  shot, without your edits
 - Exposure
 - Contrast
 - Highlights
@@ -81,6 +85,12 @@ The UI also gives you:
 - **Light and dark themes**
 
 ## Progress
+
+**v0.1.5** -- Navigator, filmstrip, before/after compare, sharpening & noise reduction
+
+<p align="center">
+  <img src="docs/img/v0.1.5.png" width="720" alt="Luxe v0.1.5">
+</p>
 
 **v0.1.4** -- Library view, non-destructive persistent edits, reject/approve workflow, Windows support
 
