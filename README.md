@@ -35,6 +35,8 @@ Under the hood it is darktable. Luxe runs darktable's core library (`lib_darktab
 
 The result is a small, fast editor with a serious processing engine underneath.
 
+<p align="center"><img src="project/assets/memory_comparison.svg" width="620" alt="Memory to open the same RAW photo: darktable 1.43 GB vs Luxe 530 MB"></p>
+
 > Available for macOS (Apple Silicon), Linux (x86_64), and Windows (x86_64).
 
 ## Features
