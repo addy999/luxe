@@ -146,6 +146,11 @@ private:
   PackedByteArray render_pipe_roi(dt_dev_pixelpipe_t *p, int native_w, int native_h,
                                   int viewport_w, int viewport_h, double scale,
                                   double center_x, double center_y);
+  // Reused across render_pipe_roi() calls (one per pan/zoom/slider frame) so a
+  // stable viewport size doesn't re-malloc every frame; PackedByteArray is
+  // copy-on-write, so this only skips the allocation once the caller has
+  // dropped its reference to the previous frame's bytes.
+  PackedByteArray render_scratch_;
 
   static bool compute_dt_dirs(std::string &datadir, std::string &moduledir);
 

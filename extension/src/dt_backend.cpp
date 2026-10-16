@@ -1619,15 +1619,13 @@ bool DtBackend::refresh_preview_dimensions() {
 PackedByteArray DtBackend::render_pipe_roi(dt_dev_pixelpipe_t *p, int native_w, int native_h,
                                            int viewport_w, int viewport_h, double scale,
                                            double center_x, double center_y) {
-  PackedByteArray out;
-
   if(viewport_w <= 0 || viewport_h <= 0) {
     UtilityFunctions::printerr("DtBackend::render_pipe_roi: invalid viewport_w/viewport_h");
-    return out;
+    return PackedByteArray();
   }
   if(scale <= 0.0) {
     UtilityFunctions::printerr("DtBackend::render_pipe_roi: invalid scale");
-    return out;
+    return PackedByteArray();
   }
 
   const int pipe_w = std::max(1, (int)std::lround(scale * native_w));
@@ -1651,14 +1649,14 @@ PackedByteArray DtBackend::render_pipe_roi(dt_dev_pixelpipe_t *p, int native_w, 
   if(!backbuf) {
     dt_pthread_mutex_unlock(&p->backbuf_mutex);
     UtilityFunctions::printerr("DtBackend::render_pipe_roi: pipe.backbuf is NULL (no valid output buffer)");
-    return out;
+    return PackedByteArray();
   }
 
   const int64_t pixel_count = (int64_t)wd * (int64_t)ht;
   const int64_t byte_count = pixel_count * 4;
 
-  out.resize(byte_count);
-  uint8_t *dst = out.ptrw();
+  if(render_scratch_.size() != byte_count) render_scratch_.resize(byte_count);
+  uint8_t *dst = render_scratch_.ptrw();
 
 #ifdef _OPENMP
 #pragma omp parallel for default(firstprivate) schedule(static)
@@ -1679,7 +1677,7 @@ PackedByteArray DtBackend::render_pipe_roi(dt_dev_pixelpipe_t *p, int native_w, 
   processed_width = wd;
   processed_height = ht;
 
-  return out;
+  return render_scratch_;
 }
 
 PackedByteArray DtBackend::render_view(int viewport_w, int viewport_h, double scale,
