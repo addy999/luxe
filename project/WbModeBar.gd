@@ -15,7 +15,7 @@ const SEGMENTS: Array = [
 	["AutoButton", "Auto", ColorWbScript.AUTO, "Estimate white balance from the image"],
 	["CustomButton", "Custom", ColorWbScript.CUSTOM, "Adjust white balance manually"],
 ]
-const SEGMENT_HEIGHT := 28.0
+const SEGMENT_HEIGHT := 42.0
 const CORNER_RADIUS := 10
 const PILL_INSET := 2
 const SEMIBOLD_EMBOLDEN := 0.5
@@ -117,10 +117,10 @@ func _flat(fill: Color, border: Color = Color(0, 0, 0, 0), border_width: int = 0
 	style.set_corner_radius_all(CORNER_RADIUS)
 	style.set_border_width_all(border_width)
 	style.border_color = border
-	style.content_margin_left = 4.0
-	style.content_margin_right = 4.0
-	style.content_margin_top = 2.0
-	style.content_margin_bottom = 2.0
+	style.content_margin_left = 6.0
+	style.content_margin_right = 6.0
+	style.content_margin_top = 3.0
+	style.content_margin_bottom = 3.0
 	return style
 
 

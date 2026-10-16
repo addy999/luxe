@@ -10,10 +10,10 @@ border_width_top = 1
 border_color = Color(0.165, 0.165, 0.188, 1)
 
 [sub_resource type="StyleBoxFlat" id="btn_disabled"]
-content_margin_left = 16.0
-content_margin_top = 6.0
-content_margin_right = 16.0
-content_margin_bottom = 6.0
+content_margin_left = 24.0
+content_margin_top = 9.0
+content_margin_right = 24.0
+content_margin_bottom = 9.0
 bg_color = Color(0.098, 0.098, 0.11, 1)
 border_width_left = 1
 border_width_top = 1
@@ -38,10 +38,10 @@ corner_radius_bottom_right = 6
 corner_radius_bottom_left = 6
 
 [sub_resource type="StyleBoxFlat" id="btn_hover"]
-content_margin_left = 16.0
-content_margin_top = 6.0
-content_margin_right = 16.0
-content_margin_bottom = 6.0
+content_margin_left = 24.0
+content_margin_top = 9.0
+content_margin_right = 24.0
+content_margin_bottom = 9.0
 bg_color = Color(0.149, 0.149, 0.173, 1)
 border_width_left = 1
 border_width_top = 1
@@ -54,10 +54,10 @@ corner_radius_bottom_right = 6
 corner_radius_bottom_left = 6
 
 [sub_resource type="StyleBoxFlat" id="btn_normal"]
-content_margin_left = 16.0
-content_margin_top = 6.0
-content_margin_right = 16.0
-content_margin_bottom = 6.0
+content_margin_left = 24.0
+content_margin_top = 9.0
+content_margin_right = 24.0
+content_margin_bottom = 9.0
 bg_color = Color(0.11, 0.11, 0.125, 1)
 border_width_left = 1
 border_width_top = 1
@@ -70,10 +70,10 @@ corner_radius_bottom_right = 6
 corner_radius_bottom_left = 6
 
 [sub_resource type="StyleBoxFlat" id="btn_pressed"]
-content_margin_left = 16.0
-content_margin_top = 6.0
-content_margin_right = 16.0
-content_margin_bottom = 6.0
+content_margin_left = 24.0
+content_margin_top = 9.0
+content_margin_right = 24.0
+content_margin_bottom = 9.0
 bg_color = Color(0.192, 0.192, 0.22, 1)
 border_width_left = 1
 border_width_top = 1
@@ -332,6 +332,7 @@ Button/font_sizes/font_size = 13
 Button/styles/disabled = SubResource("btn_disabled")
 Button/styles/focus = SubResource("btn_focus")
 Button/styles/hover = SubResource("btn_hover")
+Button/styles/hover_pressed = SubResource("btn_pressed")
 Button/styles/normal = SubResource("btn_normal")
 Button/styles/pressed = SubResource("btn_pressed")
 CheckBox/colors/checkbox_unchecked_color = Color(0.42, 0.42, 0.451, 1)
