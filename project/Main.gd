@@ -919,6 +919,8 @@ func open_photo(path: String) -> bool:
 	_wb_default_temperature = as_shot_temperature
 	var as_shot_tint: float = backend.get_white_balance_tint()
 	_wb_default_tint = as_shot_tint
+	white_balance_slider.queue_redraw()
+	tint_slider.queue_redraw()
 	_resolve_edit_key(path)
 	var defaults: Dictionary = {
 		"exposure": 0.0,
@@ -1316,6 +1318,19 @@ func _add_slider_reset(slider: HSlider, default_value: float) -> void:
 	var btn := _make_reset_button("Reset to default")
 	btn.pressed.connect(func() -> void: slider.value = default_value)
 	slider.get_parent().add_child(btn)
+	_show_reset_when(btn, slider, func() -> bool: return not is_equal_approx(slider.value, default_value))
+
+
+# Hides btn (alpha + no input, layout space kept) while is_changed returns
+# false; re-evaluated on every redraw of watched, which covers
+# set_value_no_signal restores.
+func _show_reset_when(btn: Button, watched: Control, is_changed: Callable) -> void:
+	var refresh := func() -> void:
+		var changed: bool = is_changed.call()
+		btn.modulate.a = 1.0 if changed else 0.0
+		btn.mouse_filter = Control.MOUSE_FILTER_STOP if changed else Control.MOUSE_FILTER_IGNORE
+	watched.draw.connect(refresh)
+	refresh.call()
 
 
 ## Shared monospace font for slider/zoom numeric readouts, so digits align in
@@ -1352,6 +1367,7 @@ func _setup_reset_buttons() -> void:
 	_add_slider_reset(shadows_slider, 0.0)
 	_add_slider_reset(blacks_slider, 0.0)
 	_add_slider_reset(whites_slider, 0.0)
+	_add_slider_reset(dehaze_slider, 0.0)
 	_add_slider_reset(sharpening_slider, 0.0)
 	_add_slider_reset(noise_reduction_slider, 0.0)
 	_add_slider_reset(saturation_slider, 0.0)
@@ -1362,11 +1378,15 @@ func _setup_reset_buttons() -> void:
 	wb_btn.pressed.connect(func() -> void:
 		white_balance_slider.value = _wb_default_temperature)
 	white_balance_slider.get_parent().add_child(wb_btn)
+	_show_reset_when(wb_btn, white_balance_slider, func() -> bool:
+		return not is_equal_approx(white_balance_slider.value, _wb_default_temperature))
 
 	var tint_btn := _make_reset_button("Reset to as-shot tint")
 	tint_btn.pressed.connect(func() -> void:
 		tint_slider.value = _wb_default_tint)
 	tint_slider.get_parent().add_child(tint_btn)
+	_show_reset_when(tint_btn, tint_slider, func() -> bool:
+		return not is_equal_approx(tint_slider.value, _wb_default_tint))
 
 	var tone_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ToneCurveLabel
 	var vbox: Node = tone_label.get_parent()
@@ -1381,6 +1401,9 @@ func _setup_reset_buttons() -> void:
 	var tone_btn := _make_reset_button("Reset tone curve")
 	tone_btn.pressed.connect(func() -> void: tone_curve_editor.reset_to_default())
 	tone_header.add_child(tone_btn)
+	_show_reset_when(tone_btn, tone_curve_editor, func() -> bool:
+		var pts: PackedVector2Array = tone_curve_editor.get_points()
+		return not (pts.size() == 2 and pts[0].is_equal_approx(Vector2(0, 0)) and pts[1].is_equal_approx(Vector2(1, 1))))
 
 
 # Single entry point for every control; coalesces edits into one render at a time.
