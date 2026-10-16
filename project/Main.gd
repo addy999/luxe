@@ -26,6 +26,8 @@ extends Control
 @onready var sharpening_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/SharpeningRow/SharpeningValueLabel
 @onready var noise_reduction_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/NoiseReductionRow/NoiseReductionSlider
 @onready var noise_reduction_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/NoiseReductionRow/NoiseReductionValueLabel
+@onready var straighten_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/StraightenRow/StraightenSlider
+@onready var straighten_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/StraightenRow/StraightenValueLabel
 @onready var saturation_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/SaturationRow/SaturationSlider
 @onready var saturation_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/SaturationRow/SaturationValueLabel
 @onready var vibrance_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/VibranceRow/VibranceSlider
@@ -178,6 +180,7 @@ var _params: Dictionary = {
 	"wb_override": false,
 	"crop": Rect2(0, 0, 1, 1),
 	"orientation": 0,
+	"straighten_angle": 0.0,
 }
 
 # --- Slider offsets vs. module defaults ----------------------------------------
@@ -937,6 +940,7 @@ func open_photo(path: String) -> bool:
 		"wb_override": false,
 		"crop": Rect2(0, 0, 1, 1),
 		"orientation": 0,
+		"straighten_angle": 0.0,
 	}
 	var saved: Dictionary = EditStore.load(_edit_key) if _edit_key != "" else {}
 	# Merge over defaults so a record missing a key (older schema) still gets a
@@ -1116,6 +1120,10 @@ func _apply_params_to_ui(p: Dictionary) -> void:
 	_params["crop"] = p["crop"]
 
 	_params["orientation"] = int(p["orientation"])
+
+	_params["straighten_angle"] = p["straighten_angle"]
+	straighten_slider.set_value_no_signal(p["straighten_angle"])
+	straighten_value_label.text = "%.1f°" % p["straighten_angle"]
 
 
 func _on_exposure_slider_value_changed(value: float) -> void:
@@ -1327,6 +1335,7 @@ func _apply_mono_value_label_font() -> void:
 		dehaze_value_label,
 		sharpening_value_label,
 		noise_reduction_value_label,
+		straighten_value_label,
 		saturation_value_label,
 		vibrance_value_label,
 		white_balance_value_label,
@@ -1347,6 +1356,7 @@ func _setup_reset_buttons() -> void:
 	_add_slider_reset(noise_reduction_slider, 0.0)
 	_add_slider_reset(saturation_slider, 0.0)
 	_add_slider_reset(vibrance_slider, 0.0)
+	_add_slider_reset(straighten_slider, 0.0)
 
 	var wb_btn := _make_reset_button("Reset to as-shot white balance")
 	wb_btn.pressed.connect(func() -> void:
@@ -1497,6 +1507,8 @@ func _apply_params_to_backend() -> void:
 	# guarded so the app doesn't crash against an older binary.
 	if _params_differ("orientation") and backend.has_method("set_orientation"):
 		backend.set_orientation(_params["orientation"])
+	if _params_differ("straighten_angle") and backend.has_method("set_straighten_angle"):
+		backend.set_straighten_angle(_params["straighten_angle"])
 	_snapshot_applied_params()
 
 
@@ -1982,6 +1994,18 @@ func _on_crop_overlay_canceled() -> void:
 	_request_render()
 
 
+# --- Straighten --------------------------------------------------------------
+# A plain persistent slider like Dehaze/Sharpening, not a modal tool: darktable's
+# clipping module auto-shrinks cx/cy/cw/ch toward center whenever angle != 0
+# (crop_auto, left at its introspection default — see
+# DtBackend::set_straighten_angle), so the live render already IS the final,
+# never-out-of-frame result with no extra UI needed to enforce it.
+func _on_straighten_slider_value_changed(value: float) -> void:
+	straighten_value_label.text = "%.1f°" % value
+	_params["straighten_angle"] = value
+	_request_render()
+
+
 # --- Before/after compare ---------------------------------------------------------
 # Swaps texture_rect to a cached as-shot render for the duration of the hold
 # (Space key or the Before button). The cache is built lazily on first hold per
@@ -2022,6 +2046,7 @@ func _render_before_texture() -> void:
 	var neutral: Dictionary = _neutral_params.duplicate(true)
 	neutral["crop"] = edited_params["crop"]
 	neutral["orientation"] = edited_params["orientation"]
+	neutral["straighten_angle"] = edited_params["straighten_angle"]
 
 	_params = neutral
 	_apply_params_to_backend()

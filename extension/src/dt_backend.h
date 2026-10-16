@@ -224,6 +224,11 @@ public:
   Dictionary get_white_balance_roundtrip(float kelvin, float tint);
   // Normalized 0..1 crop EDGES (left, top, right, bottom); full frame disables the module.
   void set_crop(float left, float top, float right, float bottom);
+  // Straighten rotation in degrees, clamped to [-45, 45]; shares the "clipping"
+  // module's `angle` field with set_crop. crop_auto stays at its introspection
+  // default (TRUE) so the module itself shrinks cx/cy/cw/ch toward center to
+  // avoid exposing out-of-frame pixels, matching darktable's own behavior.
+  void set_straighten_angle(float degrees);
   // Non-destructive 90-degree rotation via the `flip` module. quarter_turns 0..3,
   // each unit = 90 deg CLOCKWISE; 0 disables the module (exact identity).
   void set_orientation(int quarter_turns);

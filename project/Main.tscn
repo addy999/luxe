@@ -402,6 +402,30 @@ layout_mode = 2
 text = "0"
 horizontal_alignment = 2
 
+[node name="StraightenLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox"]
+layout_mode = 2
+text = "Straighten"
+
+[node name="StraightenRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="StraightenSlider" type="HSlider" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/StraightenRow"]
+script = ExtResource("6_centerslider")
+amber_accent = true
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 4
+min_value = -45.0
+max_value = 45.0
+step = 0.1
+
+[node name="StraightenValueLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/StraightenRow"]
+custom_minimum_size = Vector2(52, 0)
+layout_mode = 2
+text = "0.0°"
+horizontal_alignment = 2
+
 [node name="ToneCurveLabel" type="Label" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=1464777149]
 layout_mode = 2
 text = "Tone Curve"
@@ -652,6 +676,7 @@ use_native_dialog = true
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/DehazeRow/DehazeSlider" to="." method="_on_dehaze_slider_value_changed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/SharpeningRow/SharpeningSlider" to="." method="_on_sharpening_slider_value_changed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/NoiseReductionRow/NoiseReductionSlider" to="." method="_on_noise_reduction_slider_value_changed"]
+[connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/StraightenRow/StraightenSlider" to="." method="_on_straighten_slider_value_changed"]
 [connection signal="curve_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ToneCurveEditor" to="." method="_on_tone_curve_changed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/SaturationRow/SaturationSlider" to="." method="_on_saturation_slider_value_changed"]
 [connection signal="value_changed" from="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/VibranceRow/VibranceSlider" to="." method="_on_vibrance_slider_value_changed"]

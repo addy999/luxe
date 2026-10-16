@@ -29,7 +29,7 @@ static func build(panel: VBoxContainer) -> void:
 	_move_slider(panel, effects.content, "Dehaze")
 
 	var detail := _section(panel, "Detail", "DETAIL", 4)
-	for key in ["Sharpening", "NoiseReduction"]:
+	for key in ["Sharpening", "NoiseReduction", "Straighten"]:
 		_move_slider(panel, detail.content, key)
 
 	for section in [basic, curve, color]:

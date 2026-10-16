@@ -70,6 +70,7 @@ void DtBackend::_bind_methods() {
   ClassDB::bind_method(D_METHOD("set_denoise", "value"), &DtBackend::set_denoise);
   ClassDB::bind_method(D_METHOD("set_tonecurve", "points"), &DtBackend::set_tonecurve);
   ClassDB::bind_method(D_METHOD("set_crop", "left", "top", "right", "bottom"), &DtBackend::set_crop);
+  ClassDB::bind_method(D_METHOD("set_straighten_angle", "degrees"), &DtBackend::set_straighten_angle);
   ClassDB::bind_method(D_METHOD("set_orientation", "quarter_turns"), &DtBackend::set_orientation);
   ClassDB::bind_method(D_METHOD("set_white_balance_temperature", "kelvin"), &DtBackend::set_white_balance_temperature);
   ClassDB::bind_method(D_METHOD("get_white_balance_temperature"), &DtBackend::get_white_balance_temperature);
@@ -1492,13 +1493,51 @@ void DtBackend::set_crop(float left, float top, float right, float bottom) {
     }
   }
 
+  // Read back the live angle so toggling crop doesn't clobber an independently
+  // set straighten angle's enabled state.
+  const float *angle_p = (const float *)dt_iop_field(clipping_module, "angle");
+  const float current_angle = angle_p ? *angle_p : 0.0f;
+
   if(!dt_iop_set_float(clipping_module, "cx", left)) return;
   if(!dt_iop_set_float(clipping_module, "cy", top)) return;
   if(!dt_iop_set_float(clipping_module, "cw", right)) return;
   if(!dt_iop_set_float(clipping_module, "ch", bottom)) return;
 
   const bool no_crop = (left <= 0.0f && top <= 0.0f && right >= 1.0f && bottom >= 1.0f);
-  clipping_module->enabled = no_crop ? FALSE : TRUE;
+  clipping_module->enabled = (no_crop && current_angle == 0.0f) ? FALSE : TRUE;
+
+  dt_dev_add_history_item_ext(&dev, clipping_module, TRUE, TRUE);
+  note_pipe_change(clipping_module);
+}
+
+void DtBackend::set_straighten_angle(float degrees) {
+  if(!image_loaded) {
+    UtilityFunctions::printerr("DtBackend::set_straighten_angle: no image loaded");
+    return;
+  }
+
+  if(degrees < -45.0f) degrees = -45.0f;
+  if(degrees > 45.0f) degrees = 45.0f;
+
+  if(!clipping_module) {
+    clipping_module = dt_iop_get_module_from_list(dev.iop, "clipping");
+    if(!clipping_module) {
+      UtilityFunctions::printerr("DtBackend::set_straighten_angle: could not find \"clipping\" module in dev.iop");
+      return;
+    }
+  }
+
+  // Read back the live crop edges so setting angle alone (crop untouched)
+  // still computes the correct combined enabled state.
+  const float *cx_p = (const float *)dt_iop_field(clipping_module, "cx");
+  const float *cy_p = (const float *)dt_iop_field(clipping_module, "cy");
+  const float *cw_p = (const float *)dt_iop_field(clipping_module, "cw");
+  const float *ch_p = (const float *)dt_iop_field(clipping_module, "ch");
+  if(!cx_p || !cy_p || !cw_p || !ch_p) return;
+  const bool no_crop = (*cx_p <= 0.0f && *cy_p <= 0.0f && *cw_p >= 1.0f && *ch_p >= 1.0f);
+
+  if(!dt_iop_set_float(clipping_module, "angle", degrees)) return;
+  clipping_module->enabled = (no_crop && degrees == 0.0f) ? FALSE : TRUE;
 
   dt_dev_add_history_item_ext(&dev, clipping_module, TRUE, TRUE);
   note_pipe_change(clipping_module);

@@ -70,6 +70,7 @@ The result is a small, fast editor with a serious processing engine underneath.
 - Noise reduction
 - White balance
 - Crop
+- Straighten (w/ auto-crop support)
 - Rotate (90° left/right)
 - Export
 
