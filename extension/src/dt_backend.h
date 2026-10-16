@@ -132,13 +132,23 @@ private:
   int raw_height = 0;
 
   // --- Incremental change dispatch ------------------------------------------
+  // Each pipe tracks its own pending-synch state and is synched lazily, only
+  // when next read (refresh_*_dimensions), so dragging a slider while only
+  // one pipe is on screen doesn't pay dt_dev_pixelpipe_synch_* on the other.
   bool pipe_change_pending = false;
   bool pipe_change_multi = false;
   bool pipe_needs_full_synch = false;
   dt_iop_module_t *pipe_change_module = nullptr;
+  bool preview_change_pending = false;
+  bool preview_change_multi = false;
+  bool preview_needs_full_synch = false;
+  dt_iop_module_t *preview_change_module = nullptr;
 
   void note_pipe_change(dt_iop_module_t *module);
-  void dispatch_pipe_changes();
+  static void mark_pipe_dirty(dt_dev_pixelpipe_t &p, dt_iop_module_t *module, bool &pending,
+                               bool &multi, bool &needs_full_synch, dt_iop_module_t *&change_module);
+  void dispatch_pipe_sync(dt_dev_pixelpipe_t &p, bool &pending, bool &multi,
+                          bool &needs_full_synch, dt_iop_module_t *&change_module);
   bool refresh_native_dimensions();
   bool refresh_preview_dimensions();
 

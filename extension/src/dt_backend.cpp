@@ -607,6 +607,10 @@ bool DtBackend::load_image(String path) {
   pipe_change_pending = false;
   pipe_change_multi = false;
   pipe_change_module = nullptr;
+  preview_needs_full_synch = false;
+  preview_change_pending = false;
+  preview_change_multi = false;
+  preview_change_module = nullptr;
 
   dt_dev_pixelpipe_get_dimensions(&pipe, &dev, pipe.iwidth, pipe.iheight,
                                   &pipe.processed_width, &pipe.processed_height);
@@ -1535,47 +1539,52 @@ void DtBackend::set_orientation(int quarter_turns) {
   note_pipe_change(flip_module);
 }
 
-void DtBackend::note_pipe_change(dt_iop_module_t *module) {
-  if(module) {
-    _dehaze_ambient = 0.0f;
-  }
+void DtBackend::mark_pipe_dirty(dt_dev_pixelpipe_t &p, dt_iop_module_t *module, bool &pending,
+                                bool &multi, bool &needs_full_synch, dt_iop_module_t *&change_module) {
+  if(pending && change_module != module)
+    multi = true;
 
-  if(pipe_change_pending && pipe_change_module != module)
-    pipe_change_multi = true;
+  pending = true;
+  change_module = module;
 
-  pipe_change_pending = true;
-  pipe_change_module = module;
-
-  for(GList *nodes = pipe.nodes; nodes; nodes = g_list_next(nodes)) {
+  for(GList *nodes = p.nodes; nodes; nodes = g_list_next(nodes)) {
     dt_dev_pixelpipe_iop_t *piece = (dt_dev_pixelpipe_iop_t *)nodes->data;
     if(piece->module == module && piece->enabled != module->enabled) {
-      pipe_needs_full_synch = true;
+      needs_full_synch = true;
       break;
     }
   }
 }
 
-void DtBackend::dispatch_pipe_changes() {
-  if(!(pipe_needs_full_synch || pipe_change_multi || pipe_change_pending))
+void DtBackend::note_pipe_change(dt_iop_module_t *module) {
+  if(module) {
+    _dehaze_ambient = 0.0f;
+  }
+
+  // Both pipes need this change eventually, but each is only synched (below)
+  // once it's actually about to be read, so an enabled-flag flip is checked
+  // against each pipe's own (possibly stale, vs. the other pipe) node list.
+  mark_pipe_dirty(pipe, module, pipe_change_pending, pipe_change_multi,
+                  pipe_needs_full_synch, pipe_change_module);
+  if(preview_pipe_ready)
+    mark_pipe_dirty(preview_pipe, module, preview_change_pending, preview_change_multi,
+                    preview_needs_full_synch, preview_change_module);
+}
+
+void DtBackend::dispatch_pipe_sync(dt_dev_pixelpipe_t &p, bool &pending, bool &multi,
+                                   bool &needs_full_synch, dt_iop_module_t *&change_module) {
+  if(!(needs_full_synch || multi || pending))
     return;
 
-  const bool full_synch = pipe_needs_full_synch || pipe_change_multi;
+  if(needs_full_synch || multi)
+    dt_dev_pixelpipe_synch_all(&p, &dev);
+  else
+    dt_dev_pixelpipe_synch_top(&p, &dev);
 
-  auto apply = [&](dt_dev_pixelpipe_t *p) {
-    if(full_synch)
-      dt_dev_pixelpipe_synch_all(p, &dev);
-    else
-      dt_dev_pixelpipe_synch_top(p, &dev);
-  };
-
-  apply(&pipe);
-  if(preview_pipe_ready)
-    apply(&preview_pipe);
-
-  pipe_needs_full_synch = false;
-  pipe_change_pending = false;
-  pipe_change_multi = false;
-  pipe_change_module = nullptr;
+  pending = false;
+  multi = false;
+  needs_full_synch = false;
+  change_module = nullptr;
 }
 
 bool DtBackend::refresh_native_dimensions() {
@@ -1584,7 +1593,8 @@ bool DtBackend::refresh_native_dimensions() {
     return false;
   }
 
-  dispatch_pipe_changes();
+  dispatch_pipe_sync(pipe, pipe_change_pending, pipe_change_multi,
+                     pipe_needs_full_synch, pipe_change_module);
 
   dt_dev_pixelpipe_get_dimensions(&pipe, &dev, pipe.iwidth, pipe.iheight,
                                    &pipe.processed_width, &pipe.processed_height);
@@ -1604,7 +1614,8 @@ bool DtBackend::refresh_preview_dimensions() {
     return false;
   }
 
-  dispatch_pipe_changes();
+  dispatch_pipe_sync(preview_pipe, preview_change_pending, preview_change_multi,
+                     preview_needs_full_synch, preview_change_module);
 
   dt_dev_pixelpipe_get_dimensions(&preview_pipe, &dev, preview_pipe.iwidth, preview_pipe.iheight,
                                   &preview_native_width, &preview_native_height);
@@ -1926,4 +1937,8 @@ void DtBackend::unload_image() {
   pipe_change_pending = false;
   pipe_change_multi = false;
   pipe_change_module = nullptr;
+  preview_needs_full_synch = false;
+  preview_change_pending = false;
+  preview_change_multi = false;
+  preview_change_module = nullptr;
 }
