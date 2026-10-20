@@ -128,6 +128,22 @@ var _indexing_active: bool = false
 
 var _image_loaded: bool = false
 
+# Swaps the cached thumbnail (edited variant first) into the viewport and forces
+# a draw, so the incoming photo is visible before open_photo blocks the main
+# thread in load_image. No-op when neither thumb is cached. image_texture is
+# re-bound by _on_process_done when the real render lands.
+func _show_thumb_placeholder(path: String) -> void:
+	var mtime: int = FileAccess.get_modified_time(path)
+	var img: Image = ThumbnailCache.load_cached(ThumbnailCache.edited_cache_key(path, mtime))
+	if img == null:
+		img = ThumbnailCache.load_cached(ThumbnailCache.cache_key(path, mtime))
+	if img == null:
+		return
+	texture_rect.texture = ImageTexture.create_from_image(img)
+	filename_label.text = path.get_file()
+	RenderingServer.force_draw()
+
+
 # --- RAW library thumbnails ----------------------------------------------------
 # Rendering itself now happens entirely in the background worker process (see
 # "Background thumbnail indexer" in docs/GODOT_FRONTEND_NOTES.md); this scale
@@ -868,6 +884,7 @@ func open_photo(path: String) -> bool:
 	# Commit the previously edited photo's pending save before its key/params are
 	# replaced (open_photo is reachable directly from the file dialog in Edit).
 	_flush_pending_save()
+	_show_thumb_placeholder(path)
 
 	# A render task may be mid-flight inside the pipe; load_image must not race it.
 	if _processing and _current_task_id != -1:
@@ -1609,6 +1626,7 @@ func _on_process_done(bytes: PackedByteArray, width: int, height: int, sig: Stri
 				_crop_overlay.sync_to_texture()
 		else:
 			image_texture.update(img)
+			texture_rect.texture = image_texture
 		_apply_display_layout()
 		_update_resolution_label(width, height)
 		_last_render_image = img
