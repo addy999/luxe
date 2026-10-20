@@ -22,6 +22,13 @@ static func defaults() -> Dictionary:
 		"export_dir": "",
 		"export_format": "jpg",  # jpg | png | tif
 		"export_locations": [],  # libraries checked for whole-library export
+		"export_jpeg_quality": 90,
+		"export_png_bpp": 8,
+		"export_tif_bpp": 16,
+		"export_resize": false,
+		"export_long_edge": 2048,
+		"export_color_space": "srgb",  # srgb | p3 | adobergb | prophoto
+		"export_metadata": true,
 	}
 
 
@@ -66,6 +73,15 @@ static func load(path: String = STORE_PATH) -> Dictionary:
 	var export_locations: Variant = values.get("export_locations", state["export_locations"])
 	if export_locations is Array:
 		state["export_locations"] = export_locations
+	# Scalar export settings: kept when the stored type matches the default's;
+	# JSON reads every number back as float, so int defaults accept floats.
+	for key: String in ["export_jpeg_quality", "export_png_bpp", "export_tif_bpp",
+			"export_resize", "export_long_edge", "export_color_space", "export_metadata"]:
+		var v: Variant = values.get(key)
+		if state[key] is int and (v is float or v is int):
+			state[key] = int(v)
+		elif typeof(v) == typeof(state[key]):
+			state[key] = v
 	return state
 
 

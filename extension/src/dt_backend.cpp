@@ -83,7 +83,7 @@ void DtBackend::_bind_methods() {
   ClassDB::bind_method(D_METHOD("process_fit", "max_width", "max_height"), &DtBackend::process_fit);
   ClassDB::bind_method(D_METHOD("render_view", "viewport_w", "viewport_h", "scale", "center_x", "center_y"), &DtBackend::render_view);
   ClassDB::bind_method(D_METHOD("render_preview", "viewport_w", "viewport_h", "scale", "center_x", "center_y"), &DtBackend::render_preview);
-  ClassDB::bind_method(D_METHOD("export_image", "path"), &DtBackend::export_image);
+  ClassDB::bind_method(D_METHOD("export_image", "path", "options"), &DtBackend::export_image, DEFVAL(Dictionary()));
   ClassDB::bind_method(D_METHOD("get_width"), &DtBackend::get_width);
   ClassDB::bind_method(D_METHOD("get_height"), &DtBackend::get_height);
   ClassDB::bind_method(D_METHOD("get_native_width"), &DtBackend::get_native_width);
@@ -1771,7 +1771,10 @@ PackedByteArray DtBackend::process_fit(int max_width, int max_height) {
   return render_view(max_width, max_height, scale, 0.0, 0.0);
 }
 
-bool DtBackend::export_image(String path) {
+// options (all optional): quality (int 5-100, JPEG), bpp (int 8/16, PNG/TIFF),
+// long_edge (int px, 0 = full size, never upscales), color_space ("srgb" |
+// "adobergb" | "p3" | "prophoto"), metadata (bool, copy EXIF).
+bool DtBackend::export_image(String path, Dictionary options) {
   if(!initialized || !image_loaded) {
     UtilityFunctions::printerr("DtBackend::export_image: no image loaded");
     return false;
@@ -1800,14 +1803,33 @@ bool DtBackend::export_image(String path) {
     return false;
   }
 
+  // Format modules read their settings from dt_conf inside get_params().
+  const int quality = CLAMP((int)options.get("quality", 95), 5, 100);
+  const int bpp = (int)options.get("bpp", 8) == 16 ? 16 : 8;
+  if(ext == "jpg" || ext == "jpeg")
+    dt_conf_set_int("plugins/imageio/format/jpeg/quality", quality);
+  else if(ext == "png")
+    dt_conf_set_int("plugins/imageio/format/png/bpp", bpp);
+  else
+    dt_conf_set_int("plugins/imageio/format/tiff/bpp", bpp);
+
+  const String cs = options.get("color_space", "srgb");
+  dt_colorspaces_color_profile_type_t icc_type = DT_COLORSPACE_SRGB;
+  if(cs == "adobergb") icc_type = DT_COLORSPACE_ADOBERGB;
+  else if(cs == "p3") icc_type = DT_COLORSPACE_DISPLAY_P3;
+  else if(cs == "prophoto") icc_type = DT_COLORSPACE_PROPHOTO_RGB;
+  const gboolean copy_metadata = (bool)options.get("metadata", true);
+  const int long_edge = MAX((int)options.get("long_edge", 0), 0);
+
   dt_imageio_module_data_t *fdata = (dt_imageio_module_data_t *)format->get_params(format);
   if(!fdata) {
     UtilityFunctions::printerr("DtBackend::export_image: format->get_params() failed");
     return false;
   }
 
-  fdata->max_width = 0;
-  fdata->max_height = 0;
+  // Equal bounds cap the long edge; upscale stays FALSE below.
+  fdata->max_width = long_edge;
+  fdata->max_height = long_edge;
   fdata->style[0] = '\0';
   fdata->style_append = FALSE;
 
@@ -1815,8 +1837,8 @@ bool DtBackend::export_image(String path) {
       imgid, cpath, format, fdata,
       FALSE /*ignore_exif*/, FALSE /*display_byteorder*/, TRUE /*high_quality*/,
       FALSE /*upscale*/, FALSE /*is_scaling*/, 1.0, FALSE /*thumbnail*/,
-      NULL /*filter*/, TRUE /*copy_metadata*/, FALSE /*export_masks*/,
-      DT_COLORSPACE_SRGB, NULL, DT_INTENT_LAST, NULL /*storage*/, NULL /*storage_params*/,
+      NULL /*filter*/, copy_metadata, FALSE /*export_masks*/,
+      icc_type, NULL, DT_INTENT_LAST, NULL /*storage*/, NULL /*storage_params*/,
       1, 1, NULL /*metadata*/, -1 /*history_end*/);
 
   format->free_params(format, fdata);
@@ -1838,7 +1860,7 @@ bool DtBackend::export_image(String path) {
     _apply_dehaze(im->ptrw(), im->get_width(), im->get_height());
     const Error err = path.get_extension().to_lower() == "png"
         ? im->save_png(path)
-        : im->save_jpg(path, 0.92f);
+        : im->save_jpg(path, quality / 100.0f);
     _dehaze_ambient = 0.0f;
     if(err != OK) {
       UtilityFunctions::printerr("DtBackend::export_image: dehaze post-pass re-encode failed (", err, ")");

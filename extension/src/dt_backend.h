@@ -242,7 +242,7 @@ public:
   // fraction of the preview mip's dims; falls back to render_view().
   PackedByteArray render_preview(int viewport_w, int viewport_h, double scale,
                                  double center_x, double center_y);
-  bool export_image(String path);
+  bool export_image(String path, Dictionary options = Dictionary());
   int get_width();
   int get_height();
   // Native (scale=1.0) processed dims; 0,0 until the first render.

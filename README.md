@@ -86,6 +86,7 @@ The UI also gives you:
 - **Library selection and batch export**
   - click, Shift-click (range), Cmd-click (toggle), Cmd+A (all), Esc (clear)
   - Export… writes the selection, or whole libraries when nothing is selected, as JPEG/PNG/TIFF with saved edits applied
+  - per-format quality (JPEG quality, 8/16-bit PNG/TIFF), long-edge resize, color space (sRGB, Display P3, Adobe RGB, ProPhoto), EXIF on/off, with a progress dialog and cancel
 - **Light and dark themes**
 
 ## Progress

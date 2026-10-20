@@ -263,7 +263,17 @@ var _lib_export_button: Button
 var _lib_export_dialog: ConfirmationDialog
 var _lib_export_dir_edit: LineEdit
 var _lib_export_dir_picker: FileDialog
-var _lib_export_format_buttons: Array[Button] = []
+var _lib_export_format_row: HBoxContainer
+var _lib_export_quality: HSlider
+var _lib_export_bpp_row: HBoxContainer
+var _lib_export_bpp_format: int = -1  # format index the bit-depth row currently edits
+var _lib_export_quality_section: VBoxContainer
+var _lib_export_size_row: HBoxContainer
+var _lib_export_long_edge: SpinBox
+var _lib_export_color_row: HBoxContainer
+var _lib_export_color_hint: Label
+var _lib_export_metadata: Button
+var _export_opts: Dictionary = {}
 var _lib_export_photos_box: VBoxContainer
 var _lib_export_checks: Dictionary = {}  # location path -> toggle Button
 var _lib_export_selection: Array[String] = []
@@ -2213,6 +2223,7 @@ func _on_export_dialog_file_selected(path: String) -> void:
 
 	_exporting = true
 	_export_path = path
+	_export_opts = _export_options(path.get_extension().to_lower())
 	export_button.disabled = true
 	open_button.disabled = true
 	exposure_slider.editable = false
@@ -2230,7 +2241,7 @@ func _on_export_dialog_file_selected(path: String) -> void:
 
 
 func _export_task() -> void:
-	var ok: bool = backend.export_image(_export_path)
+	var ok: bool = backend.export_image(_export_path, _export_opts)
 	call_deferred("_on_export_done", ok, _export_path)
 
 
@@ -2282,9 +2293,17 @@ func _build_library_export_ui() -> void:
 	_lib_export_dialog.get_ok_button().custom_minimum_size = Vector2(150, 38)
 	_lib_export_dialog.get_cancel_button().custom_minimum_size = Vector2(110, 38)
 	_lib_export_dialog.confirmed.connect(_on_lib_export_confirmed)
+	var columns := HBoxContainer.new()
+	columns.add_theme_constant_override("separation", 36)
+	_lib_export_dialog.add_child(columns)
 	var body := VBoxContainer.new()
 	body.add_theme_constant_override("separation", 22)
-	_lib_export_dialog.add_child(body)
+	body.custom_minimum_size.x = 440
+	columns.add_child(body)
+	var output := VBoxContainer.new()
+	output.add_theme_constant_override("separation", 22)
+	output.custom_minimum_size.x = 420
+	columns.add_child(output)
 
 	var dir_row := HBoxContainer.new()
 	dir_row.add_theme_constant_override("separation", 8)
@@ -2301,30 +2320,65 @@ func _build_library_export_ui() -> void:
 	dir_row.add_child(browse)
 	body.add_child(_export_section("Destination", dir_row))
 
-	var fmt_row := HBoxContainer.new()
-	fmt_row.add_theme_constant_override("separation", 6)
-	var group := ButtonGroup.new()
-	for label in ["JPEG", "PNG", "TIFF"]:
-		var b := Button.new()
-		b.text = label
-		b.toggle_mode = true
-		b.button_group = group
-		b.focus_mode = Control.FOCUS_NONE
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.custom_minimum_size.y = 34
-		fmt_row.add_child(b)
-		_lib_export_format_buttons.append(b)
-	body.add_child(_export_section("Format", fmt_row))
-
 	_lib_export_photos_box = VBoxContainer.new()
 	_lib_export_photos_box.add_theme_constant_override("separation", 6)
 	_lib_export_photos_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var photos_section: VBoxContainer = _export_section("Photos", _lib_export_photos_box)
 	photos_section.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	body.add_child(photos_section)
-	var button_gap := Control.new()
-	button_gap.custom_minimum_size.y = 2
-	body.add_child(button_gap)
+
+	_lib_export_format_row = _segmented(["JPEG", "PNG", "TIFF"], _refresh_lib_export_quality)
+	output.add_child(_export_section("Format", _lib_export_format_row))
+
+	var quality_box := VBoxContainer.new()
+	var jpeg_row := HBoxContainer.new()
+	jpeg_row.add_theme_constant_override("separation", 12)
+	_lib_export_quality = HSlider.new()
+	_lib_export_quality.min_value = 5
+	_lib_export_quality.max_value = 100
+	_lib_export_quality.step = 1
+	_lib_export_quality.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_lib_export_quality.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_lib_export_quality.focus_mode = Control.FOCUS_NONE
+	jpeg_row.add_child(_lib_export_quality)
+	var quality_label := Label.new()
+	quality_label.custom_minimum_size.x = 36
+	quality_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_lib_export_quality.value_changed.connect(func(v: float) -> void:
+		quality_label.text = str(int(v)))
+	jpeg_row.add_child(quality_label)
+	quality_box.add_child(jpeg_row)
+	_lib_export_bpp_row = _segmented(["8-bit", "16-bit"])
+	quality_box.add_child(_lib_export_bpp_row)
+	_lib_export_quality_section = _export_section("Quality", quality_box)
+	output.add_child(_lib_export_quality_section)
+
+	var size_row := HBoxContainer.new()
+	size_row.add_theme_constant_override("separation", 8)
+	_lib_export_size_row = _segmented(["Full size", "Long edge"], _refresh_lib_export_size)
+	_lib_export_size_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	size_row.add_child(_lib_export_size_row)
+	_lib_export_long_edge = SpinBox.new()
+	_lib_export_long_edge.min_value = 256
+	_lib_export_long_edge.max_value = 20000
+	_lib_export_long_edge.step = 1
+	_lib_export_long_edge.suffix = "px"
+	_lib_export_long_edge.custom_minimum_size = Vector2(130, 34)
+	size_row.add_child(_lib_export_long_edge)
+	output.add_child(_export_section("Size", size_row))
+
+	var color_box := VBoxContainer.new()
+	color_box.add_theme_constant_override("separation", 6)
+	_lib_export_color_row = _segmented(["sRGB", "Display P3", "Adobe RGB", "ProPhoto"],
+		_refresh_lib_export_color_hint)
+	color_box.add_child(_lib_export_color_row)
+	_lib_export_color_hint = Label.new()
+	_lib_export_color_hint.theme_type_variation = &"Muted"
+	color_box.add_child(_lib_export_color_hint)
+	output.add_child(_export_section("Color space", color_box))
+
+	_lib_export_metadata = _check_toggle("Include EXIF metadata")
+	output.add_child(_export_section("Metadata", _lib_export_metadata))
 
 	_lib_export_dir_picker = FileDialog.new()
 	_lib_export_dir_picker.file_mode = FileDialog.FILE_MODE_OPEN_DIR
@@ -2423,6 +2477,101 @@ func _style_export_dialog(dialog: AcceptDialog) -> void:
 	dialog.add_theme_stylebox_override("panel", panel)
 
 
+# Row of mutually exclusive toggle buttons; on_pick(index) runs when one is
+# chosen (also when selected from code via _segment_select).
+func _segmented(labels: Array, on_pick: Callable = Callable()) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	var group := ButtonGroup.new()
+	for i in labels.size():
+		var b := Button.new()
+		b.text = labels[i]
+		b.toggle_mode = true
+		b.button_group = group
+		b.focus_mode = Control.FOCUS_NONE
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.custom_minimum_size.y = 34
+		if on_pick.is_valid():
+			b.toggled.connect(func(on: bool) -> void:
+				if on:
+					on_pick.call(i))
+		row.add_child(b)
+	return row
+
+
+func _segment_index(row: HBoxContainer) -> int:
+	for i in row.get_child_count():
+		if (row.get_child(i) as Button).button_pressed:
+			return i
+	return 0
+
+
+func _segment_select(row: HBoxContainer, index: int) -> void:
+	(row.get_child(clampi(index, 0, row.get_child_count() - 1)) as Button).button_pressed = true
+
+
+# Full-width toggle row showing a check mark when on.
+func _check_toggle(text: String) -> Button:
+	var b := Button.new()
+	b.toggle_mode = true
+	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	b.custom_minimum_size.y = 34
+	b.focus_mode = Control.FOCUS_NONE
+	b.toggled.connect(func(on: bool) -> void:
+		b.text = ("✓  " if on else "     ") + text)
+	b.text = "     " + text
+	return b
+
+
+# Quality shows the JPEG slider for JPEG and the bit-depth picker otherwise,
+# swapping the bit depth between the PNG and TIFF settings.
+func _refresh_lib_export_quality(fmt: int) -> void:
+	_store_lib_export_bpp()
+	_lib_export_quality.get_parent().visible = fmt == 0
+	_lib_export_bpp_row.visible = fmt != 0
+	if fmt != 0:
+		var key: String = "export_png_bpp" if fmt == 1 else "export_tif_bpp"
+		_segment_select(_lib_export_bpp_row, 1 if int(_ui_state[key]) == 16 else 0)
+	_lib_export_bpp_format = fmt
+
+
+# Stores the bit-depth choice for the format it was made under.
+func _store_lib_export_bpp() -> void:
+	if _lib_export_bpp_format <= 0:
+		return
+	var key: String = "export_png_bpp" if _lib_export_bpp_format == 1 else "export_tif_bpp"
+	_ui_state[key] = 16 if _segment_index(_lib_export_bpp_row) == 1 else 8
+
+
+func _refresh_lib_export_size(index: int) -> void:
+	_lib_export_long_edge.editable = index == 1
+	_lib_export_long_edge.modulate.a = 1.0 if index == 1 else 0.4
+
+
+const _COLOR_SPACES: Array[String] = ["srgb", "p3", "adobergb", "prophoto"]
+const _COLOR_SPACE_HINTS: Array[String] = [
+	"Web, social and most screens",
+	"Wide-gamut Apple and modern displays",
+	"Print workflows",
+	"Archival or further editing (use 16-bit)",
+]
+
+func _refresh_lib_export_color_hint(index: int) -> void:
+	_lib_export_color_hint.text = _COLOR_SPACE_HINTS[index]
+
+
+# Backend export_image options from the saved settings; ext picks the
+# PNG or TIFF bit depth.
+func _export_options(ext: String) -> Dictionary:
+	return {
+		"quality": int(_ui_state["export_jpeg_quality"]),
+		"bpp": int(_ui_state["export_png_bpp"] if ext == "png" else _ui_state["export_tif_bpp"]),
+		"long_edge": int(_ui_state["export_long_edge"]) if _ui_state["export_resize"] else 0,
+		"color_space": _ui_state["export_color_space"],
+		"metadata": _ui_state["export_metadata"],
+	}
+
+
 # A muted caption stacked above content.
 func _export_section(caption: String, content: Control) -> VBoxContainer:
 	var box := VBoxContainer.new()
@@ -2445,8 +2594,16 @@ func _on_lib_export_pressed() -> void:
 	if dir == "":
 		dir = OS.get_system_dir(OS.SYSTEM_DIR_PICTURES)
 	_lib_export_dir_edit.text = dir
-	var fmt: int = maxi(0, _EXPORT_FORMATS.find(_ui_state.get("export_format", "jpg")))
-	_lib_export_format_buttons[fmt].button_pressed = true
+	_lib_export_quality.value = _ui_state["export_jpeg_quality"]
+	_lib_export_bpp_format = -1
+	_segment_select(_lib_export_format_row, _EXPORT_FORMATS.find(_ui_state["export_format"]))
+	_refresh_lib_export_quality(_segment_index(_lib_export_format_row))
+	_lib_export_long_edge.value = _ui_state["export_long_edge"]
+	_segment_select(_lib_export_size_row, 1 if _ui_state["export_resize"] else 0)
+	_refresh_lib_export_size(_segment_index(_lib_export_size_row))
+	_segment_select(_lib_export_color_row, _COLOR_SPACES.find(_ui_state["export_color_space"]))
+	_refresh_lib_export_color_hint(_segment_index(_lib_export_color_row))
+	_lib_export_metadata.button_pressed = _ui_state["export_metadata"]
 
 	for child in _lib_export_photos_box.get_children():
 		_lib_export_photos_box.remove_child(child)
@@ -2480,17 +2637,10 @@ func _on_lib_export_pressed() -> void:
 		scroll.add_child(list)
 		list_panel.add_child(scroll)
 		for loc in library_view.get_locations():
-			var check := Button.new()
-			check.toggle_mode = true
-			check.alignment = HORIZONTAL_ALIGNMENT_LEFT
-			check.custom_minimum_size.y = 34
+			var check: Button = _check_toggle(loc.get_file())
 			check.tooltip_text = loc
-			check.focus_mode = Control.FOCUS_NONE
-			check.toggled.connect(func(on: bool) -> void:
-				check.text = ("✓  " if on else "     ") + loc.get_file()
-				_update_lib_export_ok())
 			check.button_pressed = checked.has(loc)
-			check.text = ("✓  " if check.button_pressed else "     ") + loc.get_file()
+			check.toggled.connect(func(_on: bool) -> void: _update_lib_export_ok())
 			list.add_child(check)
 			_lib_export_checks[loc] = check
 		# Rows are 34px + 4px separation; cap the list at ~6 rows and scroll the rest.
@@ -2500,12 +2650,12 @@ func _on_lib_export_pressed() -> void:
 		if _lib_export_checks.is_empty():
 			hint.text = "No photos selected and no libraries added."
 	_update_lib_export_ok()
-	# Opens at twice its content's natural size (the Photos list absorbs the
-	# extra height), capped to 90% of the window.
+	# Opens at its natural width and twice its natural height (the Photos list
+	# absorbs the extra height), capped to 90% of the window.
 	_lib_export_dialog.reset_size()
 	var cap: Vector2 = get_viewport().get_visible_rect().size * 0.9
 	var target := Vector2i(
-		mini(_lib_export_dialog.size.x * 2, int(cap.x)),
+		mini(_lib_export_dialog.size.x, int(cap.x)),
 		mini(_lib_export_dialog.size.y * 2, int(cap.y)))
 	_lib_export_dialog.popup_centered(target)
 
@@ -2544,9 +2694,13 @@ func _on_lib_export_dir_picked(dir: String) -> void:
 
 func _on_lib_export_confirmed() -> void:
 	_ui_state["export_dir"] = _lib_export_dir_edit.text
-	for i in _lib_export_format_buttons.size():
-		if _lib_export_format_buttons[i].button_pressed:
-			_ui_state["export_format"] = _EXPORT_FORMATS[i]
+	_ui_state["export_format"] = _EXPORT_FORMATS[_segment_index(_lib_export_format_row)]
+	_store_lib_export_bpp()
+	_ui_state["export_jpeg_quality"] = int(_lib_export_quality.value)
+	_ui_state["export_resize"] = _segment_index(_lib_export_size_row) == 1
+	_ui_state["export_long_edge"] = int(_lib_export_long_edge.value)
+	_ui_state["export_color_space"] = _COLOR_SPACES[_segment_index(_lib_export_color_row)]
+	_ui_state["export_metadata"] = _lib_export_metadata.button_pressed
 
 	_lib_export_queue.clear()
 	_lib_export_skip_rejected = _lib_export_selection.is_empty()
