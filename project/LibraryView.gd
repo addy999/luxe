@@ -58,6 +58,10 @@ var _selected_location: String = ""
 
 var _photos: Array[Dictionary] = []
 var _cursor: int = -1
+# Multi-selection, keyed by path so it survives filter rebuilds; _anchor is the
+# visible index shift-click ranges extend from (-1 = none).
+var _selection: Dictionary = {}
+var _anchor: int = -1
 # RAW (continuous) zoom, the persistence source of truth; never snapped.
 var _thumb_raw_scale: float = 1.0
 # Effective snapped scale used for layout; always re-derived from
@@ -369,6 +373,8 @@ func _rebuild_visible() -> void:
 func _set_photos(photos: Array[Dictionary]) -> void:
 	_photos = photos
 	_cursor = -1
+	_selection.clear()
+	_anchor = -1
 	_tex_cache.clear()
 	_tex_lru.clear()
 	_requested.clear()
@@ -552,7 +558,7 @@ func _refresh_tiles() -> void:
 		# every refresh or _draw uses a stale size and clips the thumbnail.
 		tile.set_tile_scale(_thumb_scale)
 		tile.size = Vector2(_tile_w, _tile_h)
-		tile.set_selected(vi == _cursor)
+		tile.set_selected(_selection.has(path))
 		tile.set_edited(_edited.get(_photos[index]["path"], false))
 		tile.set_rejected(_rejected.get(_photos[index]["path"], false))
 		tile.set_dim_enabled(not _hide_rejected)
@@ -565,12 +571,27 @@ func _refresh_tiles() -> void:
 		_pool[i].clear_texture()
 
 
-func _on_item_clicked(index: int) -> void:
+func _on_item_clicked(index: int, shift: bool, command: bool) -> void:
+	if shift and _anchor >= 0 and _anchor < _visible.size():
+		_selection.clear()
+		for vi in range(mini(_anchor, index), maxi(_anchor, index) + 1):
+			_selection[_photos[_visible[vi]]["path"]] = true
+	elif command:
+		var path: String = _photos[_visible[index]]["path"]
+		if _selection.has(path):
+			_selection.erase(path)
+		else:
+			_selection[path] = true
+		_anchor = index
+	else:
+		_select_single(index)
+		return
 	_set_cursor(index)
+	_refresh_tiles()
 
 
 func _on_item_activated(index: int) -> void:
-	_set_cursor(index)
+	_select_single(index)
 	_activate(index)
 
 
@@ -586,6 +607,11 @@ func _on_grid_gui_input(event: InputEvent) -> void:
 		accept_event()
 		return
 
+	if event is InputEventMouseButton and event.pressed \
+			and event.button_index == MOUSE_BUTTON_LEFT:
+		clear_selection()
+		return
+
 	if not (event is InputEventKey) or not event.pressed:
 		return
 	var key_event: InputEventKey = event
@@ -595,26 +621,67 @@ func _on_grid_gui_input(event: InputEvent) -> void:
 
 	match key_event.keycode:
 		KEY_LEFT:
-			_set_cursor(Library.next_index(_cursor, -1, 0, cols, count))
+			_select_single(Library.next_index(_cursor, -1, 0, cols, count))
 		KEY_RIGHT:
-			_set_cursor(Library.next_index(_cursor, 1, 0, cols, count))
+			_select_single(Library.next_index(_cursor, 1, 0, cols, count))
 		KEY_UP:
-			_set_cursor(Library.next_index(_cursor, 0, -1, cols, count))
+			_select_single(Library.next_index(_cursor, 0, -1, cols, count))
 		KEY_DOWN:
-			_set_cursor(Library.next_index(_cursor, 0, 1, cols, count))
+			_select_single(Library.next_index(_cursor, 0, 1, cols, count))
 		KEY_HOME:
-			_set_cursor(0 if count > 0 else -1)
+			_select_single(0 if count > 0 else -1)
 		KEY_END:
-			_set_cursor(count - 1 if count > 0 else -1)
+			_select_single(count - 1 if count > 0 else -1)
 		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
 			_activate(_cursor)
 		KEY_X:
 			toggle_reject_cursor()
+		KEY_A when key_event.is_command_or_control_pressed():
+			select_all()
+		KEY_ESCAPE when not _selection.is_empty():
+			clear_selection()
 		_:
 			handled = false
 
 	if handled:
 		accept_event()
+
+
+# Replaces the selection with the photo at visible index (or clears it for -1)
+# and moves the cursor and shift-range anchor there.
+func _select_single(index: int) -> void:
+	_selection.clear()
+	if index >= 0 and index < _visible.size():
+		_selection[_photos[_visible[index]]["path"]] = true
+	_anchor = index
+	_set_cursor(index)
+	_refresh_tiles()
+
+
+func select_all() -> void:
+	for vi in _visible:
+		_selection[_photos[vi]["path"]] = true
+	_refresh_tiles()
+
+
+func clear_selection() -> void:
+	_selection.clear()
+	_anchor = -1
+	_refresh_tiles()
+
+
+# Selected paths among the photos currently shown, in grid order.
+func get_selected_paths() -> Array[String]:
+	var result: Array[String] = []
+	for vi in _visible:
+		var path: String = _photos[vi]["path"]
+		if _selection.has(path):
+			result.append(path)
+	return result
+
+
+func get_locations() -> PackedStringArray:
+	return _locations
 
 
 func _set_cursor(index: int) -> void:

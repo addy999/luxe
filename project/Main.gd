@@ -253,6 +253,29 @@ var _last_render_start_usec: int = 0     # Start time of the most recent render 
 var _render_start_usec: int = 0          # Start time of the in-flight render, for the EWMA.
 var _gate_timer: Timer = null            # One-shot trailing render when the gate is shut.
 var _exporting: bool = false
+# Library batch export: remaining source paths; each is opened in the editor
+# (restoring its saved edits) and exported through the Edit-view export path.
+var _lib_export_queue: Array[String] = []
+var _lib_export_active: bool = false
+var _lib_export_total: int = 0
+var _lib_export_failed: int = 0
+var _lib_export_button: Button
+var _lib_export_dialog: ConfirmationDialog
+var _lib_export_dir_edit: LineEdit
+var _lib_export_dir_picker: FileDialog
+var _lib_export_format_buttons: Array[Button] = []
+var _lib_export_photos_box: VBoxContainer
+var _lib_export_checks: Dictionary = {}  # location path -> toggle Button
+var _lib_export_selection: Array[String] = []
+var _lib_export_skip_rejected: bool = false
+var _lib_export_rejects: Dictionary = {}
+var _lib_export_skipped: int = 0
+var _lib_export_canceled: bool = false
+var _lib_export_progress: AcceptDialog
+var _lib_export_bar: ProgressBar
+var _lib_export_status: Label
+var _lib_export_detail: Label
+var _lib_export_reveal: Button
 var _export_path: String = ""
 var _source_basename: String = "export"
 
@@ -429,6 +452,7 @@ func _setup_views() -> void:
 	filmstrip.photo_selected.connect(open_photo)
 	filmstrip.bind_source(library_view, "")
 	filmstrip.height_changed.connect(_on_filmstrip_height_changed)
+	_build_library_export_ui()
 	reject_button.pressed.connect(_on_reject_button_pressed)
 	hide_rejected_button.toggled.connect(_on_hide_rejected_toggled)
 	_setup_right_panel_handle()
@@ -2226,6 +2250,395 @@ func _on_export_done(ok: bool, path: String) -> void:
 	export_button.disabled = not _image_loaded
 	if not ok:
 		push_error("Export failed for %s" % path.get_file())
+	if _lib_export_active:
+		if not ok:
+			_lib_export_failed += 1
+		_lib_export_next.call_deferred()
+
+
+# --- Library export ------------------------------------------------------------
+
+const _EXPORT_FORMATS: Array[String] = ["jpg", "png", "tif"]
+
+# Builds the Library-only Export button and its settings dialog in code.
+# Dialog body: destination folder, format segmented buttons, and a "Photos"
+# section that is rebuilt on each open (selection summary, or a library
+# checklist when nothing is selected). Values persist in UiStateStore.
+func _build_library_export_ui() -> void:
+	_lib_export_button = Button.new()
+	_lib_export_button.text = "Export…"
+	_lib_export_button.focus_mode = Control.FOCUS_NONE
+	_lib_export_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_lib_export_button.pressed.connect(_on_lib_export_pressed)
+	hide_rejected_button.get_parent().add_child(_lib_export_button)
+	hide_rejected_button.get_parent().move_child(_lib_export_button, hide_rejected_button.get_index() + 1)
+	_library_only_controls.append(_lib_export_button)
+
+	_lib_export_dialog = ConfirmationDialog.new()
+	_lib_export_dialog.title = "Export"
+	_lib_export_dialog.min_size = Vector2i(500, 0)
+	_lib_export_dialog.unresizable = true
+	_lib_export_dialog.add_theme_constant_override("buttons_separation", 12)
+	_lib_export_dialog.get_ok_button().custom_minimum_size = Vector2(150, 38)
+	_lib_export_dialog.get_cancel_button().custom_minimum_size = Vector2(110, 38)
+	_lib_export_dialog.confirmed.connect(_on_lib_export_confirmed)
+	var body := VBoxContainer.new()
+	body.add_theme_constant_override("separation", 22)
+	_lib_export_dialog.add_child(body)
+
+	var dir_row := HBoxContainer.new()
+	dir_row.add_theme_constant_override("separation", 8)
+	_lib_export_dir_edit = LineEdit.new()
+	_lib_export_dir_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_lib_export_dir_edit.custom_minimum_size.y = 38
+	_lib_export_dir_edit.placeholder_text = "Choose a folder"
+	_lib_export_dir_edit.text_changed.connect(func(_t: String) -> void: _update_lib_export_ok())
+	dir_row.add_child(_lib_export_dir_edit)
+	var browse := Button.new()
+	browse.text = "Browse…"
+	browse.custom_minimum_size = Vector2(100, 38)
+	browse.pressed.connect(func() -> void: _lib_export_dir_picker.popup_centered())
+	dir_row.add_child(browse)
+	body.add_child(_export_section("Destination", dir_row))
+
+	var fmt_row := HBoxContainer.new()
+	fmt_row.add_theme_constant_override("separation", 6)
+	var group := ButtonGroup.new()
+	for label in ["JPEG", "PNG", "TIFF"]:
+		var b := Button.new()
+		b.text = label
+		b.toggle_mode = true
+		b.button_group = group
+		b.focus_mode = Control.FOCUS_NONE
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.custom_minimum_size.y = 34
+		fmt_row.add_child(b)
+		_lib_export_format_buttons.append(b)
+	body.add_child(_export_section("Format", fmt_row))
+
+	_lib_export_photos_box = VBoxContainer.new()
+	_lib_export_photos_box.add_theme_constant_override("separation", 6)
+	_lib_export_photos_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var photos_section: VBoxContainer = _export_section("Photos", _lib_export_photos_box)
+	photos_section.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_child(photos_section)
+	var button_gap := Control.new()
+	button_gap.custom_minimum_size.y = 2
+	body.add_child(button_gap)
+
+	_lib_export_dir_picker = FileDialog.new()
+	_lib_export_dir_picker.file_mode = FileDialog.FILE_MODE_OPEN_DIR
+	_lib_export_dir_picker.access = FileDialog.ACCESS_FILESYSTEM
+	_lib_export_dir_picker.use_native_dialog = true
+	_lib_export_dir_picker.dir_selected.connect(_on_lib_export_dir_picked)
+	add_child(_lib_export_dialog)
+	add_child(_lib_export_dir_picker)
+
+
+# Progress dialog shown for the whole batch: bar, "Exporting i of N", current
+# file name. The OK button is Cancel while running and Done when finished
+# (dialog_hide_on_ok is off, so _on_lib_export_progress_ok decides).
+func _build_lib_export_progress() -> void:
+	_lib_export_progress = AcceptDialog.new()
+	_lib_export_progress.title = "Exporting"
+	_lib_export_progress.min_size = Vector2i(460, 0)
+	_lib_export_progress.dialog_hide_on_ok = false
+	_lib_export_progress.unresizable = true
+	_lib_export_progress.add_theme_constant_override("buttons_separation", 20)
+	_lib_export_progress.get_ok_button().custom_minimum_size = Vector2(110, 38)
+	_lib_export_progress.confirmed.connect(_on_lib_export_progress_ok)
+	_lib_export_progress.canceled.connect(_cancel_lib_export)
+	var reveal_text: String = "Show in Finder" if OS.get_name() == "macOS" else "Show in Folder"
+	_lib_export_reveal = _lib_export_progress.add_button(reveal_text, false, "reveal")
+	_lib_export_reveal.custom_minimum_size = Vector2(140, 38)
+	_lib_export_progress.custom_action.connect(func(_action: StringName) -> void:
+		OS.shell_show_in_file_manager(_ui_state["export_dir"]))
+
+	var body := VBoxContainer.new()
+	body.add_theme_constant_override("separation", 10)
+	_lib_export_status = Label.new()
+	body.add_child(_lib_export_status)
+	_lib_export_bar = ProgressBar.new()
+	_lib_export_bar.show_percentage = false
+	_lib_export_bar.custom_minimum_size.y = 8
+	body.add_child(_lib_export_bar)
+	_lib_export_detail = Label.new()
+	_lib_export_detail.theme_type_variation = &"Muted"
+	_lib_export_detail.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_lib_export_detail.custom_minimum_size.x = 400
+	body.add_child(_lib_export_detail)
+	_lib_export_progress.add_child(body)
+	add_child(_lib_export_progress)
+
+
+func _show_lib_export_progress() -> void:
+	if _lib_export_progress == null:
+		_build_lib_export_progress()
+	_style_export_dialog(_lib_export_progress)
+	_lib_export_progress.title = "Exporting"
+	_lib_export_progress.get_ok_button().text = "Cancel"
+	_lib_export_progress.get_ok_button().disabled = false
+	_lib_export_reveal.visible = false
+	_lib_export_bar.max_value = _lib_export_total
+	_lib_export_bar.value = 0
+	_lib_export_status.text = "Preparing…"
+	_lib_export_detail.text = ""
+	_lib_export_progress.reset_size()
+	_lib_export_progress.popup_centered()
+
+
+# Running: stop after the current photo. Finished: close.
+func _on_lib_export_progress_ok() -> void:
+	if _lib_export_active:
+		_cancel_lib_export()
+	else:
+		_lib_export_progress.hide()
+
+
+# Drops the rest of the queue; the in-flight export finishes and
+# _lib_export_next then takes the finish branch.
+func _cancel_lib_export() -> void:
+	if not _lib_export_active:
+		return
+	_lib_export_canceled = true
+	_lib_export_queue.clear()
+	_lib_export_progress.get_ok_button().text = "Canceling…"
+	_lib_export_progress.get_ok_button().disabled = true
+	# Escape / the close button hide the dialog before emitting canceled; bring
+	# it back so the batch's end state is still shown.
+	if not _lib_export_progress.visible:
+		_lib_export_progress.popup_centered.call_deferred()
+
+
+# Applies the rounded, padded panel; re-derived per open so it follows the
+# current light/dark theme.
+func _style_export_dialog(dialog: AcceptDialog) -> void:
+	var panel: StyleBox = get_theme_stylebox("panel", "PopupMenu").duplicate()
+	if panel is StyleBoxFlat:
+		(panel as StyleBoxFlat).set_corner_radius_all(10)
+	panel.content_margin_left = 28
+	panel.content_margin_right = 28
+	panel.content_margin_top = 24
+	panel.content_margin_bottom = 24
+	dialog.add_theme_stylebox_override("panel", panel)
+
+
+# A muted caption stacked above content.
+func _export_section(caption: String, content: Control) -> VBoxContainer:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
+	var label := Label.new()
+	label.text = caption.to_upper()
+	label.theme_type_variation = &"Muted"
+	label.add_theme_font_size_override("font_size", 12)
+	box.add_child(label)
+	box.add_child(content)
+	return box
+
+
+func _on_lib_export_pressed() -> void:
+	if _lib_export_active or _exporting:
+		return
+	_style_export_dialog(_lib_export_dialog)
+
+	var dir: String = _ui_state.get("export_dir", "")
+	if dir == "":
+		dir = OS.get_system_dir(OS.SYSTEM_DIR_PICTURES)
+	_lib_export_dir_edit.text = dir
+	var fmt: int = maxi(0, _EXPORT_FORMATS.find(_ui_state.get("export_format", "jpg")))
+	_lib_export_format_buttons[fmt].button_pressed = true
+
+	for child in _lib_export_photos_box.get_children():
+		_lib_export_photos_box.remove_child(child)
+		child.queue_free()
+	_lib_export_checks.clear()
+	_lib_export_selection = library_view.get_selected_paths()
+	if not _lib_export_selection.is_empty():
+		var summary := Label.new()
+		var n: int = _lib_export_selection.size()
+		summary.text = "%d selected photo%s" % [n, "" if n == 1 else "s"]
+		_lib_export_photos_box.add_child(summary)
+	else:
+		var hint := Label.new()
+		hint.text = "Nothing selected. Choose libraries to export (rejected photos are skipped)."
+		hint.theme_type_variation = &"Muted"
+		hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		hint.custom_minimum_size.x = 440  # autowrap Labels need a width to size their height
+		_lib_export_photos_box.add_child(hint)
+		var checked: Array = _ui_state.get("export_locations", [])
+		var list_panel := PanelContainer.new()
+		list_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		var list_style: StyleBox = get_theme_stylebox("normal", "LineEdit").duplicate()
+		list_style.content_margin_top = 6
+		list_style.content_margin_bottom = 6
+		list_panel.add_theme_stylebox_override("panel", list_style)
+		var scroll := ScrollContainer.new()
+		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		var list := VBoxContainer.new()
+		list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		list.add_theme_constant_override("separation", 4)
+		scroll.add_child(list)
+		list_panel.add_child(scroll)
+		for loc in library_view.get_locations():
+			var check := Button.new()
+			check.toggle_mode = true
+			check.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			check.custom_minimum_size.y = 34
+			check.tooltip_text = loc
+			check.focus_mode = Control.FOCUS_NONE
+			check.toggled.connect(func(on: bool) -> void:
+				check.text = ("✓  " if on else "     ") + loc.get_file()
+				_update_lib_export_ok())
+			check.button_pressed = checked.has(loc)
+			check.text = ("✓  " if check.button_pressed else "     ") + loc.get_file()
+			list.add_child(check)
+			_lib_export_checks[loc] = check
+		# Rows are 34px + 4px separation; cap the list at ~6 rows and scroll the rest.
+		scroll.custom_minimum_size.y = mini(_lib_export_checks.size(), 6) * 38
+		if not _lib_export_checks.is_empty():
+			_lib_export_photos_box.add_child(list_panel)
+		if _lib_export_checks.is_empty():
+			hint.text = "No photos selected and no libraries added."
+	_update_lib_export_ok()
+	# Opens at twice its content's natural size (the Photos list absorbs the
+	# extra height), capped to 90% of the window.
+	_lib_export_dialog.reset_size()
+	var cap: Vector2 = get_viewport().get_visible_rect().size * 0.9
+	var target := Vector2i(
+		mini(_lib_export_dialog.size.x * 2, int(cap.x)),
+		mini(_lib_export_dialog.size.y * 2, int(cap.y)))
+	_lib_export_dialog.popup_centered(target)
+
+
+# Enables Export only with an existing folder and something to export, and
+# labels the button with the selection count when there is one.
+func _update_lib_export_ok() -> void:
+	var ok_button: Button = _lib_export_dialog.get_ok_button()
+	var has_photos: bool = not _lib_export_selection.is_empty() \
+		or _checked_export_locations().size() > 0
+	ok_button.disabled = not (has_photos and DirAccess.dir_exists_absolute(_lib_export_dir_edit.text))
+	var n: int = _lib_export_selection.size()
+	if n > 0:
+		ok_button.text = "Export %d Photo%s" % [n, "" if n == 1 else "s"]
+	else:
+		ok_button.text = "Export"
+
+
+func _checked_export_locations() -> Array[String]:
+	var result: Array[String] = []
+	for loc: String in _lib_export_checks:
+		if _lib_export_checks[loc].button_pressed:
+			result.append(loc)
+	return result
+
+
+# The native macOS folder dialog can return "<dir>.*"; same cleanup as the
+# Library's add-location picker.
+func _on_lib_export_dir_picked(dir: String) -> void:
+	dir = dir.strip_edges().trim_suffix("/")
+	if not DirAccess.dir_exists_absolute(dir) and dir.ends_with(".*"):
+		dir = dir.substr(0, dir.length() - 2)
+	_lib_export_dir_edit.text = dir
+	_update_lib_export_ok()
+
+
+func _on_lib_export_confirmed() -> void:
+	_ui_state["export_dir"] = _lib_export_dir_edit.text
+	for i in _lib_export_format_buttons.size():
+		if _lib_export_format_buttons[i].button_pressed:
+			_ui_state["export_format"] = _EXPORT_FORMATS[i]
+
+	_lib_export_queue.clear()
+	_lib_export_skip_rejected = _lib_export_selection.is_empty()
+	if _lib_export_skip_rejected:
+		var locations: Array[String] = _checked_export_locations()
+		_ui_state["export_locations"] = locations
+		for loc in locations:
+			for photo in Library.scan_location(loc):
+				_lib_export_queue.append(photo["path"])
+	else:
+		_lib_export_queue = _lib_export_selection.duplicate()
+	UiStateStore.save(_ui_state)
+	if _lib_export_queue.is_empty():
+		library_status_label.text = "Nothing to export"
+		return
+	_lib_export_rejects = RejectStore.load_set() if _lib_export_skip_rejected else {}
+	_lib_export_total = _lib_export_queue.size()
+	_lib_export_failed = 0
+	_lib_export_skipped = 0
+	_lib_export_canceled = false
+	_lib_export_active = true
+	# Deferred: the settings dialog is still closing, and an exclusive popup
+	# can't open while another exclusive window is up.
+	_show_lib_export_progress.call_deferred()
+	_lib_export_next.call_deferred()
+
+
+# Opens the next queued photo (restoring its saved edits), waits for the
+# load-time render so the backend holds its params, then exports it. Runs
+# again from _on_export_done until the queue drains.
+func _lib_export_next() -> void:
+	if _lib_export_queue.is_empty():
+		_finish_lib_export()
+		return
+	var src: String = _lib_export_queue.pop_front()
+	var index: int = _lib_export_total - _lib_export_queue.size()
+	library_status_label.text = "Exporting %d/%d..." % [index, _lib_export_total]
+	_lib_export_status.text = "Exporting %d of %d" % [index, _lib_export_total]
+	_lib_export_detail.text = src.get_file()
+	_lib_export_bar.value = index - 1
+	if not open_photo(src):
+		_lib_export_failed += 1
+		_lib_export_next()
+		return
+	_quiesce_edit_render()
+	if _edit_key != "" and _lib_export_rejects.has(_edit_key):
+		_lib_export_skipped += 1
+		_lib_export_next()
+		return
+	_on_export_dialog_file_selected(_unique_export_path(src))
+
+
+# Switches the progress dialog to its summary state and returns to Library.
+func _finish_lib_export() -> void:
+	_lib_export_active = false
+	_set_view(View.LIBRARY)
+	var processed: int = _lib_export_total if not _lib_export_canceled \
+		else int(_lib_export_bar.value) + 1
+	var done: int = processed - _lib_export_failed - _lib_export_skipped
+	var notes: PackedStringArray = []
+	if _lib_export_canceled:
+		notes.append("canceled")
+	if _lib_export_skipped > 0:
+		notes.append("%d rejected skipped" % _lib_export_skipped)
+	if _lib_export_failed > 0:
+		notes.append("%d failed" % _lib_export_failed)
+	var summary: String = "Exported %d photo%s" % [done, "" if done == 1 else "s"]
+	library_status_label.text = summary + (" (%s)" % ", ".join(notes) if not notes.is_empty() else "")
+
+	_lib_export_progress.title = "Export Canceled" if _lib_export_canceled else "Export Complete"
+	_lib_export_status.text = summary
+	_lib_export_bar.value = processed
+	var detail: String = ", ".join(notes)
+	_lib_export_detail.text = detail.left(1).to_upper() + detail.substr(1) if detail != "" \
+		else "Saved to " + _ui_state["export_dir"]
+	_lib_export_progress.get_ok_button().text = "Done"
+	_lib_export_progress.get_ok_button().disabled = false
+	_lib_export_reveal.visible = done > 0
+	_lib_export_progress.reset_size()
+
+
+# <dir>/<name>.<ext>, with _2, _3... appended rather than overwriting.
+func _unique_export_path(src: String) -> String:
+	var dir: String = _ui_state["export_dir"]
+	var stem: String = src.get_file().get_basename()
+	var ext: String = _ui_state["export_format"]
+	var path: String = "%s/%s.%s" % [dir, stem, ext]
+	var n: int = 2
+	while FileAccess.file_exists(path):
+		path = "%s/%s_%d.%s" % [dir, stem, n, ext]
+		n += 1
+	return path
 
 
 # --- Persistent edit history: auto-save ---------------------------------------

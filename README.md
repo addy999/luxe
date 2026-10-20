@@ -83,6 +83,9 @@ The UI also gives you:
 - **Display zoom and pan**
   - a continuous 10%-400% zoom plus Fit, decoupled from edit resolution
   - a Navigator panel showing a bird's-eye of the photo with a viewport box you can drag to pan
+- **Library selection and batch export**
+  - click, Shift-click (range), Cmd-click (toggle), Cmd+A (all), Esc (clear)
+  - Export… writes the selection, or whole libraries when nothing is selected, as JPEG/PNG/TIFF with saved edits applied
 - **Light and dark themes**
 
 ## Progress

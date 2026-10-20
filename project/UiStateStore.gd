@@ -2,7 +2,7 @@ class_name UiStateStore
 
 # App-level UI state persisted across restarts: library thumbnail zoom,
 # hide-rejected filter, last opened photo, right panel width, filmstrip
-# height. One flat versioned JSON at the top
+# height, library export settings. One flat versioned JSON at the top
 # of user:// (read/written whole, so new fields need no schema per record).
 # Mirrors Library.gd's versioned JSON + all-or-nothing validation and
 # RejectStore's atomic tmp+rename write.
@@ -19,6 +19,9 @@ static func defaults() -> Dictionary:
 		"last_photo": "",
 		"right_panel_width": 500.0,
 		"filmstrip_height": 92.0,  # Filmstrip.MIN_STRIP_HEIGHT
+		"export_dir": "",
+		"export_format": "jpg",  # jpg | png | tif
+		"export_locations": [],  # libraries checked for whole-library export
 	}
 
 
@@ -54,6 +57,15 @@ static func load(path: String = STORE_PATH) -> Dictionary:
 	var strip_height: Variant = values.get("filmstrip_height", state["filmstrip_height"])
 	if strip_height is float or strip_height is int:
 		state["filmstrip_height"] = float(strip_height)
+	var export_dir: Variant = values.get("export_dir", state["export_dir"])
+	if export_dir is String:
+		state["export_dir"] = export_dir
+	var export_format: Variant = values.get("export_format", state["export_format"])
+	if export_format is String and export_format in ["jpg", "png", "tif"]:
+		state["export_format"] = export_format
+	var export_locations: Variant = values.get("export_locations", state["export_locations"])
+	if export_locations is Array:
+		state["export_locations"] = export_locations
 	return state
 
 

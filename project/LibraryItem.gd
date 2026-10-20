@@ -4,7 +4,7 @@ class_name LibraryItem
 # One grid tile in LibraryView: thumbnail/RAW placeholder + filename caption.
 # Owns no photo-list state; LibraryView drives setup()/set_texture()/set_selected().
 
-signal clicked(index: int)
+signal clicked(index: int, shift: bool, command: bool)
 signal activated(index: int)
 signal zoom_gestured(factor: float)
 
@@ -261,7 +261,7 @@ func _gui_input(event: InputEvent) -> void:
 			if mb.double_click:
 				activated.emit(_index)
 			else:
-				clicked.emit(_index)
+				clicked.emit(_index, mb.shift_pressed, mb.is_command_or_control_pressed())
 			accept_event()
 			return
 		# Cmd-wheel zooms; plain wheel is left unhandled so the ScrollContainer
