@@ -347,15 +347,15 @@ bool DtBackend::compute_dt_dirs(std::string &datadir, std::string &moduledir) {
     }
     UtilityFunctions::printerr(
         "DtBackend::compute_dt_dirs: DT_BACKEND_DATADIR/DT_BACKEND_MODULEDIR set but '",
-        env_datadir, "' does not look like a valid datadir (no darktable.png found) -- ignoring override and falling through to bundle-relative detection");
+        env_datadir, "' does not look like a valid datadir (no rawspeed/cameras.xml found) -- ignoring override and falling through to bundle-relative detection");
   }
 
-#ifdef _WIN32
+#ifndef __APPLE__
   {
-    // Windows bundle layout is flat: Luxe.exe sits at the export root with
+    // Windows/Linux (flat export layout): the executable sits at the export root with
     // share/darktable and lib/darktable as direct siblings (see
-    // bundle_darktable_deps_windows.sh). No rpath / Contents nesting like
-    // macOS -- just one level down from the executable's own directory.
+    // bundle_darktable_deps_windows.sh / bundle_darktable_deps_linux.sh). No rpath /
+    // Contents nesting like macOS -- just one level down from the executable's own directory.
     const godot::String exe_dir = godot::OS::get_singleton()->get_executable_path().get_base_dir();
     const std::string base = std::string(exe_dir.utf8().get_data());
     const std::string candidate_datadir = base + "/share/darktable";
@@ -363,7 +363,7 @@ bool DtBackend::compute_dt_dirs(std::string &datadir, std::string &moduledir) {
     if(datadir_looks_valid(candidate_datadir)) {
       datadir = candidate_datadir;
       moduledir = candidate_moduledir;
-      UtilityFunctions::print("DtBackend::compute_dt_dirs: using exe-relative dirs (Windows bundle layout)");
+      UtilityFunctions::print("DtBackend::compute_dt_dirs: using exe-relative dirs (Windows/Linux flat layout)");
       return true;
     }
   }
@@ -420,7 +420,8 @@ bool DtBackend::compute_dt_dirs(std::string &datadir, std::string &moduledir) {
       "DtBackend::compute_dt_dirs: could not locate darktable's datadir/moduledir. "
       "Set DT_BACKEND_DATADIR and DT_BACKEND_MODULEDIR env vars (e.g. to "
       "source/build/share/darktable and source/build/lib/darktable) for local dev, "
-      "or run from an exported .app bundle with Contents/Resources/darktable/{share,lib}/darktable populated.");
+      "or run from an export with share/darktable and lib/darktable next to the executable "
+      "(Windows/Linux), or an exported .app bundle with Contents/Resources/darktable/{share,lib}/darktable populated.");
   return false;
 }
 
