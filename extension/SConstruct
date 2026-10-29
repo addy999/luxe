@@ -150,7 +150,10 @@ env.Append(
 )
 # On macOS/Linux, -ldarktable resolves libdarktable.dylib/.so via the LIBPATH
 # entries above. Windows is handled separately below.
-if env["platform"] != "windows":
+if env["platform"] == "android":
+    env.Append(LIBPATH=[os.path.normpath(os.path.join(extension_dir, "..", "..", "build-android", "install", "lib", "darktable"))])
+    env.Append(LIBS=[dt_lib_name])
+elif env["platform"] != "windows":
     env.Append(LIBS=[dt_lib_name])
 else:
     # darktable builds lib_darktable into build/bin (CMakeLists.txt does
@@ -250,6 +253,11 @@ elif env["platform"] == "linux":
     # reason the macOS branch above pins -fopenmp-version=51.
     env.Append(CXXFLAGS=["-fopenmp", "-fopenmp-version=51"])
     env.Append(LINKFLAGS=["-fopenmp"])
+elif env["platform"] == "android":
+    # NDK clang takes -fopenmp directly; libomp.so ships alongside the staged darktable libs.
+    env.Append(CXXFLAGS=["-fopenmp", "-fopenmp-version=51"])
+    env.Append(LINKFLAGS=["-fopenmp"])
+    env.Append(LIBS=["log"])
 elif env["platform"] == "windows":
     # MinGW GCC (the only toolchain that can link the MinGW libdarktable.dll)
     # takes -fopenmp directly like Linux gcc, linking libgomp.
@@ -269,6 +277,8 @@ elif env["platform"] == "windows":
 # machine's darktable build, so it is NOT checked in. It is also not
 # generated automatically: you must provide it yourself before building.
 flags_path = os.path.join(extension_dir, "dt_link_flags.json")
+if env["platform"] == "android":
+    flags_path = os.path.normpath(os.path.join(extension_dir, "..", "..", "build-android", "dt_link_flags.android.json"))
 if not os.path.isfile(flags_path):
     print(
         "*** dt_backend: %s not found. It is machine-specific and not "
@@ -314,8 +324,15 @@ if os.path.isfile(flags_path):
         else:
             env["SHLINKCOM"] = "%s $_DT_LINK_TAIL" % env["SHLINKCOM"]
     else:
-        env.Append(LINKFLAGS=dt_flags.get("link_flags", []))
-        env.Append(LINKFLAGS=dt_flags.get("link_libs", []))
+        _lf = dt_flags.get("link_flags", [])
+        _ll = dt_flags.get("link_libs", [])
+        if env["platform"] == "android":
+            # Drop the dangling -Xlinker, the fatal-warnings gate and the static whereami
+            # archive from the cross-build's darktable link line.
+            _lf = [f for f in _lf if f not in ("-Xlinker", "-Wl,--fatal-warnings")]
+            _ll = [f for f in _ll if not f.endswith("libwhereami.a")]
+        env.Append(LINKFLAGS=_lf)
+        env.Append(LINKFLAGS=_ll)
     # Preprocessor defines matter for more than "does it compile": darktable
     # headers (imageop.h in particular) put optional struct fields behind
     # #ifdef HAVE_OPENCL / USE_LUA / etc. Omitting a define that darktable's

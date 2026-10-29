@@ -143,6 +143,13 @@ func _ready() -> void:
 		_update_status("No photos yet")
 
 
+# Re-scans an empty library when the app regains focus (returning from the Android
+# all-files-access settings page).
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_IN and OS.has_feature("android") and _photos.is_empty():
+		_scan_selected_location()
+
+
 func _style_scrollbar() -> void:
 	# Colors/rounding come from the shared theme (scroll_* styleboxes); only the
 	# bar thickness is per-ScrollContainer. See ScrollbarStyle.WIDTH.
@@ -188,7 +195,7 @@ func _setup_add_location_dialog() -> void:
 	_add_location_dialog.access = FileDialog.ACCESS_FILESYSTEM
 	# NOT the native dialog: on macOS it returns dir paths with ".*" appended
 	# (the selection is round-tripped through the filename+filter machinery).
-	_add_location_dialog.use_native_dialog = true
+	_add_location_dialog.use_native_dialog = not OS.has_feature("android")
 	_add_location_dialog.title = "Choose a Folder"
 	_add_location_dialog.dir_selected.connect(_on_add_location_dir_selected)
 	add_child(_add_location_dialog)

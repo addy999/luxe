@@ -351,6 +351,9 @@ var _dragging: bool = false
 
 # Dev-only env setup for the backend's datadir detection (docs/DARKTABLE_API_NOTES.md A).
 func _configure_dt_backend_env() -> void:
+	if OS.has_feature("android"):
+		AndroidBootstrap.ensure_dt_data()
+		return
 	if not OS.has_feature("editor"):
 		return
 	if OS.has_environment("DT_BACKEND_DATADIR") and OS.has_environment("DT_BACKEND_MODULEDIR"):
@@ -406,6 +409,8 @@ func _ready() -> void:
 		return
 	_finish_ready()
 	_maybe_reopen_last_photo()
+	if OS.has_feature("android"):
+		AndroidBootstrap.request_storage_permissions()
 
 
 # Applies persisted UI state on launch, after _setup_views connected the
@@ -810,6 +815,8 @@ func _finish_ready() -> void:
 # indexer node is created once and reused; each call restarts the worker on the
 # current root set, so a library added/removed mid-session gets covered.
 func _start_thumb_indexer() -> void:
+	if OS.has_feature("android"):
+		return
 	var locations: PackedStringArray = Library.load_locations()
 	if locations.is_empty():
 		return
@@ -1018,6 +1025,10 @@ func open_photo(path: String) -> bool:
 
 	_auto_floor_scale = _EDIT_MODES[_pick_default_edit_mode_id(
 		backend.get_raw_width(), backend.get_raw_height())]["scale"]
+	if OS.has_feature("android"):
+		# Preview-pipe scale just under the final-quality cutoff: renders at the
+		# screen-sized preview mip instead of a fraction of it.
+		_auto_floor_scale = 0.99
 	_display_zoom = -1.0
 	fit_button.set_pressed_no_signal(true)
 	_update_zoom_readout()

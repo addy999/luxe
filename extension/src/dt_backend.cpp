@@ -27,6 +27,14 @@ extern "C" {
 #ifndef _WIN32
 #include <dlfcn.h> // dladdr(); POSIX-only, MinGW/Windows has no equivalent header
 #endif
+#ifdef __ANDROID__
+#include <android/log.h>
+#include <fstream>
+#include <thread>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#endif
 
 using namespace godot;
 
@@ -335,6 +343,89 @@ static void set_preview_mip_size(const int width, const int height) {
                           " MB buffer)");
 }
 
+#ifdef __ANDROID__
+// Forwards the process's stderr (darktable's dt_print output) to logcat via a pipe + reader thread.
+static int android_stderr_pipe_rd = -1;
+
+// atexit hook: logs whatever darktable wrote to stderr just before calling exit().
+static void android_drain_stderr_pipe() {
+  fcntl(android_stderr_pipe_rd, F_SETFL, O_NONBLOCK);
+  char buf[1024];
+  ssize_t n;
+  while((n = read(android_stderr_pipe_rd, buf, sizeof(buf) - 1)) > 0) {
+    buf[n] = '\0';
+    __android_log_write(ANDROID_LOG_INFO, "darktable", buf);
+  }
+}
+
+static void android_redirect_stderr_to_logcat() {
+  static bool done = false;
+  if(done) return;
+  done = true;
+  int fds[2];
+  if(pipe(fds) != 0) return;
+  dup2(fds[1], STDERR_FILENO);
+  android_stderr_pipe_rd = fds[0];
+  atexit(android_drain_stderr_pipe);
+  std::thread([rd = fds[0]]() {
+    std::string line;
+    char buf[1024];
+    ssize_t n;
+    while((n = read(rd, buf, sizeof(buf))) > 0) {
+      for(ssize_t i = 0; i < n; i++) {
+        if(buf[i] == '\n') {
+          __android_log_write(ANDROID_LOG_INFO, "darktable", line.c_str());
+          line.clear();
+        } else {
+          line += buf[i];
+        }
+      }
+    }
+  }).detach();
+}
+
+// Sets the process env darktable/libomp/glib read, and (re)builds the moduledir symlink tree
+// (<moduledir>/plugins/..., views/...) pointing at the renamed plugin libs in nativeLibraryDir
+// per <data root>/plugins.manifest ("<relative path>\t<lib name>" lines).
+static void android_prepare_env() {
+  const std::string user = std::string(OS::get_singleton()->get_user_data_dir().utf8().get_data());
+  setenv("HOME", user.c_str(), 1);
+  setenv("TMPDIR", (user + "/tmp").c_str(), 0);
+  setenv("XDG_CACHE_HOME", (user + "/cache").c_str(), 0);
+  setenv("XDG_CONFIG_HOME", (user + "/config").c_str(), 0);
+  setenv("XDG_DATA_HOME", (user + "/data").c_str(), 0);
+  setenv("OMP_STACKSIZE", "8M", 0);
+  setenv("KMP_STACKSIZE", "8M", 0);
+  g_mkdir_with_parents((user + "/tmp").c_str(), 0700);
+  if(!std::getenv("DT_BACKEND_DATADIR")) setenv("DT_BACKEND_DATADIR", (user + "/dt_data/share/darktable").c_str(), 1);
+  g_mkdir_with_parents((user + "/dt_app/bin").c_str(), 0700);
+  setenv("DT_ANDROID_EXE", (user + "/dt_app/bin/darktable").c_str(), 1);
+  const std::string moduledir = user + "/dt_modules";
+  if(!std::getenv("DT_BACKEND_MODULEDIR")) setenv("DT_BACKEND_MODULEDIR", moduledir.c_str(), 1);
+
+  Dl_info info;
+  if(dladdr(reinterpret_cast<void *>(&dt_backend_dladdr_anchor), &info) == 0 || !info.dli_fname) return;
+  gchar *libdir = g_path_get_dirname(info.dli_fname);
+  const std::string manifest = std::string(std::getenv("DT_BACKEND_DATADIR")) + "/../../plugins.manifest";
+  std::ifstream in(manifest);
+  std::string line;
+  int n = 0;
+  while(std::getline(in, line)) {
+    const size_t tab = line.find('\t');
+    if(tab == std::string::npos) continue;
+    const std::string link = std::string(std::getenv("DT_BACKEND_MODULEDIR")) + "/" + line.substr(0, tab);
+    const std::string target = std::string(libdir) + "/" + line.substr(tab + 1);
+    gchar *parent = g_path_get_dirname(link.c_str());
+    g_mkdir_with_parents(parent, 0700);
+    g_free(parent);
+    unlink(link.c_str());
+    if(symlink(target.c_str(), link.c_str()) == 0) n++;
+  }
+  g_free(libdir);
+  UtilityFunctions::print("DtBackend: android moduledir linked ", n, " plugins");
+}
+#endif
+
 bool DtBackend::compute_dt_dirs(std::string &datadir, std::string &moduledir) {
   const char *env_datadir = std::getenv("DT_BACKEND_DATADIR");
   const char *env_moduledir = std::getenv("DT_BACKEND_MODULEDIR");
@@ -443,6 +534,10 @@ bool DtBackend::init(int display_width, int display_height) {
     return true;
   }
 
+#ifdef __ANDROID__
+  android_redirect_stderr_to_logcat();
+  android_prepare_env();
+#endif
   const char *env_configdir = std::getenv("DT_BACKEND_CONFIGDIR");
   const char *env_cachedir = std::getenv("DT_BACKEND_CACHEDIR");
 
@@ -490,6 +585,15 @@ bool DtBackend::init(int display_width, int display_height) {
 
   std::vector<char *> argv_vec = { arg0, arg1, arg2, arg3, arg4, arg5, datadir, arg7, moduledir,
                                    arg9, configdir, arg11, cachedir };
+#ifdef __ANDROID__
+  char arg_noocl[] = "--disable-opencl";
+  char arg_locale[] = "--localedir";
+  std::string localedir_str = datadir_str + "/../locale";
+  g_mkdir_with_parents(localedir_str.c_str(), 0700);
+  argv_vec.push_back(arg_noocl);
+  argv_vec.push_back(arg_locale);
+  argv_vec.push_back(localedir_str.data());
+#endif
   argv_vec.push_back(nullptr);
   int argc = (int)argv_vec.size() - 1;
 

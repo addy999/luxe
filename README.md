@@ -162,6 +162,10 @@ scons arch=arm64 target=template_debug
 
 The build writes compiled frameworks into `project/bin/`, which `project/dt_backend.gdextension` points at.
 
+**Android (arm64, experimental)**
+
+Requires JDK 17, the Android SDK and NDK 28.1 installed. The app reads photos from `/sdcard/Pictures` and `/sdcard/DCIM` and needs "All files access". On Android, RAW thumbnails only appear after a photo is opened.
+
 ## How it works
 
 ### Architecture

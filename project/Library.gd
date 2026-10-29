@@ -133,7 +133,7 @@ static func save_locations(locations: PackedStringArray, path: String = LOCATION
 
 static func load_locations(path: String = LOCATIONS_PATH) -> PackedStringArray:
 	if not FileAccess.file_exists(path):
-		return PackedStringArray()
+		return AndroidBootstrap.default_locations() if OS.has_feature("android") else PackedStringArray()
 	var text: String = FileAccess.get_file_as_string(path)
 	var parsed: Variant = JSON.parse_string(text)
 	if not (parsed is Dictionary):
