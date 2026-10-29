@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" path="res://LibraryView.gd" id="1_libview"]
 
-[node name="LibraryView" type="HBoxContainer"]
+[node name="LibraryView" type="BoxContainer"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -31,8 +31,14 @@ layout_mode = 2
 theme_type_variation = &"GroupHeader"
 text = "LOCATIONS"
 
-[node name="LocationsVBox" type="VBoxContainer" parent="Sidebar/SidebarMargin/SidebarVBox"]
+[node name="LocationsScroll" type="ScrollContainer" parent="Sidebar/SidebarMargin/SidebarVBox"]
 layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="LocationsVBox" type="VBoxContainer" parent="Sidebar/SidebarMargin/SidebarVBox/LocationsScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
 theme_override_constants/separation = 4
 
 [node name="AddLocationButton" type="Button" parent="Sidebar/SidebarMargin/SidebarVBox"]

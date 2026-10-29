@@ -18,6 +18,7 @@ static func defaults() -> Dictionary:
 		"hide_rejected": false,
 		"last_photo": "",
 		"right_panel_width": 500.0,
+		"right_panel_height": 420.0,  # compact (stacked) layout
 		"filmstrip_height": 92.0,  # Filmstrip.MIN_STRIP_HEIGHT
 		"export_dir": "",
 		"export_format": "jpg",  # jpg | png | tif
@@ -61,6 +62,9 @@ static func load(path: String = STORE_PATH) -> Dictionary:
 	var panel_width: Variant = values.get("right_panel_width", state["right_panel_width"])
 	if panel_width is float or panel_width is int:
 		state["right_panel_width"] = float(panel_width)
+	var panel_height: Variant = values.get("right_panel_height", state["right_panel_height"])
+	if panel_height is float or panel_height is int:
+		state["right_panel_height"] = float(panel_height)
 	var strip_height: Variant = values.get("filmstrip_height", state["filmstrip_height"])
 	if strip_height is float or strip_height is int:
 		state["filmstrip_height"] = float(strip_height)

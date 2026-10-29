@@ -50,7 +50,8 @@ extends Control
 @onready var export_dialog: FileDialog = $ExportDialog
 @onready var view_tab_bar: TabBar = $Root/TopBar/TopBarRow/ViewTabBar
 @onready var library_view: LibraryView = $Root/LibraryView
-@onready var middle_hbox: HBoxContainer = $Root/MiddleHBox
+@onready var middle_hbox: BoxContainer = $Root/MiddleHBox
+@onready var logo_label: Label = $Root/TopBar/TopBarRow/LogoLabel
 @onready var library_status_label: Label = $Root/BottomBar/BottomRow/LibraryStatusLabel
 @onready var top_vsep: Control = $Root/TopBar/TopBarRow/VSep
 @onready var reject_button: Button = $Root/TopBar/TopBarRow/RejectButton
@@ -60,7 +61,7 @@ extends Control
 
 # --- Edit-view QUICK ACTIONS cluster (RightPanel section, below VIEW) ---------
 @onready var quick_actions_header: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/QuickActionsHeader
-@onready var edit_cluster: HBoxContainer = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow
+@onready var edit_cluster: HFlowContainer = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow
 @onready var cluster_prev_button: Button = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow/ClusterPrevButton
 @onready var cluster_next_button: Button = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow/ClusterNextButton
 @onready var cluster_crop_button: Button = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow/ClusterCropButton
@@ -342,6 +343,13 @@ var _library_thumb_zoom_pct: float = 100.0
 # --- Right settings panel width (resizable via RightPanelHandle) --------------
 const _RIGHT_PANEL_MIN_WIDTH: float = 350.0
 const _RIGHT_PANEL_MAX_WIDTH: float = 650.0
+const _RIGHT_PANEL_MIN_HEIGHT: float = 160.0
+
+# --- Responsive layout ----------------------------------------------------------
+# Compact = viewport narrower than this OR portrait. Compact stacks the Edit
+# view (image above, panel below) and the Library view (locations above grid).
+const _COMPACT_MAX_WIDTH: float = 900.0
+var _compact: bool = false
 
 const _STRETCH_SCALE: int = 0
 const _STRETCH_KEEP_ASPECT_CENTERED: int = 5
@@ -428,8 +436,6 @@ func _apply_restored_ui_state() -> void:
 	# is a no-op without a width); _finish_ready re-applies it snapped once
 	# layout has run.
 	library_view.set_thumb_zoom(_library_thumb_zoom_pct / 100.0)
-	right_panel.custom_minimum_size.x = clampf(
-		float(_ui_state["right_panel_width"]), _RIGHT_PANEL_MIN_WIDTH, _RIGHT_PANEL_MAX_WIDTH)
 	filmstrip.set_height(float(_ui_state["filmstrip_height"]))
 
 
@@ -479,26 +485,57 @@ func _setup_views() -> void:
 # handle sits left of the panel: dragging right encroaches on the panel's
 # space, so growing coordinates SHRINK it (sign -1).
 func _setup_right_panel_handle() -> void:
-	right_panel_handle.axis = ResizeHandleScript.Axis.HORIZONTAL
-	right_panel_handle.min_size = _RIGHT_PANEL_MIN_WIDTH
-	right_panel_handle.max_size = _RIGHT_PANEL_MAX_WIDTH
 	right_panel_handle.sign = -1.0
-	right_panel_handle.get_size_cb = Callable(self, "_get_right_panel_width")
-	right_panel_handle.set_size_cb = Callable(self, "_set_right_panel_width")
+	right_panel_handle.get_size_cb = Callable(self, "_get_right_panel_size")
+	right_panel_handle.set_size_cb = Callable(self, "_set_right_panel_size")
 	right_panel_handle.resize_ended.connect(_on_right_panel_resize_ended)
+	get_viewport().size_changed.connect(_apply_responsive_layout)
+	_apply_responsive_layout()
 
 
-func _get_right_panel_width() -> float:
-	return right_panel.custom_minimum_size.x
+# Panel size along the split axis: width when side-by-side, height when stacked.
+func _get_right_panel_size() -> float:
+	return right_panel.custom_minimum_size.y if _compact else right_panel.custom_minimum_size.x
 
 
-func _set_right_panel_width(width: float) -> void:
-	right_panel.custom_minimum_size.x = width
+func _set_right_panel_size(value: float) -> void:
+	if _compact:
+		right_panel.custom_minimum_size = Vector2(0.0, value)
+	else:
+		right_panel.custom_minimum_size = Vector2(value, 0.0)
 
 
-func _on_right_panel_resize_ended(width: float) -> void:
-	_ui_state["right_panel_width"] = width
+func _on_right_panel_resize_ended(value: float) -> void:
+	_ui_state["right_panel_height" if _compact else "right_panel_width"] = value
 	UiStateStore.save(_ui_state)
+
+
+# Re-evaluates compact mode from the viewport size and re-lays out the Edit
+# split, the Library split, and the top-bar extras. Runs on every resize and
+# at the end of _set_view (which re-shows view-specific top-bar controls).
+func _apply_responsive_layout() -> void:
+	var vp: Vector2 = get_viewport_rect().size
+	_compact = vp.x < _COMPACT_MAX_WIDTH or vp.x < vp.y
+	middle_hbox.vertical = _compact
+	library_view.set_compact(_compact)
+	right_panel_handle.size_flags_vertical = Control.SIZE_FILL if _compact else Control.SIZE_EXPAND_FILL
+	logo_label.visible = not _compact
+	zoom_value_label.visible = _view == View.EDIT and not _compact
+	filename_label.visible = _view == View.EDIT and not _compact
+	filmstrip.visible = _view == View.EDIT and not _compact
+	right_panel_handle.axis = (ResizeHandleScript.Axis.VERTICAL if _compact
+		else ResizeHandleScript.Axis.HORIZONTAL)
+	right_panel.size_flags_horizontal = Control.SIZE_FILL if _compact else Control.SIZE_SHRINK_BEGIN
+	if _compact:
+		right_panel_handle.min_size = _RIGHT_PANEL_MIN_HEIGHT
+		right_panel_handle.max_size = maxf(_RIGHT_PANEL_MIN_HEIGHT, vp.y * 0.4)
+		_set_right_panel_size(clampf(float(_ui_state["right_panel_height"]),
+			right_panel_handle.min_size, right_panel_handle.max_size))
+	else:
+		right_panel_handle.min_size = _RIGHT_PANEL_MIN_WIDTH
+		right_panel_handle.max_size = _RIGHT_PANEL_MAX_WIDTH
+		_set_right_panel_size(clampf(float(_ui_state["right_panel_width"]),
+			_RIGHT_PANEL_MIN_WIDTH, _RIGHT_PANEL_MAX_WIDTH))
 
 
 func _on_filmstrip_height_changed(height: float) -> void:
@@ -531,7 +568,7 @@ func _set_view(view: int) -> void:
 
 	library_view.visible = in_library
 	middle_hbox.visible = not in_library
-	filmstrip.visible = not in_library
+	filmstrip.visible = not in_library and not _compact
 	for control in _edit_only_controls:
 		control.visible = not in_library
 	for control in _library_only_controls:
@@ -545,7 +582,8 @@ func _set_view(view: int) -> void:
 
 	view_tab_bar.set_tab_disabled(View.EDIT, not _image_loaded)
 
-	zoom_value_label.visible = not in_library
+	zoom_value_label.visible = not in_library and not _compact
+	filename_label.visible = not in_library and not _compact
 
 	# The per-view slider-restore below reassigns min/max, and reassigning a
 	# Range's min/max re-clamps its value and EMITS value_changed (even via

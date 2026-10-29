@@ -56,6 +56,9 @@ The result is a small, fast editor with a serious processing engine underneath.
   quickly jumping between photos in the current folder
 - Before/after compare: hold Space (or the Before button) to see the photo as
   shot, without your edits
+- Responsive layout: on narrow or portrait screens (phones, small windows) the
+  editor stacks the photo above the sliders and the Library stacks folders
+  above the grid
 - Exposure
 - Contrast
 - Highlights

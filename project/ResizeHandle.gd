@@ -12,7 +12,13 @@ class_name ResizeHandle
 
 enum Axis { HORIZONTAL, VERTICAL }
 
-@export var axis: Axis = Axis.HORIZONTAL
+# Setter re-derives the cursor and strip thickness, so axis can flip at runtime.
+@export var axis: Axis = Axis.HORIZONTAL:
+	set(value):
+		axis = value
+		mouse_default_cursor_shape = Control.CURSOR_HSIZE if axis == Axis.HORIZONTAL else Control.CURSOR_VSIZE
+		custom_minimum_size = Vector2(_THICKNESS, 0) if axis == Axis.HORIZONTAL else Vector2(0, _THICKNESS)
+		queue_redraw()
 var min_size: float = 0.0
 var max_size: float = 0.0
 var sign: float = 1.0
@@ -35,8 +41,6 @@ var _color_line_active: Color = Color(0.231372549, 0.231372549, 1, 0.6)
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
-	mouse_default_cursor_shape = Control.CURSOR_HSIZE if axis == Axis.HORIZONTAL else Control.CURSOR_VSIZE
-	custom_minimum_size = Vector2(_THICKNESS, 0) if axis == Axis.HORIZONTAL else Vector2(0, _THICKNESS)
 	if has_theme_color("border", "Filmstrip"):
 		_color_line = get_theme_color("border", "Filmstrip")
 	if has_theme_color("accent", "Filmstrip"):

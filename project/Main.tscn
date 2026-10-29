@@ -34,9 +34,10 @@ theme_override_constants/separation = 0
 layout_mode = 2
 theme_type_variation = &"TopBar"
 
-[node name="TopBarRow" type="HBoxContainer" parent="Root/TopBar" unique_id=1623309678]
+[node name="TopBarRow" type="HFlowContainer" parent="Root/TopBar" unique_id=1623309678]
 layout_mode = 2
-theme_override_constants/separation = 10
+theme_override_constants/h_separation = 10
+theme_override_constants/v_separation = 6
 
 [node name="LogoLabel" type="Label" parent="Root/TopBar/TopBarRow" unique_id=149602368]
 layout_mode = 2
@@ -119,7 +120,7 @@ vertical_alignment = 1
 
 [node name="LibraryView" parent="Root" unique_id=2075896440 instance=ExtResource("4_libview")]
 
-[node name="MiddleHBox" type="HBoxContainer" parent="Root" unique_id=1029653399]
+[node name="MiddleHBox" type="BoxContainer" parent="Root" unique_id=1029653399]
 layout_mode = 2
 size_flags_vertical = 3
 theme_override_constants/separation = 0
@@ -554,9 +555,10 @@ layout_mode = 2
 theme_type_variation = &"GroupHeader"
 text = "QUICK ACTIONS"
 
-[node name="EditClusterRow" type="HBoxContainer" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=610100002]
+[node name="EditClusterRow" type="HFlowContainer" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox" unique_id=610100002]
 layout_mode = 2
-theme_override_constants/separation = 6
+theme_override_constants/h_separation = 6
+theme_override_constants/v_separation = 6
 
 [node name="ClusterPrevButton" type="Button" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow" unique_id=610100007]
 layout_mode = 2
@@ -626,6 +628,7 @@ theme_override_constants/separation = 12
 [node name="ResolutionLabel" type="Label" parent="Root/BottomBar/BottomRow" unique_id=956513987]
 layout_mode = 2
 size_flags_horizontal = 3
+text_overrun_behavior = 3
 theme_type_variation = &"Muted"
 text = "No image loaded"
 

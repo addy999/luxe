@@ -1,4 +1,4 @@
-extends HBoxContainer
+extends BoxContainer
 class_name LibraryView
 
 # Library photo-browsing view: a sidebar of scan locations and a virtualized
@@ -44,11 +44,12 @@ const BUFFER_ROWS: int = 2
 const _THUMB_DEBOUNCE_SEC: float = 0.1
 const _GRID_MARGIN: float = 16.0
 
-@onready var locations_vbox: VBoxContainer = $Sidebar/SidebarMargin/SidebarVBox/LocationsVBox
+@onready var locations_vbox: VBoxContainer = $Sidebar/SidebarMargin/SidebarVBox/LocationsScroll/LocationsVBox
 @onready var add_location_button: Button = $Sidebar/SidebarMargin/SidebarVBox/AddLocationButton
 @onready var grid_scroll: ScrollContainer = $GridPanel/GridScroll
 @onready var content: Control = $GridPanel/GridScroll/Content
 @onready var empty_state: CenterContainer = $EmptyState
+@onready var sidebar: PanelContainer = $Sidebar
 
 var _add_location_dialog: FileDialog = null
 var _thumb_timer: Timer = null
@@ -261,6 +262,17 @@ func _on_remove_location_pressed(dir_path: String) -> void:
 
 
 # --- Sidebar ---------------------------------------------------------------------
+
+const _COMPACT_SIDEBAR_HEIGHT: float = 240.0
+
+
+# Compact stacks the sidebar above the grid at a fixed height (its location
+# list scrolls); otherwise the sidebar is a full-height left column.
+func set_compact(compact: bool) -> void:
+	vertical = compact
+	sidebar.custom_minimum_size = Vector2(0.0, _COMPACT_SIDEBAR_HEIGHT) if compact else Vector2(320.0, 0.0)
+	sidebar.size_flags_vertical = Control.SIZE_FILL if compact else Control.SIZE_EXPAND_FILL
+
 
 func _rebuild_sidebar() -> void:
 	# remove_child detaches immediately, unlike queue_free alone, which only
