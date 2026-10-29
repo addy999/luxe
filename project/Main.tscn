@@ -652,7 +652,7 @@ size = Vector2i(800, 600)
 ok_button_text = "Open"
 file_mode = 0
 access = 2
-filters = PackedStringArray("*.jpg,*.jpeg,*.png,*.cr2,*.nef,*.arw,*.dng ; Image Files")
+filters = PackedStringArray("*.jpg,*.jpeg,*.png,*.cr2,*.cr3,*.crw,*.nef,*.nrw,*.arw,*.sr2,*.srf,*.dng,*.raf,*.orf,*.rw2,*.rwl,*.pef,*.srw,*.3fr,*.erf,*.kdc,*.dcr,*.mrw,*.mef,*.mos,*.iiq,*.raw,*.x3f ; Image Files")
 use_native_dialog = true
 
 [node name="ExportDialog" type="FileDialog" parent="." unique_id=858138209]

@@ -528,6 +528,30 @@ DtBackend::~DtBackend() {
   cleanup();
 }
 
+// Android: swaps the full pipe's 64-line cache for darktable's two-line alternating-buffer mode
+// (entries == DT_PIPECACHE_MIN), so only the buffers in flight stay allocated. Calling it again on a live
+// pipe frees the two lines (re-allocated lazily by the next run).
+static bool bound_full_pipe_cache(dt_dev_pixelpipe_t &p) {
+#ifdef __ANDROID__
+  dt_dev_pixelpipe_cache_cleanup(&p);
+  return dt_dev_pixelpipe_cache_init(&p, DT_PIPECACHE_MIN, 0, 8);
+#else
+  (void)p;
+  return true;
+#endif
+}
+
+// Value for dt_dev_add_history_item_ext's `enable`: TRUE re-enables a module the setter just disabled for a
+// neutral value, so Android passes the module's own flag through (desktop keeps TRUE).
+static gboolean history_enable(const dt_iop_module_t *m) {
+#ifdef __ANDROID__
+  return m->enabled;
+#else
+  (void)m;
+  return TRUE;
+#endif
+}
+
 bool DtBackend::init(int display_width, int display_height) {
   if(initialized) {
     UtilityFunctions::print("DtBackend::init: already initialized");
@@ -673,7 +697,7 @@ bool DtBackend::load_image(String path) {
   raw_width = wd;
   raw_height = ht;
 
-  if(!dt_dev_pixelpipe_init(&pipe)) {
+  if(!dt_dev_pixelpipe_init(&pipe) || !bound_full_pipe_cache(pipe)) {
     UtilityFunctions::printerr("DtBackend::load_image: dt_dev_pixelpipe_init() failed");
     dt_mipmap_cache_release(&mipmap_buf);
     std::memset(&mipmap_buf, 0, sizeof(mipmap_buf));
@@ -1004,7 +1028,7 @@ void DtBackend::set_sharpening(float value) {
   if(!dt_iop_set_float(sharpen_module, "radius", 1.0f + sharp_frac * 7.0f)) return;
   sharpen_module->enabled = (value != 0.0f) ? TRUE : FALSE;
 
-  dt_dev_add_history_item_ext(&dev, sharpen_module, TRUE, TRUE);
+  dt_dev_add_history_item_ext(&dev, sharpen_module, history_enable(sharpen_module), TRUE);
   note_pipe_change(sharpen_module);
 }
 
@@ -1033,7 +1057,7 @@ void DtBackend::set_denoise(float value) {
   if(!dt_iop_set_float(nlmeans_module, "strength", value * 4.0f)) return;
   nlmeans_module->enabled = (value != 0.0f) ? TRUE : FALSE;
 
-  dt_dev_add_history_item_ext(&dev, nlmeans_module, TRUE, TRUE);
+  dt_dev_add_history_item_ext(&dev, nlmeans_module, history_enable(nlmeans_module), TRUE);
   note_pipe_change(nlmeans_module);
 }
 
@@ -1611,7 +1635,7 @@ void DtBackend::set_crop(float left, float top, float right, float bottom) {
   const bool no_crop = (left <= 0.0f && top <= 0.0f && right >= 1.0f && bottom >= 1.0f);
   clipping_module->enabled = (no_crop && current_angle == 0.0f) ? FALSE : TRUE;
 
-  dt_dev_add_history_item_ext(&dev, clipping_module, TRUE, TRUE);
+  dt_dev_add_history_item_ext(&dev, clipping_module, history_enable(clipping_module), TRUE);
   note_pipe_change(clipping_module);
 }
 
@@ -1644,7 +1668,7 @@ void DtBackend::set_straighten_angle(float degrees) {
   if(!dt_iop_set_float(clipping_module, "angle", degrees)) return;
   clipping_module->enabled = (no_crop && degrees == 0.0f) ? FALSE : TRUE;
 
-  dt_dev_add_history_item_ext(&dev, clipping_module, TRUE, TRUE);
+  dt_dev_add_history_item_ext(&dev, clipping_module, history_enable(clipping_module), TRUE);
   note_pipe_change(clipping_module);
 }
 
@@ -1795,37 +1819,52 @@ PackedByteArray DtBackend::render_pipe_roi(dt_dev_pixelpipe_t *p, int native_w, 
   const int y = (int)std::clamp(std::lround((double)pipe_h * (0.5 + center_y) - (double)ht / 2.0),
                                  (long)0, y_hi);
 
-  dt_dev_pixelpipe_process(p, &dev, x, y, wd, ht, (float)scale, DT_DEVICE_NONE);
-
-
-  dt_pthread_mutex_lock(&p->backbuf_mutex);
-
-  uint8_t *backbuf = p->backbuf;
-  if(!backbuf) {
-    dt_pthread_mutex_unlock(&p->backbuf_mutex);
-    UtilityFunctions::printerr("DtBackend::render_pipe_roi: pipe.backbuf is NULL (no valid output buffer)");
-    return PackedByteArray();
-  }
-
   const int64_t pixel_count = (int64_t)wd * (int64_t)ht;
   const int64_t byte_count = pixel_count * 4;
-
   if(render_scratch_.size() != byte_count) render_scratch_.resize(byte_count);
   uint8_t *dst = render_scratch_.ptrw();
+
+  // Android: the full pipe renders large outputs in horizontal bands (each band's pipe buffers are
+  // 1/bands of the frame); dst receives each band's rows at its row offset.
+  int bands = 1;
+#ifdef __ANDROID__
+  if(p == &pipe) bands = (int)std::clamp<int64_t>(pixel_count / 5000000, 1, 8);
+#endif
+
+  for(int bi = 0; bi < bands; ++bi) {
+    const int by0 = (int)((int64_t)ht * bi / bands);
+    const int by1 = (int)((int64_t)ht * (bi + 1) / bands);
+    const int bh = by1 - by0;
+    dt_dev_pixelpipe_process(p, &dev, x, y + by0, wd, bh, (float)scale, DT_DEVICE_NONE);
+
+    dt_pthread_mutex_lock(&p->backbuf_mutex);
+
+    const uint8_t *backbuf = p->backbuf;
+    if(!backbuf) {
+      dt_pthread_mutex_unlock(&p->backbuf_mutex);
+      UtilityFunctions::printerr("DtBackend::render_pipe_roi: pipe.backbuf is NULL (no valid output buffer)");
+      return PackedByteArray();
+    }
+
+    const int64_t band_px = (int64_t)wd * (int64_t)bh;
+    uint8_t *band_dst = dst + (int64_t)by0 * wd * 4;
 
 #ifdef _OPENMP
 #pragma omp parallel for default(firstprivate) schedule(static)
 #endif
-  for(int64_t k = 0; k < pixel_count; ++k) {
-    const uint8_t *src_px = backbuf + k * 4;
-    uint8_t *dst_px = dst + k * 4;
-    dst_px[0] = src_px[2]; // R <- B
-    dst_px[1] = src_px[1]; // G
-    dst_px[2] = src_px[0]; // B <- R
-    dst_px[3] = 0xFF;      // force opaque alpha
+    for(int64_t k = 0; k < band_px; ++k) {
+      const uint8_t *src_px = backbuf + k * 4;
+      uint8_t *dst_px = band_dst + k * 4;
+      dst_px[0] = src_px[2]; // R <- B
+      dst_px[1] = src_px[1]; // G
+      dst_px[2] = src_px[0]; // B <- R
+      dst_px[3] = 0xFF;      // force opaque alpha
+    }
+
+    dt_pthread_mutex_unlock(&p->backbuf_mutex);
   }
 
-  dt_pthread_mutex_unlock(&p->backbuf_mutex);
+  if(p == &pipe) bound_full_pipe_cache(*p); // Android: drops the two full-frame cache buffers between renders
 
   _apply_dehaze(dst, wd, ht);
 
