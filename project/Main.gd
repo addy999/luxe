@@ -69,6 +69,11 @@ extends Control
 @onready var cluster_rotate_cw_button: Button = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow/ClusterRotateCwButton
 @onready var cluster_reject_button: Button = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow/ClusterRejectButton
 @onready var cluster_compare_button: Button = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow/ClusterCompareButton
+@onready var cluster_clipping_button: Button = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow/ClusterClippingButton
+@onready var cluster_peaking_button: Button = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow/ClusterPeakingButton
+
+var _histogram: Control = null
+var _clip_material: ShaderMaterial = null
 
 const CropOverlayScript := preload("res://CropOverlay.gd")
 const ThumbnailIndexerScript := preload("res://ThumbnailIndexer.gd")
@@ -393,8 +398,14 @@ func _ready() -> void:
 
 	_setup_reset_buttons()
 	_apply_mono_value_label_font()
-	preload("res://EditPanelLayout.gd").build(
-		$Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox)
+	var panel_vbox: VBoxContainer = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox
+	preload("res://EditPanelLayout.gd").build(panel_vbox)
+	_histogram = preload("res://Histogram.gd").new()
+	panel_vbox.add_child(_histogram)
+	panel_vbox.move_child(_histogram, 0)
+	_clip_material = ShaderMaterial.new()
+	_clip_material.shader = preload("res://ClipOverlay.gdshader")
+	texture_rect.material = _clip_material
 	# Load before _setup_views: _set_view(LIBRARY) seeds the shared zoom slider
 	# from _library_thumb_zoom_pct, so the restored value must be in place first.
 	_ui_state = UiStateStore.load()
@@ -719,7 +730,15 @@ func _input(event: InputEvent) -> void:
 			_end_compare()
 		get_viewport().set_input_as_handled()
 		return
+	if kc == KEY_J and _image_loaded and _crop_overlay == null:
+		_set_clipping(key_event.is_pressed())
+		get_viewport().set_input_as_handled()
+		return
 	if not key_event.is_pressed() or key_event.is_echo():
+		return
+	if kc == KEY_K and _image_loaded and _crop_overlay == null:
+		cluster_peaking_button.button_pressed = not cluster_peaking_button.button_pressed
+		get_viewport().set_input_as_handled()
 		return
 	if kc == KEY_LEFT or kc == KEY_RIGHT:
 		# _edit_navigate no-ops on crop overlay / render / export in flight and
@@ -838,6 +857,11 @@ func _finish_ready() -> void:
 	cluster_compare_button.button_down.connect(_on_cluster_compare_button_down)
 	cluster_compare_button.button_up.connect(_on_cluster_compare_button_up)
 	cluster_compare_button.disabled = true
+	cluster_clipping_button.button_down.connect(_set_clipping.bind(true))
+	cluster_clipping_button.button_up.connect(_set_clipping.bind(false))
+	cluster_clipping_button.disabled = true
+	cluster_peaking_button.toggled.connect(_set_peaking)
+	cluster_peaking_button.disabled = true
 
 	# Launch restore pass 2: apply the restored library zoom against the grid's
 	# real width now that layout has run (snap needs a width; _ready's pass ran
@@ -974,6 +998,8 @@ func open_photo(path: String) -> bool:
 	if _comparing:
 		_end_compare()
 	cluster_compare_button.disabled = true
+	cluster_clipping_button.disabled = true
+	cluster_peaking_button.disabled = true
 	_before_texture = null
 	_last_render_image = null
 	_last_render_sig = ""
@@ -1060,6 +1086,8 @@ func open_photo(path: String) -> bool:
 	_before_texture = null
 	_comparing = false
 	cluster_compare_button.disabled = false
+	cluster_clipping_button.disabled = false
+	cluster_peaking_button.disabled = false
 
 	_auto_floor_scale = _EDIT_MODES[_pick_default_edit_mode_id(
 		backend.get_raw_width(), backend.get_raw_height())]["scale"]
@@ -1690,10 +1718,37 @@ func _process_task(edit_scale: float, final_quality: bool, sig: String) -> void:
 			_WHOLE_IMAGE_VIEWPORT, _WHOLE_IMAGE_VIEWPORT, edit_scale, 0.0, 0.0)
 	var width: int = backend.get_width()
 	var height: int = backend.get_height()
-	call_deferred("_on_process_done", bytes, width, height, sig)
+	call_deferred("_on_process_done", bytes, width, height, sig,
+		_compute_histogram(bytes, width, height))
 
 
-func _on_process_done(bytes: PackedByteArray, width: int, height: int, sig: String) -> void:
+# 768 bins (R, G, B x 256) over a <=256px-wide nearest-neighbour sample of the frame.
+func _compute_histogram(bytes: PackedByteArray, width: int, height: int) -> PackedInt32Array:
+	var bins := PackedInt32Array()
+	bins.resize(768)
+	if width <= 0 or height <= 0 or bytes.size() < width * height * 4:
+		return bins
+	var img := Image.create_from_data(width, height, false, Image.FORMAT_RGBA8, bytes)
+	var sample_w: int = mini(width, 256)
+	img.resize(sample_w, maxi(1, height * sample_w / width), Image.INTERPOLATE_NEAREST)
+	var d: PackedByteArray = img.get_data()
+	for i in range(0, d.size(), 4):
+		bins[d[i]] += 1
+		bins[256 + d[i + 1]] += 1
+		bins[512 + d[i + 2]] += 1
+	return bins
+
+
+func _set_clipping(on: bool) -> void:
+	_clip_material.set_shader_parameter("show_clipping", on)
+
+
+func _set_peaking(on: bool) -> void:
+	_clip_material.set_shader_parameter("show_peaking", on)
+
+
+func _on_process_done(bytes: PackedByteArray, width: int, height: int, sig: String,
+		hist_bins: PackedInt32Array) -> void:
 	var elapsed_usec: int = Time.get_ticks_usec() - _render_start_usec
 	_render_avg_usec += float(elapsed_usec) / _RENDER_AVG_COUNT \
 		- _render_avg_usec / _RENDER_AVG_COUNT
@@ -1714,6 +1769,7 @@ func _on_process_done(bytes: PackedByteArray, width: int, height: int, sig: Stri
 		_update_resolution_label(width, height)
 		_last_render_image = img
 		_last_render_sig = sig
+		_histogram.set_bins(hist_bins)
 
 	_processing = false
 
