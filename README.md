@@ -56,7 +56,7 @@ The result is a small, fast editor with a serious processing engine underneath.
   quickly jumping between photos in the current folder
 - Before/after compare: hold Space (or the Before button) to see the photo as
   shot, without your edits
-- Histogram at the top of the edit panel, plus a hold-to-show clipping overlay
+- Histogram at the top of the edit panel, plus a clipping overlay toggle
   (Clipping button or J: red = blown highlights, blue = crushed shadows)
 - Focus peaking toggle (Peaking button or K): in-focus edges highlighted green
 - Responsive layout: on narrow or portrait screens (phones, small windows) the

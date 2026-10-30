@@ -615,8 +615,9 @@ text = "⇄ Before"
 [node name="ClusterClippingButton" type="Button" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow"]
 layout_mode = 2
 focus_mode = 0
+toggle_mode = true
 disabled = true
-tooltip_text = "Hold to show clipping (J)"
+tooltip_text = "Toggle clipping (J)"
 text = "◐ Clipping"
 
 [node name="ClusterPeakingButton" type="Button" parent="Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/EditClusterRow"]

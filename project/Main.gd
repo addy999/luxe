@@ -730,11 +730,11 @@ func _input(event: InputEvent) -> void:
 			_end_compare()
 		get_viewport().set_input_as_handled()
 		return
-	if kc == KEY_J and _image_loaded and _crop_overlay == null:
-		_set_clipping(key_event.is_pressed())
-		get_viewport().set_input_as_handled()
-		return
 	if not key_event.is_pressed() or key_event.is_echo():
+		return
+	if kc == KEY_J and _image_loaded and _crop_overlay == null:
+		cluster_clipping_button.button_pressed = not cluster_clipping_button.button_pressed
+		get_viewport().set_input_as_handled()
 		return
 	if kc == KEY_K and _image_loaded and _crop_overlay == null:
 		cluster_peaking_button.button_pressed = not cluster_peaking_button.button_pressed
@@ -857,8 +857,7 @@ func _finish_ready() -> void:
 	cluster_compare_button.button_down.connect(_on_cluster_compare_button_down)
 	cluster_compare_button.button_up.connect(_on_cluster_compare_button_up)
 	cluster_compare_button.disabled = true
-	cluster_clipping_button.button_down.connect(_set_clipping.bind(true))
-	cluster_clipping_button.button_up.connect(_set_clipping.bind(false))
+	cluster_clipping_button.toggled.connect(_set_clipping)
 	cluster_clipping_button.disabled = true
 	cluster_peaking_button.toggled.connect(_set_peaking)
 	cluster_peaking_button.disabled = true
