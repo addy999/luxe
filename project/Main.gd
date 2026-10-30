@@ -7,7 +7,6 @@ extends Control
 @onready var scroll_container: ScrollContainer = $Root/MiddleHBox/Scroll
 @onready var panel_scroll: ScrollContainer = $Root/MiddleHBox/RightPanel/PanelScroll
 @onready var texture_rect: TextureRect = $Root/MiddleHBox/Scroll/Center/TextureRect
-@onready var empty_state: CenterContainer = $Root/MiddleHBox/EmptyState
 @onready var exposure_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ExposureRow/ExposureSlider
 @onready var exposure_value_label: Label = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ExposureRow/ExposureValueLabel
 @onready var contrast_slider: HSlider = $Root/MiddleHBox/RightPanel/PanelScroll/PanelMargin/PanelVBox/ContrastRow/ContrastSlider
@@ -422,7 +421,6 @@ func _ready() -> void:
 	_apply_restored_ui_state()
 
 	_animate_entrance()
-	_update_empty_state()
 	await get_tree().process_frame
 	if not _init_backend():
 		return
@@ -941,12 +939,6 @@ func on_indexing_finished() -> void:
 	library_status_label.visible = _view == View.LIBRARY
 
 
-func _update_empty_state() -> void:
-	var empty: bool = not _image_loaded
-	empty_state.visible = empty
-	scroll_container.visible = not empty
-
-
 func _animate_entrance() -> void:
 	# One-shot launch animation: bars fade in and scale 0.98 -> 1.0, staggered
 	# (tween modulate/scale, NOT position; see docs/GODOT_FRONTEND_NOTES.md).
@@ -1007,14 +999,12 @@ func open_photo(path: String) -> bool:
 	var ok: bool = backend.load_image(path)
 	if not ok:
 		_image_loaded = false
-		_update_empty_state()
-		export_button.disabled = true
+			export_button.disabled = true
 		_set_color_wb_controls_enabled(false)
 		return false
 
 	_image_loaded = true
 	_set_color_wb_controls_enabled(not _exporting)
-	_update_empty_state()
 	_edited_path = path
 	filename_label.text = path.get_file()
 
