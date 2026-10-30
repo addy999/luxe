@@ -454,6 +454,17 @@ bool DtBackend::compute_dt_dirs(std::string &datadir, std::string &moduledir) {
     if(datadir_looks_valid(candidate_datadir)) {
       datadir = candidate_datadir;
       moduledir = candidate_moduledir;
+#ifdef __linux__
+      // dt_init derives sharedir/libdir from the exe dir as ../share, ../lib and exits silently if absent.
+      const std::string fhs_share = base + "/../share";
+      const std::string fhs_lib = base + "/../lib";
+      if(!g_file_test(fhs_share.c_str(), G_FILE_TEST_IS_DIR) || !g_file_test(fhs_lib.c_str(), G_FILE_TEST_IS_DIR)) {
+        UtilityFunctions::printerr("DtBackend::compute_dt_dirs: '", fhs_share.c_str(), "' and/or '", fhs_lib.c_str(),
+                                   "' missing; darktable would exit silently. Repackage with usr/share and usr/lib "
+                                   "next to usr/bin (symlinks to bin/share, bin/lib work).");
+        return false;
+      }
+#endif
       UtilityFunctions::print("DtBackend::compute_dt_dirs: using exe-relative dirs (Windows/Linux flat layout)");
       return true;
     }
