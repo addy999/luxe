@@ -3,8 +3,8 @@ class_name Library
 # Pure-logic layer for the Library feature: filesystem scanning, grid cursor
 # math, and persisted scan-location bookkeeping. No scene-tree dependencies.
 
-const SUPPORTED_EXTENSIONS: PackedStringArray = ["jpg", "jpeg", "png", "cr2", "cr3", "crw", "nef", "nrw", "arw", "sr2", "srf", "dng", "raf", "orf", "rw2", "rwl", "pef", "srw", "3fr", "erf", "kdc", "dcr", "mrw", "mef", "mos", "iiq", "raw", "x3f"]
-const RAW_EXTENSIONS: PackedStringArray = ["cr2", "cr3", "crw", "nef", "nrw", "arw", "sr2", "srf", "dng", "raf", "orf", "rw2", "rwl", "pef", "srw", "3fr", "erf", "kdc", "dcr", "mrw", "mef", "mos", "iiq", "raw", "x3f"]
+const SUPPORTED_EXTENSIONS: PackedStringArray = ["jpg", "jpeg", "png", "cr2", "cr3", "crw", "nef", "nrw", "arw", "sr2", "srf", "dng", "raf", "orf", "rw2", "rwl", "pef", "srw", "3fr", "erf", "kdc", "dcr", "mrw", "mef", "mos", "iiq", "raw", "x3f", "tif", "tiff"]
+const RAW_EXTENSIONS: PackedStringArray = ["cr2", "cr3", "crw", "nef", "nrw", "arw", "sr2", "srf", "dng", "raf", "orf", "rw2", "rwl", "pef", "srw", "3fr", "erf", "kdc", "dcr", "mrw", "mef", "mos", "iiq", "raw", "x3f", "tif", "tiff"]
 const LOCATIONS_PATH: String = "user://library_locations.json"
 const MAX_SCAN_DEPTH: int = 8
 

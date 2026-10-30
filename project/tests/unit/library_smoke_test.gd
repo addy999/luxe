@@ -40,17 +40,17 @@ func _initialize() -> void:
 
 
 func _test_filtering() -> void:
-	var supported: Array[String] = ["A.JPG", "b.jpeg", "c.PNG", "d.Cr2", "e.NEF", "f.arw", "g.DNG"]
+	var supported: Array[String] = ["A.JPG", "b.jpeg", "c.PNG", "d.Cr2", "e.NEF", "f.arw", "g.DNG", "l.TIF", "j.tiff"]
 	for name in supported:
 		if not Library.is_supported(name):
 			_die("is_supported(%s) should be true" % name)
 			return
-	var unsupported: Array[String] = ["h.txt", "i.psd", "j.tiff", "k", ".DS_Store"]
+	var unsupported: Array[String] = ["h.txt", "i.psd", "k", ".DS_Store"]
 	for name in unsupported:
 		if Library.is_supported(name):
 			_die("is_supported(%s) should be false" % name)
 			return
-	var raw_true: Array[String] = ["d.Cr2", "e.NEF", "f.arw", "g.DNG"]
+	var raw_true: Array[String] = ["d.Cr2", "e.NEF", "f.arw", "g.DNG", "l.TIF", "j.tiff"]
 	for name in raw_true:
 		if not Library.is_raw(name):
 			_die("is_raw(%s) should be true" % name)
