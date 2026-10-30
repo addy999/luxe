@@ -343,6 +343,17 @@ func select_location_for_path(path: String) -> bool:
 	return false
 
 
+# Makes path's folder the selected library, adding it as a location when no
+# configured location contains it. A folder that is a parent of an existing
+# location is left alone (nesting is rejected), so the existing selection stays.
+func ensure_location_for_path(path: String) -> void:
+	if select_location_for_path(path):
+		return
+	var dir_path: String = _normalize_location_path(path.get_base_dir())
+	if not _is_duplicate_or_nested(dir_path):
+		_on_add_location_dir_selected(dir_path)
+
+
 # --- Scanning ---------------------------------------------------------------------
 
 func _scan_selected_location() -> void:

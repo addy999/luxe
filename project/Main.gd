@@ -450,10 +450,13 @@ func _apply_restored_ui_state() -> void:
 
 # Restores the last session's final state: reopen the last photo (its saved
 # edits come back through EditStore inside open_photo) straight into the Edit
-# view. Skipped when the file is gone, launching into Library as before.
+# view. Skipped when the file is gone or no library contains it, launching into
+# Library as before.
 func _maybe_reopen_last_photo() -> void:
 	var path: String = _ui_state.get("last_photo", "")
 	if path == "" or not FileAccess.file_exists(path):
+		return
+	if not library_view.select_location_for_path(path):
 		return
 	open_photo(path)
 
@@ -967,6 +970,7 @@ func _on_open_button_pressed() -> void:
 
 
 func _on_file_dialog_file_selected(path: String) -> void:
+	library_view.ensure_location_for_path(path)
 	open_photo(path)
 
 
@@ -999,7 +1003,7 @@ func open_photo(path: String) -> bool:
 	var ok: bool = backend.load_image(path)
 	if not ok:
 		_image_loaded = false
-			export_button.disabled = true
+		export_button.disabled = true
 		_set_color_wb_controls_enabled(false)
 		return false
 
