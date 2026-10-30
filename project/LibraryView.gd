@@ -414,6 +414,7 @@ func _set_photos(photos: Array[Dictionary]) -> void:
 	grid_scroll.scroll_vertical = 0
 	photos_changed.emit()
 	empty_state.visible = _photos.is_empty()
+	$GridPanel.visible = not _photos.is_empty()
 	_relayout()
 	_request_visible_thumbs()
 
