@@ -581,7 +581,7 @@ bool DtBackend::init(int display_width, int display_height) {
     configdir = g_strdup(env_configdir);
     UtilityFunctions::print("DtBackend::init: using DT_BACKEND_CONFIGDIR override: ", env_configdir);
   } else {
-    configdir = g_build_filename(g_get_user_cache_dir(), "godot-darktable-poc", "config", NULL);
+    configdir = g_build_filename(g_get_user_cache_dir(), "luxe", "config", NULL);
   }
 
   gchar *cachedir;
@@ -589,17 +589,34 @@ bool DtBackend::init(int display_width, int display_height) {
     cachedir = g_strdup(env_cachedir);
     UtilityFunctions::print("DtBackend::init: using DT_BACKEND_CACHEDIR override: ", env_cachedir);
   } else {
-    cachedir = g_build_filename(g_get_user_cache_dir(), "godot-darktable-poc", "cache", NULL);
+    cachedir = g_build_filename(g_get_user_cache_dir(), "luxe", "cache", NULL);
   }
 
-  g_mkdir_with_parents(configdir, 0700);
-  g_mkdir_with_parents(cachedir, 0700);
+  // dt_init() exit()s when a user dir is unusable, which aborts the whole app
+  // on shutdown; swap any dir we cannot create/write for a per-user temp one.
+  auto ensure_writable = [](gchar *&dir, const char *leaf) {
+    g_mkdir_with_parents(dir, 0700);
+    if(g_access(dir, W_OK | X_OK) == 0) return;
+    UtilityFunctions::printerr("DtBackend::init: '", dir, "' is not writable, falling back to temp dir");
+    g_free(dir);
+    dir = g_build_filename(g_get_tmp_dir(), (std::string("luxe-") + g_get_user_name()).c_str(), leaf, NULL);
+    g_mkdir_with_parents(dir, 0700);
+  };
+  ensure_writable(configdir, "config");
+  ensure_writable(cachedir, "cache");
+  gchar *tmpdir = g_build_filename(g_get_tmp_dir(), NULL);
+  if(g_access(tmpdir, W_OK | X_OK) != 0) {
+    g_free(tmpdir);
+    tmpdir = g_build_filename(g_get_user_cache_dir(), "luxe", "tmp", NULL);
+    g_mkdir_with_parents(tmpdir, 0700);
+  }
 
   std::string datadir_str;
   std::string moduledir_str;
   if(!compute_dt_dirs(datadir_str, moduledir_str)) {
     g_free(configdir);
     g_free(cachedir);
+    g_free(tmpdir);
     return false;
   }
   gchar *datadir = g_strdup(datadir_str.c_str());
@@ -614,12 +631,13 @@ bool DtBackend::init(int display_width, int display_height) {
   char arg7[] = "--moduledir";
   char arg9[] = "--configdir";
   char arg11[] = "--cachedir";
+  char arg13[] = "--tmpdir";
 
   display_width_ = display_width;
   display_height_ = display_height;
 
   std::vector<char *> argv_vec = { arg0, arg1, arg2, arg3, arg4, arg5, datadir, arg7, moduledir,
-                                   arg9, configdir, arg11, cachedir };
+                                   arg9, configdir, arg11, cachedir, arg13, tmpdir };
 #ifdef __ANDROID__
   char arg_noocl[] = "--disable-opencl";
   char arg_locale[] = "--localedir";
@@ -635,6 +653,7 @@ bool DtBackend::init(int display_width, int display_height) {
   const int rc = dt_init(argc, argv_vec.data(), FALSE, TRUE, NULL);
   g_free(configdir);
   g_free(cachedir);
+  g_free(tmpdir);
   g_free(datadir);
   g_free(moduledir);
   if(rc != 0) {
