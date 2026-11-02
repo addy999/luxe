@@ -458,10 +458,12 @@ bool DtBackend::compute_dt_dirs(std::string &datadir, std::string &moduledir) {
       // dt_init derives sharedir/libdir from the exe dir as ../share, ../lib and exits silently if absent.
       const std::string fhs_share = base + "/../share";
       const std::string fhs_lib = base + "/../lib";
-      if(!g_file_test(fhs_share.c_str(), G_FILE_TEST_IS_DIR) || !g_file_test(fhs_lib.c_str(), G_FILE_TEST_IS_DIR)) {
+      const std::string fhs_locale = base + "/../share/locale";
+      if(!g_file_test(fhs_share.c_str(), G_FILE_TEST_IS_DIR) || !g_file_test(fhs_lib.c_str(), G_FILE_TEST_IS_DIR)
+         || (!g_file_test(fhs_locale.c_str(), G_FILE_TEST_IS_DIR) && g_mkdir_with_parents(fhs_locale.c_str(), 0755) != 0)) {
         UtilityFunctions::printerr("DtBackend::compute_dt_dirs: '", fhs_share.c_str(), "' and/or '", fhs_lib.c_str(),
-                                   "' missing; darktable would exit silently. Repackage with usr/share and usr/lib "
-                                   "next to usr/bin (symlinks to bin/share, bin/lib work).");
+                                   "' missing, or '", fhs_locale.c_str(), "' absent and not creatable; darktable would exit "
+                                   "silently. Repackage with usr/share (incl. share/locale) and usr/lib next to usr/bin.");
         return false;
       }
 #endif
