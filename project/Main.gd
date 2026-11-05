@@ -350,8 +350,9 @@ const _RIGHT_PANEL_MAX_WIDTH: float = 650.0
 const _RIGHT_PANEL_MIN_HEIGHT: float = 160.0
 
 # --- Responsive layout ----------------------------------------------------------
-# Compact = viewport narrower than this OR portrait. Compact stacks the Edit
-# view (image above, panel below) and the Library view (locations above grid).
+# Compact = Android build AND (viewport narrower than this OR portrait). Compact
+# stacks the Edit view (image above, panel below) and the Library view (locations
+# above grid). Desktop builds never enter compact, whatever the window size.
 const _COMPACT_MAX_WIDTH: float = 900.0
 var _compact: bool = false
 
@@ -527,7 +528,8 @@ func _on_right_panel_resize_ended(value: float) -> void:
 # at the end of _set_view (which re-shows view-specific top-bar controls).
 func _apply_responsive_layout() -> void:
 	var vp: Vector2 = get_viewport_rect().size
-	_compact = vp.x < _COMPACT_MAX_WIDTH or vp.x < vp.y
+	# "android" is an immutable feature tag, so this is fixed per build.
+	_compact = OS.has_feature("android") and (vp.x < _COMPACT_MAX_WIDTH or vp.x < vp.y)
 	middle_hbox.vertical = _compact
 	library_view.set_compact(_compact)
 	right_panel_handle.size_flags_vertical = Control.SIZE_FILL if _compact else Control.SIZE_EXPAND_FILL

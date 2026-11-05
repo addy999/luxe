@@ -59,7 +59,7 @@ The result is a small, fast editor with a serious processing engine underneath.
 - Histogram at the top of the edit panel, plus a clipping overlay toggle
   (Clipping button or J: red = blown highlights, blue = crushed shadows)
 - Focus peaking toggle (Peaking button or K): in-focus edges highlighted green
-- Responsive layout: on narrow or portrait screens (phones, small windows) the
+- Responsive layout (Android builds only): on narrow or portrait screens the
   editor stacks the photo above the sliders and the Library stacks folders
   above the grid
 - Exposure
